@@ -3,6 +3,7 @@ module aegis-app
 go 1.23
 
 require (
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/wailsapp/wails/v2 v2.11.0
 )

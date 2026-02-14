@@ -4,15 +4,20 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
+	"sync"
 
 	"github.com/tyler-smith/go-bip39"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx  context.Context
+	db   *sql.DB
+	dbMu sync.Mutex
 }
 
 type Identity struct {
@@ -29,6 +34,18 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	if err := a.initDatabase(); err != nil {
+		runtime.LogErrorf(ctx, "database initialization failed: %v", err)
+	}
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	if a.db != nil {
+		if err := a.db.Close(); err != nil {
+			runtime.LogErrorf(ctx, "database close failed: %v", err)
+		}
+	}
 }
 
 func (a *App) deriveKeypairFromMnemonic(mnemonic string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
