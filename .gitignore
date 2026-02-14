@@ -1,0 +1,27 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+**/node_modules/
+**/dist/
+
+# Go
+**/bin/
+**/*.exe
+
+# Wails build artifacts
+aegis-app/build/bin/
+aegis-app/build/windows/
+aegis-app/build/linux/
+aegis-app/build/darwin/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local database / runtime data
+*.db
+*.db-shm
+*.db-wal
