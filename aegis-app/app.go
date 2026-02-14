@@ -7,17 +7,29 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"os"
+	"strings"
 	"sync"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
 type App struct {
-	ctx  context.Context
-	db   *sql.DB
-	dbMu sync.Mutex
+	ctx    context.Context
+	db     *sql.DB
+	dbMu   sync.Mutex
+	dbPath string
+
+	p2pMu     sync.Mutex
+	p2pCtx    context.Context
+	p2pCancel context.CancelFunc
+	p2pHost   host.Host
+	p2pTopic  *pubsub.Topic
+	p2pSub    *pubsub.Subscription
 }
 
 type Identity struct {
@@ -27,7 +39,20 @@ type Identity struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	databasePath := strings.TrimSpace(os.Getenv("AEGIS_DB_PATH"))
+	if databasePath == "" {
+		databasePath = "aegis_node.db"
+	}
+
+	return &App{dbPath: databasePath}
+}
+
+func (a *App) SetDatabasePath(path string) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return
+	}
+	a.dbPath = trimmed
 }
 
 // startup is called when the app starts. The context is saved
@@ -37,10 +62,28 @@ func (a *App) startup(ctx context.Context) {
 
 	if err := a.initDatabase(); err != nil {
 		runtime.LogErrorf(ctx, "database initialization failed: %v", err)
+		return
+	}
+
+	trustedAdminsEnv := strings.TrimSpace(os.Getenv("AEGIS_TRUSTED_ADMINS"))
+	if trustedAdminsEnv != "" {
+		for _, candidate := range strings.Split(trustedAdminsEnv, ",") {
+			adminPubkey := strings.TrimSpace(candidate)
+			if adminPubkey == "" {
+				continue
+			}
+			if err := a.AddTrustedAdmin(adminPubkey, "genesis"); err != nil {
+				runtime.LogErrorf(ctx, "seed trusted admin failed (%s): %v", adminPubkey, err)
+			}
+		}
 	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if err := a.StopP2P(); err != nil {
+		runtime.LogErrorf(ctx, "p2p shutdown failed: %v", err)
+	}
+
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {
 			runtime.LogErrorf(ctx, "database close failed: %v", err)
@@ -77,10 +120,38 @@ func (a *App) GenerateIdentity() (Identity, error) {
 		return Identity{}, err
 	}
 
-	return Identity{
+	identity := Identity{
 		Mnemonic:  mnemonic,
 		PublicKey: hex.EncodeToString(publicKey),
-	}, nil
+	}
+
+	if err = a.saveLocalIdentity(identity); err != nil {
+		return Identity{}, err
+	}
+
+	return identity, nil
+}
+
+func (a *App) LoadSavedIdentity() (Identity, error) {
+	return a.getLocalIdentity()
+}
+
+func (a *App) ImportIdentityFromMnemonic(mnemonic string) (Identity, error) {
+	publicKey, _, err := a.deriveKeypairFromMnemonic(strings.TrimSpace(mnemonic))
+	if err != nil {
+		return Identity{}, err
+	}
+
+	identity := Identity{
+		Mnemonic:  strings.TrimSpace(mnemonic),
+		PublicKey: hex.EncodeToString(publicKey),
+	}
+
+	if err = a.saveLocalIdentity(identity); err != nil {
+		return Identity{}, err
+	}
+
+	return identity, nil
 }
 
 func (a *App) SignMessage(mnemonic string, message string) (string, error) {

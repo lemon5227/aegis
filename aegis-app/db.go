@@ -55,6 +55,12 @@ type StorageUsage struct {
 	TotalQuota       int64 `json:"totalQuota"`
 }
 
+type GovernanceAdmin struct {
+	AdminPubkey string `json:"adminPubkey"`
+	Role        string `json:"role"`
+	Active      bool   `json:"active"`
+}
+
 type IncomingMessage struct {
 	Type         string `json:"type"`
 	ID           string `json:"id"`
@@ -75,7 +81,13 @@ func (a *App) initDatabase() error {
 		return nil
 	}
 
-	db, err := sql.Open("sqlite3", "file:aegis_node.db?_busy_timeout=5000&_journal_mode=WAL")
+	databasePath := strings.TrimSpace(a.dbPath)
+	if databasePath == "" {
+		databasePath = "aegis_node.db"
+	}
+
+	dsn := fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", databasePath)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
 	}
@@ -127,6 +139,12 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			admin_pubkey TEXT PRIMARY KEY,
 			role TEXT NOT NULL,
 			active INTEGER NOT NULL DEFAULT 1
+		);`,
+		`CREATE TABLE IF NOT EXISTS local_identity (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			mnemonic TEXT NOT NULL,
+			pubkey TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
 		);`,
 	}
 
@@ -312,8 +330,22 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 
 	switch message.Type {
 	case "SHADOW_BAN":
+		trusted, err := a.isTrustedAdmin(message.AdminPubkey)
+		if err != nil {
+			return err
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
 		return a.upsertModeration(message.TargetPubkey, "SHADOW_BAN", message.AdminPubkey, message.Timestamp, message.Reason)
 	case "UNBAN":
+		trusted, err := a.isTrustedAdmin(message.AdminPubkey)
+		if err != nil {
+			return err
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
 		return a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, message.Reason)
 	case "POST":
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.Content) == "" {
@@ -370,6 +402,108 @@ func (a *App) AddLocalPost(pubkey string, content string, zone string) (ForumMes
 	}
 
 	return a.insertMessage(message)
+}
+
+func (a *App) ApplyShadowBan(targetPubkey string, adminPubkey string, reason string) error {
+	trusted, err := a.isTrustedAdmin(adminPubkey)
+	if err != nil {
+		return err
+	}
+	if !trusted {
+		return errors.New("admin pubkey is not trusted")
+	}
+
+	return a.upsertModeration(targetPubkey, "SHADOW_BAN", adminPubkey, time.Now().Unix(), reason)
+}
+
+func (a *App) ApplyUnban(targetPubkey string, adminPubkey string, reason string) error {
+	trusted, err := a.isTrustedAdmin(adminPubkey)
+	if err != nil {
+		return err
+	}
+	if !trusted {
+		return errors.New("admin pubkey is not trusted")
+	}
+
+	return a.upsertModeration(targetPubkey, "UNBAN", adminPubkey, time.Now().Unix(), reason)
+}
+
+func (a *App) AddTrustedAdmin(pubkey string, role string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return errors.New("admin pubkey is required")
+	}
+
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "" {
+		role = "appointed"
+	}
+
+	_, err := a.db.Exec(`
+		INSERT INTO governance_admins (admin_pubkey, role, active)
+		VALUES (?, ?, 1)
+		ON CONFLICT(admin_pubkey) DO UPDATE SET
+			role = excluded.role,
+			active = 1;
+	`, pubkey, role)
+	return err
+}
+
+func (a *App) GetTrustedAdmins() ([]GovernanceAdmin, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	rows, err := a.db.Query(`
+		SELECT admin_pubkey, role, active
+		FROM governance_admins
+		WHERE active = 1
+		ORDER BY role, admin_pubkey;
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]GovernanceAdmin, 0)
+	for rows.Next() {
+		var admin GovernanceAdmin
+		var active int
+		if err = rows.Scan(&admin.AdminPubkey, &admin.Role, &active); err != nil {
+			return nil, err
+		}
+		admin.Active = active == 1
+		result = append(result, admin)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) isTrustedAdmin(pubkey string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return false, nil
+	}
+
+	var count int
+	err := a.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM governance_admins
+		WHERE admin_pubkey = ? AND active = 1;
+	`, pubkey).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
@@ -498,6 +632,19 @@ func (a *App) upsertModeration(targetPubkey string, action string, sourceAdmin s
 		return err
 	}
 
+	visibility := "normal"
+	if action == "SHADOW_BAN" {
+		visibility = "shadowed"
+	}
+
+	if _, err = a.db.Exec(`
+		UPDATE messages
+		SET visibility = ?
+		WHERE pubkey = ? AND zone = 'public';
+	`, visibility, targetPubkey); err != nil {
+		return err
+	}
+
 	state := "normal"
 	if action == "SHADOW_BAN" {
 		state = "shadow_banned"
@@ -538,4 +685,44 @@ func buildMessageID(pubkey string, content string, timestamp int64) string {
 	raw := fmt.Sprintf("%s|%d|%s", pubkey, timestamp, content)
 	hash := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(hash[:])
+}
+
+func (a *App) saveLocalIdentity(identity Identity) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	mnemonic := strings.TrimSpace(identity.Mnemonic)
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if mnemonic == "" || pubkey == "" {
+		return errors.New("identity is incomplete")
+	}
+
+	_, err := a.db.Exec(`
+		INSERT INTO local_identity (id, mnemonic, pubkey, updated_at)
+		VALUES (1, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			mnemonic = excluded.mnemonic,
+			pubkey = excluded.pubkey,
+			updated_at = excluded.updated_at;
+	`, mnemonic, pubkey, time.Now().Unix())
+
+	return err
+}
+
+func (a *App) getLocalIdentity() (Identity, error) {
+	if a.db == nil {
+		return Identity{}, errors.New("database not initialized")
+	}
+
+	var identity Identity
+	err := a.db.QueryRow(`SELECT mnemonic, pubkey FROM local_identity WHERE id = 1;`).Scan(&identity.Mnemonic, &identity.PublicKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Identity{}, errors.New("identity not found")
+	}
+	if err != nil {
+		return Identity{}, err
+	}
+
+	return identity, nil
 }
