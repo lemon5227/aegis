@@ -268,6 +268,57 @@ function App() {
         return '';
     };
 
+    const classifyListenAddress = (address: string) => {
+        const normalized = (address || '').trim().toLowerCase();
+        const ip4Match = normalized.match(/\/ip4\/([^/]+)/);
+        if (ip4Match?.[1]) {
+            const ip4 = ip4Match[1];
+            if (ip4 === '127.0.0.1') {
+                return 5;
+            }
+            if (
+                ip4.startsWith('10.') ||
+                ip4.startsWith('192.168.') ||
+                ip4.startsWith('169.254.') ||
+                /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip4)
+            ) {
+                return 2;
+            }
+            return 1;
+        }
+
+        const ip6Match = normalized.match(/\/ip6\/([^/]+)/);
+        if (ip6Match?.[1]) {
+            const ip6 = ip6Match[1];
+            if (ip6 === '::1') {
+                return 5;
+            }
+            if (ip6.startsWith('fe80:')) {
+                return 4;
+            }
+            return 0;
+        }
+
+        return 6;
+    };
+
+    const prioritizeListenAddresses = (addresses: string[]) => {
+        const rows = [...(addresses || [])];
+        rows.sort((left, right) => {
+            const leftRank = classifyListenAddress(left);
+            const rightRank = classifyListenAddress(right);
+            if (leftRank !== rightRank) {
+                return leftRank - rightRank;
+            }
+            return left.localeCompare(right);
+        });
+        return rows;
+    };
+
+    const prioritizedListenAddrs = prioritizeListenAddresses(p2pStatus?.listenAddrs || []);
+    const recommendedListenAddr = prioritizedListenAddrs.find((address) => classifyListenAddress(address) <= 2) || '';
+    const hasGlobalIPv6Address = prioritizedListenAddrs.some((address) => classifyListenAddress(address) === 0);
+
     const clearSelectedBodyRetryTimer = () => {
         if (selectedBodyRetryTimerRef.current !== null) {
             window.clearTimeout(selectedBodyRetryTimerRef.current);
@@ -1253,11 +1304,18 @@ function App() {
                     className="input"
                     value={peerAddress}
                     onChange={(event) => setPeerAddress(event.target.value)}
-                    placeholder="Peer multiaddr, e.g. /ip4/192.168.1.10/tcp/40100/p2p/12D3Koo..."
+                    placeholder="Peer multiaddr, e.g. /ip6/2a02:.../tcp/40100/p2p/12D3Koo..."
                 />
                 <div className="row">
                     <button className="btn" onClick={connectPeerAddress}>Connect Peer</button>
                 </div>
+
+                {recommendedListenAddr ? (
+                    <p className="hint">Recommended address to share: {recommendedListenAddr}</p>
+                ) : null}
+                {p2pStatus?.started && !hasGlobalIPv6Address ? (
+                    <p className="hint">No global IPv6 detected. P2P will use IPv4 NAT traversal and relay fallback.</p>
+                ) : null}
 
                 {p2pStatus ? (
                     <ul>
@@ -1271,9 +1329,9 @@ function App() {
 
                 {p2pStatus?.listenAddrs?.length ? (
                     <div>
-                        <h4>Listen Addresses</h4>
+                        <h4>Listen Addresses (prioritized)</h4>
                         <ul>
-                            {p2pStatus.listenAddrs.map((address) => <li key={address}>{address}</li>)}
+                            {prioritizedListenAddrs.map((address) => <li key={address}>{address}</li>)}
                         </ul>
                     </div>
                 ) : null}
