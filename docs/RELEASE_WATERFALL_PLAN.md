@@ -243,7 +243,7 @@
   - `go test ./... -count=1` 全量通过
 
 ### R5（发布级稳定性与观测）
-- 状态：In Progress
+- 状态：Done
 - 已完成（第一批）：
   - 新增发布指标快照接口：`GetReleaseMetrics`
   - 指标口径落地：
@@ -278,10 +278,9 @@
   - 新增 R5 告警回归测试：
     - `TestR5ReleaseAlertRaisedAfterSustainWindow`
     - `TestR5ReleaseAlertRecoveryClearsActiveState`
-- 待完成：
-  - “10 分钟内定位详情打不开”手工演练留档
 - 验证：
   - `go test ./... -run 'TestR5ReleaseMetricsDerivedValues|TestR5BlobCacheMetricsRecordedFromReadPath|TestR5ReleaseAlertRaisedAfterSustainWindow|TestR5ReleaseAlertRecoveryClearsActiveState' -count=1` 通过
+  - 手工演练留档完成：`docs/R5_INCIDENT_DRILL_RECORD_2026-02-15.md`
 
 产品 UI 约束（正式版）：
 - 回源失败提示应用户友好（例如“内容暂时不可用，请稍后重试”）。
