@@ -69,11 +69,11 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 	}
 	a.refreshPeerPoliciesFromEnv()
 
-	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
+	listenAddrs := resolveP2PListenAddrs(listenPort)
 	relayInfos := resolveRelayPeerInfos(bootstrapPeers)
 
 	options := []libp2p.Option{
-		libp2p.ListenAddrStrings(listenAddr),
+		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
 		libp2p.EnableAutoNATv2(),
@@ -86,6 +86,18 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 	}
 
 	host, err := libp2p.New(options...)
+	if err != nil && len(listenAddrs) > 1 {
+		dualStackErr := err
+		fallbackOptions := make([]libp2p.Option, 0, len(options))
+		fallbackOptions = append(fallbackOptions,
+			libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)),
+		)
+		fallbackOptions = append(fallbackOptions, options[1:]...)
+		host, err = libp2p.New(fallbackOptions...)
+		if err == nil && a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "p2p dual-stack bind failed, fallback to ipv4-only: %v", dualStackErr)
+		}
+	}
 	if err != nil {
 		return P2PStatus{}, err
 	}
@@ -1558,6 +1570,22 @@ func resolveRelayPeers() []string {
 		peers = append(peers, peerAddr)
 	}
 	return peers
+}
+
+func resolveP2PListenAddrs(listenPort int) []string {
+	if listenPort <= 0 {
+		listenPort = 40100
+	}
+
+	ipv4 := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
+	ipv6 := fmt.Sprintf("/ip6/::/tcp/%d", listenPort)
+
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("AEGIS_P2P_DUAL_STACK")))
+	if raw == "0" || raw == "false" || raw == "no" || raw == "off" {
+		return []string{ipv4}
+	}
+
+	return []string{ipv4, ipv6}
 }
 
 func resolveRelayPeerInfos(bootstrapPeers []string) []peer.AddrInfo {
