@@ -332,6 +332,58 @@ export namespace main {
 	        this.updatedAt = source["updatedAt"];
 	    }
 	}
+	export class ReleaseAlert {
+	    key: string;
+	    metric: string;
+	    level: string;
+	    value: number;
+	    threshold: number;
+	    windowSec: number;
+	    triggeredAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReleaseAlert(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.metric = source["metric"];
+	        this.level = source["level"];
+	        this.value = source["value"];
+	        this.threshold = source["threshold"];
+	        this.windowSec = source["windowSec"];
+	        this.triggeredAt = source["triggeredAt"];
+	    }
+	}
+	export class ReleaseMetrics {
+	    content_fetch_success_rate: number;
+	    content_fetch_latency_p95: number;
+	    blob_cache_hit_rate: number;
+	    sync_lag_seconds: number;
+	    content_fetch_attempts: number;
+	    content_fetch_success: number;
+	    content_fetch_failures: number;
+	    blob_cache_hits: number;
+	    blob_cache_misses: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReleaseMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content_fetch_success_rate = source["content_fetch_success_rate"];
+	        this.content_fetch_latency_p95 = source["content_fetch_latency_p95"];
+	        this.blob_cache_hit_rate = source["blob_cache_hit_rate"];
+	        this.sync_lag_seconds = source["sync_lag_seconds"];
+	        this.content_fetch_attempts = source["content_fetch_attempts"];
+	        this.content_fetch_success = source["content_fetch_success"];
+	        this.content_fetch_failures = source["content_fetch_failures"];
+	        this.blob_cache_hits = source["blob_cache_hits"];
+	        this.blob_cache_misses = source["blob_cache_misses"];
+	    }
+	}
 	export class StorageUsage {
 	    privateUsedBytes: number;
 	    publicUsedBytes: number;

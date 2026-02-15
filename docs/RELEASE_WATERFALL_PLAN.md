@@ -281,6 +281,18 @@
 - 验证：
   - `go test ./... -run 'TestR5ReleaseMetricsDerivedValues|TestR5BlobCacheMetricsRecordedFromReadPath|TestR5ReleaseAlertRaisedAfterSustainWindow|TestR5ReleaseAlertRecoveryClearsActiveState' -count=1` 通过
   - 手工演练留档完成：`docs/R5_INCIDENT_DRILL_RECORD_2026-02-15.md`
+  - 治理离线回归补测通过：
+    - `TestR5GovernanceSyncResponseAppliesTrustedModeration`
+    - `TestR5GovernanceSyncResponseSkipsUntrustedModeration`
+
+R5 收口补充（2026-02-15）：
+- 治理状态离线补齐能力落地（复用反熵思路）：
+  - 新增协议：`GOVERNANCE_SYNC_REQUEST/RESPONSE`
+  - 周期任务在反熵 worker 中并行触发治理同步请求
+  - 重连后可自动补齐 `moderation` 状态（含 `UNBAN/SHADOW_BAN`）
+  - 同步应用时增加 trusted admin 校验，忽略非受信任来源治理状态
+  - 同步最近窗口治理日志（`moderation_logs`，仅 `result=applied`），用于离线回归后的审计追踪
+  - 治理日志同步去重（同一条日志不会因周期同步重复写入）
 
 产品 UI 约束（正式版）：
 - 回源失败提示应用户友好（例如“内容暂时不可用，请稍后重试”）。

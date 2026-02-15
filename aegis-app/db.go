@@ -173,45 +173,51 @@ type SyncPostDigest struct {
 }
 
 type IncomingMessage struct {
-	Type                   string           `json:"type"`
-	ID                     string           `json:"id"`
-	Pubkey                 string           `json:"pubkey"`
-	VoterPubkey            string           `json:"voter_pubkey"`
-	PostID                 string           `json:"post_id"`
-	CommentID              string           `json:"comment_id"`
-	ParentID               string           `json:"parent_id"`
-	DisplayName            string           `json:"display_name"`
-	AvatarURL              string           `json:"avatar_url"`
-	Title                  string           `json:"title"`
-	Body                   string           `json:"body"`
-	ContentCID             string           `json:"content_cid"`
-	ImageCID               string           `json:"image_cid"`
-	ThumbCID               string           `json:"thumb_cid"`
-	ImageMIME              string           `json:"image_mime"`
-	ImageSize              int64            `json:"image_size"`
-	ImageWidth             int              `json:"image_width"`
-	ImageHeight            int              `json:"image_height"`
-	ImageDataBase64        string           `json:"image_data_base64,omitempty"`
-	IsThumbnail            bool             `json:"is_thumbnail,omitempty"`
-	RequestID              string           `json:"request_id"`
-	RequesterPeerID        string           `json:"requester_peer_id"`
-	ResponderPeerID        string           `json:"responder_peer_id"`
-	SyncSinceTimestamp     int64            `json:"sync_since_timestamp,omitempty"`
-	SyncWindowSeconds      int64            `json:"sync_window_seconds,omitempty"`
-	SyncBatchSize          int              `json:"sync_batch_size,omitempty"`
-	Found                  bool             `json:"found"`
-	SizeBytes              int64            `json:"size_bytes"`
-	Content                string           `json:"content"`
-	SubID                  string           `json:"sub_id"`
-	SubTitle               string           `json:"sub_title"`
-	SubDesc                string           `json:"sub_desc"`
-	Timestamp              int64            `json:"timestamp"`
-	Signature              string           `json:"signature"`
-	TargetPubkey           string           `json:"target_pubkey"`
-	AdminPubkey            string           `json:"admin_pubkey"`
-	Reason                 string           `json:"reason"`
-	Summaries              []SyncPostDigest `json:"summaries,omitempty"`
-	HideHistoryOnShadowBan bool             `json:"hide_history_on_shadowban"`
+	Type                   string            `json:"type"`
+	ID                     string            `json:"id"`
+	Pubkey                 string            `json:"pubkey"`
+	VoterPubkey            string            `json:"voter_pubkey"`
+	PostID                 string            `json:"post_id"`
+	CommentID              string            `json:"comment_id"`
+	ParentID               string            `json:"parent_id"`
+	DisplayName            string            `json:"display_name"`
+	AvatarURL              string            `json:"avatar_url"`
+	Title                  string            `json:"title"`
+	Body                   string            `json:"body"`
+	ContentCID             string            `json:"content_cid"`
+	ImageCID               string            `json:"image_cid"`
+	ThumbCID               string            `json:"thumb_cid"`
+	ImageMIME              string            `json:"image_mime"`
+	ImageSize              int64             `json:"image_size"`
+	ImageWidth             int               `json:"image_width"`
+	ImageHeight            int               `json:"image_height"`
+	ImageDataBase64        string            `json:"image_data_base64,omitempty"`
+	IsThumbnail            bool              `json:"is_thumbnail,omitempty"`
+	RequestID              string            `json:"request_id"`
+	RequesterPeerID        string            `json:"requester_peer_id"`
+	ResponderPeerID        string            `json:"responder_peer_id"`
+	SyncSinceTimestamp     int64             `json:"sync_since_timestamp,omitempty"`
+	SyncWindowSeconds      int64             `json:"sync_window_seconds,omitempty"`
+	SyncBatchSize          int               `json:"sync_batch_size,omitempty"`
+	GovernanceSinceTs      int64             `json:"governance_since_ts,omitempty"`
+	GovernanceBatchSize    int               `json:"governance_batch_size,omitempty"`
+	GovernanceLogSinceTs   int64             `json:"governance_log_since_ts,omitempty"`
+	GovernanceLogLimit     int               `json:"governance_log_limit,omitempty"`
+	GovernanceStates       []ModerationState `json:"governance_states,omitempty"`
+	GovernanceLogs         []ModerationLog   `json:"governance_logs,omitempty"`
+	Found                  bool              `json:"found"`
+	SizeBytes              int64             `json:"size_bytes"`
+	Content                string            `json:"content"`
+	SubID                  string            `json:"sub_id"`
+	SubTitle               string            `json:"sub_title"`
+	SubDesc                string            `json:"sub_desc"`
+	Timestamp              int64             `json:"timestamp"`
+	Signature              string            `json:"signature"`
+	TargetPubkey           string            `json:"target_pubkey"`
+	AdminPubkey            string            `json:"admin_pubkey"`
+	Reason                 string            `json:"reason"`
+	Summaries              []SyncPostDigest  `json:"summaries,omitempty"`
+	HideHistoryOnShadowBan bool              `json:"hide_history_on_shadowban"`
 }
 
 const defaultSubID = "general"
@@ -1471,6 +1477,157 @@ func (a *App) GetModerationState() ([]ModerationState, error) {
 	}
 
 	return result, rows.Err()
+}
+
+func (a *App) getLatestModerationTimestamp() (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	var latest sql.NullInt64
+	if err := a.db.QueryRow(`SELECT MAX(timestamp) FROM moderation;`).Scan(&latest); err != nil {
+		return 0, err
+	}
+	if !latest.Valid {
+		return 0, nil
+	}
+	return latest.Int64, nil
+}
+
+func (a *App) listModerationSince(sinceTimestamp int64, limit int) ([]ModerationState, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	if sinceTimestamp < 0 {
+		sinceTimestamp = 0
+	}
+
+	rows, err := a.db.Query(`
+		SELECT target_pubkey, action, source_admin, timestamp, reason
+		FROM moderation
+		WHERE timestamp >= ?
+		ORDER BY timestamp ASC
+		LIMIT ?;
+	`, sinceTimestamp, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ModerationState, 0, limit)
+	for rows.Next() {
+		var row ModerationState
+		if err = rows.Scan(&row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Reason); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) getLatestAppliedModerationLogTimestamp() (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	var latest sql.NullInt64
+	if err := a.db.QueryRow(`SELECT MAX(timestamp) FROM moderation_logs WHERE result = 'applied';`).Scan(&latest); err != nil {
+		return 0, err
+	}
+	if !latest.Valid {
+		return 0, nil
+	}
+	return latest.Int64, nil
+}
+
+func (a *App) listAppliedModerationLogsSince(sinceTimestamp int64, limit int) ([]ModerationLog, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	if sinceTimestamp < 0 {
+		sinceTimestamp = 0
+	}
+
+	rows, err := a.db.Query(`
+		SELECT id, target_pubkey, action, source_admin, timestamp, reason, result
+		FROM moderation_logs
+		WHERE result = 'applied' AND timestamp >= ?
+		ORDER BY timestamp ASC, id ASC
+		LIMIT ?;
+	`, sinceTimestamp, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ModerationLog, 0, limit)
+	for rows.Next() {
+		var row ModerationLog
+		if err = rows.Scan(&row.ID, &row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Reason, &row.Result); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) insertModerationLogIfAbsent(log ModerationLog) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	log.TargetPubkey = strings.TrimSpace(log.TargetPubkey)
+	log.Action = strings.ToUpper(strings.TrimSpace(log.Action))
+	log.SourceAdmin = strings.TrimSpace(log.SourceAdmin)
+	log.Reason = strings.TrimSpace(log.Reason)
+	log.Result = strings.TrimSpace(log.Result)
+	if log.Result == "" {
+		log.Result = "applied"
+	}
+	if log.TargetPubkey == "" || log.SourceAdmin == "" || log.Action == "" {
+		return false, errors.New("invalid moderation log payload")
+	}
+	if log.Timestamp <= 0 {
+		log.Timestamp = time.Now().Unix()
+	}
+
+	var exists int
+	err := a.db.QueryRow(`
+		SELECT 1
+		FROM moderation_logs
+		WHERE target_pubkey = ?
+		  AND action = ?
+		  AND source_admin = ?
+		  AND timestamp = ?
+		  AND reason = ?
+		  AND result = ?
+		LIMIT 1;
+	`, log.TargetPubkey, log.Action, log.SourceAdmin, log.Timestamp, log.Reason, log.Result).Scan(&exists)
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+
+	_, err = a.db.Exec(`
+		INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, reason, result)
+		VALUES (?, ?, ?, ?, ?, ?);
+	`, log.TargetPubkey, log.Action, log.SourceAdmin, log.Timestamp, log.Reason, log.Result)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (a *App) GetModerationLogs(limit int) ([]ModerationLog, error) {

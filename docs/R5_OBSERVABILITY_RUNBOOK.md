@@ -68,3 +68,19 @@
 - `AEGIS_FETCH_REQUEST_WINDOW_SEC`：请求限流窗口（秒）
 - `AEGIS_ANTI_ENTROPY_INTERVAL_SEC`：反熵周期（秒）
 - `AEGIS_RELEASE_ALERT_EVAL_INTERVAL_SEC`：告警评估周期（秒），默认 `30`
+- `AEGIS_GOVERNANCE_SYNC_BATCH_SIZE`：治理同步单次返回上限，默认 `200`
+- `AEGIS_GOVERNANCE_LOG_SYNC_LIMIT`：治理日志同步单次返回上限，默认 `200`
+
+## 6. 离线治理状态不一致排查
+1. 观察重连后是否出现治理同步日志：
+   - `governance_sync.request sent`
+   - `governance_sync.response sent`
+   - `governance_sync.response applied`
+2. 若节点仍是旧治理状态：
+   - 确认治理消息 `source_admin` 在受信任管理员集合中。
+   - 确认该节点与 peers 已建立连接（`Connected Peers > 0`）。
+3. 若日志出现 `governance_sync.skip_untrusted`：
+   - 说明同步条目来自非受信任 admin，被安全策略忽略。
+4. 若只看到状态同步、看不到日志补齐：
+   - 确认 `AEGIS_GOVERNANCE_LOG_SYNC_LIMIT > 0`。
+   - 当前日志同步口径仅包含 `result=applied` 的治理日志。

@@ -56,6 +56,10 @@ export function GetPrivateFeed():Promise<Array<main.ForumMessage>>;
 
 export function GetProfile(arg1:string):Promise<main.Profile>;
 
+export function GetReleaseAlerts():Promise<Array<main.ReleaseAlert>>;
+
+export function GetReleaseMetrics():Promise<main.ReleaseMetrics>;
+
 export function GetStorageUsage():Promise<main.StorageUsage>;
 
 export function GetSubs():Promise<Array<main.Sub>>;
@@ -101,6 +105,8 @@ export function StartP2P(arg1:number,arg2:Array<string>):Promise<main.P2PStatus>
 export function StopP2P():Promise<void>;
 
 export function TriggerAntiEntropySyncNow():Promise<void>;
+
+export function TriggerReleaseAlertEvaluationNow():Promise<Array<main.ReleaseAlert>>;
 
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
 

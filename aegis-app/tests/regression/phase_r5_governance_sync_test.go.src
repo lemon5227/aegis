@@ -1,0 +1,139 @@
+package main
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestR5GovernanceSyncResponseAppliesTrustedModeration(t *testing.T) {
+	app := NewApp()
+	app.SetDatabasePath(filepath.Join(t.TempDir(), "r5_governance_sync.db"))
+	if err := app.initDatabase(); err != nil {
+		t.Fatalf("initDatabase failed: %v", err)
+	}
+	defer func() {
+		if app.db != nil {
+			_ = app.db.Close()
+		}
+	}()
+
+	admin := "admin-trusted"
+	target := "target-user"
+	if err := app.AddTrustedAdmin(admin, "genesis"); err != nil {
+		t.Fatalf("AddTrustedAdmin failed: %v", err)
+	}
+	if err := app.upsertModeration(target, "SHADOW_BAN", admin, time.Now().Unix(), "seed"); err != nil {
+		t.Fatalf("seed moderation failed: %v", err)
+	}
+
+	app.handleGovernanceSyncResponse("local-peer", IncomingMessage{
+		Type:            messageTypeGovernanceSyncResponse,
+		RequestID:       "req-1",
+		RequesterPeerID: "local-peer",
+		GovernanceStates: []ModerationState{
+			{
+				TargetPubkey: target,
+				Action:       "UNBAN",
+				SourceAdmin:  admin,
+				Timestamp:    time.Now().Unix() + 10,
+				Reason:       "rejoin-restore",
+			},
+		},
+	})
+
+	shadowBanned, err := app.isShadowBanned(target)
+	if err != nil {
+		t.Fatalf("isShadowBanned failed: %v", err)
+	}
+	if shadowBanned {
+		t.Fatalf("expected target to be unbanned after governance sync")
+	}
+}
+
+func TestR5GovernanceSyncResponseSkipsUntrustedModeration(t *testing.T) {
+	app := NewApp()
+	app.SetDatabasePath(filepath.Join(t.TempDir(), "r5_governance_untrusted.db"))
+	if err := app.initDatabase(); err != nil {
+		t.Fatalf("initDatabase failed: %v", err)
+	}
+	defer func() {
+		if app.db != nil {
+			_ = app.db.Close()
+		}
+	}()
+
+	target := "target-user-untrusted"
+	app.handleGovernanceSyncResponse("local-peer", IncomingMessage{
+		Type:            messageTypeGovernanceSyncResponse,
+		RequestID:       "req-2",
+		RequesterPeerID: "local-peer",
+		GovernanceStates: []ModerationState{
+			{
+				TargetPubkey: target,
+				Action:       "SHADOW_BAN",
+				SourceAdmin:  "unknown-admin",
+				Timestamp:    time.Now().Unix(),
+				Reason:       "should-skip",
+			},
+		},
+	})
+
+	rows, err := app.GetModerationState()
+	if err != nil {
+		t.Fatalf("GetModerationState failed: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected no moderation state for untrusted sync, got %d", len(rows))
+	}
+}
+
+func TestR5GovernanceSyncResponseSyncsAppliedLogsAndDedupes(t *testing.T) {
+	app := NewApp()
+	app.SetDatabasePath(filepath.Join(t.TempDir(), "r5_governance_logs.db"))
+	if err := app.initDatabase(); err != nil {
+		t.Fatalf("initDatabase failed: %v", err)
+	}
+	defer func() {
+		if app.db != nil {
+			_ = app.db.Close()
+		}
+	}()
+
+	admin := "admin-log-trusted"
+	target := "target-log-user"
+	if err := app.AddTrustedAdmin(admin, "genesis"); err != nil {
+		t.Fatalf("AddTrustedAdmin failed: %v", err)
+	}
+
+	ts := time.Now().Unix()
+	msg := IncomingMessage{
+		Type:            messageTypeGovernanceSyncResponse,
+		RequestID:       "req-log-1",
+		RequesterPeerID: "local-peer",
+		GovernanceLogs: []ModerationLog{
+			{
+				TargetPubkey: target,
+				Action:       "SHADOW_BAN",
+				SourceAdmin:  admin,
+				Timestamp:    ts,
+				Reason:       "sync-log",
+				Result:       "applied",
+			},
+		},
+	}
+
+	app.handleGovernanceSyncResponse("local-peer", msg)
+	app.handleGovernanceSyncResponse("local-peer", msg)
+
+	logs, err := app.GetModerationLogs(20)
+	if err != nil {
+		t.Fatalf("GetModerationLogs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected exactly 1 synced moderation log, got %d", len(logs))
+	}
+	if logs[0].TargetPubkey != target || logs[0].Action != "SHADOW_BAN" || logs[0].SourceAdmin != admin {
+		t.Fatalf("unexpected synced log payload: %+v", logs[0])
+	}
+}

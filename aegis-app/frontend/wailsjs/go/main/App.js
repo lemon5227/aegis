@@ -110,6 +110,14 @@ export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
 }
 
+export function GetReleaseAlerts() {
+  return window['go']['main']['App']['GetReleaseAlerts']();
+}
+
+export function GetReleaseMetrics() {
+  return window['go']['main']['App']['GetReleaseMetrics']();
+}
+
 export function GetStorageUsage() {
   return window['go']['main']['App']['GetStorageUsage']();
 }
@@ -200,6 +208,10 @@ export function StopP2P() {
 
 export function TriggerAntiEntropySyncNow() {
   return window['go']['main']['App']['TriggerAntiEntropySyncNow']();
+}
+
+export function TriggerReleaseAlertEvaluationNow() {
+  return window['go']['main']['App']['TriggerReleaseAlertEvaluationNow']();
 }
 
 export function UpdateProfile(arg1, arg2) {

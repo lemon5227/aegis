@@ -25,22 +25,25 @@ const forumTopicName = "aegis-forum-global"
 const mdnsServiceTag = "aegis-forum-mdns"
 
 const (
-	messageTypeContentFetchRequest  = "CONTENT_FETCH_REQUEST"
-	messageTypeContentFetchResponse = "CONTENT_FETCH_RESPONSE"
-	messageTypeMediaFetchRequest    = "MEDIA_FETCH_REQUEST"
-	messageTypeMediaFetchResponse   = "MEDIA_FETCH_RESPONSE"
-	messageTypeSyncSummaryRequest   = "SYNC_SUMMARY_REQUEST"
-	messageTypeSyncSummaryResponse  = "SYNC_SUMMARY_RESPONSE"
+	messageTypeContentFetchRequest    = "CONTENT_FETCH_REQUEST"
+	messageTypeContentFetchResponse   = "CONTENT_FETCH_RESPONSE"
+	messageTypeMediaFetchRequest      = "MEDIA_FETCH_REQUEST"
+	messageTypeMediaFetchResponse     = "MEDIA_FETCH_RESPONSE"
+	messageTypeSyncSummaryRequest     = "SYNC_SUMMARY_REQUEST"
+	messageTypeSyncSummaryResponse    = "SYNC_SUMMARY_RESPONSE"
+	messageTypeGovernanceSyncRequest  = "GOVERNANCE_SYNC_REQUEST"
+	messageTypeGovernanceSyncResponse = "GOVERNANCE_SYNC_RESPONSE"
 )
 
 var (
-	errContentFetchNoPeers  = errors.New("content fetch no peers")
-	errContentFetchTimeout  = errors.New("content fetch timeout")
-	errContentFetchNotFound = errors.New("content fetch not found")
-	errMediaFetchNoPeers    = errors.New("media fetch no peers")
-	errMediaFetchTimeout    = errors.New("media fetch timeout")
-	errMediaFetchNotFound   = errors.New("media fetch not found")
-	errAntiEntropyNoPeers   = errors.New("anti-entropy no peers")
+	errContentFetchNoPeers   = errors.New("content fetch no peers")
+	errContentFetchTimeout   = errors.New("content fetch timeout")
+	errContentFetchNotFound  = errors.New("content fetch not found")
+	errMediaFetchNoPeers     = errors.New("media fetch no peers")
+	errMediaFetchTimeout     = errors.New("media fetch timeout")
+	errMediaFetchNotFound    = errors.New("media fetch not found")
+	errAntiEntropyNoPeers    = errors.New("anti-entropy no peers")
+	errGovernanceSyncNoPeers = errors.New("governance sync no peers")
 )
 
 type fetchRateWindow struct {
@@ -905,12 +908,24 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "anti-entropy initial sync failed: %v", err)
 			}
+			if err := a.publishGovernanceSyncRequest(); err != nil &&
+				!errors.Is(err, errGovernanceSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance sync initial request failed: %v", err)
+			}
 		case <-ticker.C:
 			if err := a.publishSyncSummaryRequest(); err != nil &&
 				!errors.Is(err, errAntiEntropyNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "anti-entropy periodic sync failed: %v", err)
+			}
+			if err := a.publishGovernanceSyncRequest(); err != nil &&
+				!errors.Is(err, errGovernanceSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance sync periodic request failed: %v", err)
 			}
 		}
 	}
@@ -971,6 +986,28 @@ func resolveAntiEntropyBodyFetchBudget() int {
 	return 16
 }
 
+func resolveGovernanceSyncBatchSize() int {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_GOVERNANCE_SYNC_BATCH_SIZE"))
+	if raw != "" {
+		if size, err := strconv.Atoi(raw); err == nil && size > 0 && size <= 500 {
+			return size
+		}
+	}
+
+	return 200
+}
+
+func resolveGovernanceLogSyncLimit() int {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_GOVERNANCE_LOG_SYNC_LIMIT"))
+	if raw != "" {
+		if size, err := strconv.Atoi(raw); err == nil && size > 0 && size <= 500 {
+			return size
+		}
+	}
+
+	return 200
+}
+
 func (a *App) updateAntiEntropyStats(apply func(stats *AntiEntropyStats)) {
 	a.antiEntropyMu.Lock()
 	defer a.antiEntropyMu.Unlock()
@@ -1027,6 +1064,59 @@ func (a *App) publishSyncSummaryRequest() error {
 	})
 	if a.ctx != nil {
 		runtime.LogInfof(a.ctx, "anti_entropy.request sent request_id=%s since=%d window=%d batch=%d", request.RequestID, request.SyncSinceTimestamp, request.SyncWindowSeconds, request.SyncBatchSize)
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) publishGovernanceSyncRequest() error {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	host := a.p2pHost
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil || host == nil {
+		return errors.New("p2p not started")
+	}
+	if len(host.Network().Peers()) == 0 {
+		return errGovernanceSyncNoPeers
+	}
+
+	latestTimestamp, err := a.getLatestModerationTimestamp()
+	if err != nil {
+		return err
+	}
+	latestLogTimestamp, err := a.getLatestAppliedModerationLogTimestamp()
+	if err != nil {
+		return err
+	}
+
+	request := IncomingMessage{
+		Type:                 messageTypeGovernanceSyncRequest,
+		RequestID:            buildMessageID(host.ID().String(), "governance-sync", time.Now().UnixNano()),
+		RequesterPeerID:      host.ID().String(),
+		GovernanceSinceTs:    latestTimestamp,
+		GovernanceBatchSize:  resolveGovernanceSyncBatchSize(),
+		GovernanceLogSinceTs: latestLogTimestamp,
+		GovernanceLogLimit:   resolveGovernanceLogSyncLimit(),
+		Timestamp:            time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	if a.ctx != nil {
+		runtime.LogInfof(
+			a.ctx,
+			"governance_sync.request sent request_id=%s state_since=%d state_batch=%d log_since=%d log_limit=%d",
+			request.RequestID,
+			request.GovernanceSinceTs,
+			request.GovernanceBatchSize,
+			request.GovernanceLogSinceTs,
+			request.GovernanceLogLimit,
+		)
 	}
 
 	return topic.Publish(ctx, payload)
@@ -1105,6 +1195,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 			continue
 		case messageTypeSyncSummaryResponse:
 			a.handleSyncSummaryResponse(localPeerID.String(), incoming)
+			continue
+		case messageTypeGovernanceSyncRequest:
+			a.handleGovernanceSyncRequest(localPeerID.String(), incoming)
+			continue
+		case messageTypeGovernanceSyncResponse:
+			a.handleGovernanceSyncResponse(localPeerID.String(), incoming)
 			continue
 		}
 
@@ -1563,6 +1659,171 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 
 	if insertedAny && a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "feed:updated")
+	}
+}
+
+func (a *App) handleGovernanceSyncRequest(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	requestID := strings.TrimSpace(message.RequestID)
+	if requester == "" || requestID == "" || requester == localPeerID {
+		return
+	}
+
+	sinceTs := message.GovernanceSinceTs
+	if sinceTs < 0 {
+		sinceTs = 0
+	}
+
+	batchSize := message.GovernanceBatchSize
+	if batchSize <= 0 || batchSize > 500 {
+		batchSize = resolveGovernanceSyncBatchSize()
+	}
+	logSinceTs := message.GovernanceLogSinceTs
+	if logSinceTs < 0 {
+		logSinceTs = 0
+	}
+	logLimit := message.GovernanceLogLimit
+	if logLimit <= 0 || logLimit > 500 {
+		logLimit = resolveGovernanceLogSyncLimit()
+	}
+
+	states, err := a.listModerationSince(sinceTs, batchSize)
+	if err != nil {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "governance_sync.build failed request_id=%s err=%v", requestID, err)
+		}
+		return
+	}
+	logs, err := a.listAppliedModerationLogsSince(logSinceTs, logLimit)
+	if err != nil {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "governance_sync.build_logs failed request_id=%s err=%v", requestID, err)
+		}
+		return
+	}
+
+	response := IncomingMessage{
+		Type:                 messageTypeGovernanceSyncResponse,
+		RequestID:            requestID,
+		RequesterPeerID:      requester,
+		ResponderPeerID:      localPeerID,
+		GovernanceSinceTs:    sinceTs,
+		GovernanceBatchSize:  batchSize,
+		GovernanceLogSinceTs: logSinceTs,
+		GovernanceLogLimit:   logLimit,
+		GovernanceStates:     states,
+		GovernanceLogs:       logs,
+		Timestamp:            time.Now().Unix(),
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "governance_sync.response sent request_id=%s state_since=%d states=%d log_since=%d logs=%d", requestID, sinceTs, len(states), logSinceTs, len(logs))
+	}
+}
+
+func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	if requester == "" || requester != localPeerID {
+		return
+	}
+
+	states := make([]ModerationState, 0, len(message.GovernanceStates))
+	for _, row := range message.GovernanceStates {
+		if strings.TrimSpace(row.TargetPubkey) == "" || strings.TrimSpace(row.SourceAdmin) == "" {
+			continue
+		}
+		action := strings.ToUpper(strings.TrimSpace(row.Action))
+		if action != "SHADOW_BAN" && action != "UNBAN" {
+			continue
+		}
+		row.Action = action
+		states = append(states, row)
+	}
+	if len(states) == 0 {
+		// logs may still be present even when state delta is empty.
+	}
+
+	sort.SliceStable(states, func(i int, j int) bool {
+		return states[i].Timestamp < states[j].Timestamp
+	})
+
+	applied := 0
+	for _, row := range states {
+		trusted, err := a.isTrustedAdmin(row.SourceAdmin)
+		if err != nil || !trusted {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance_sync.skip_untrusted target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, row.Action)
+			}
+			continue
+		}
+		if err := a.upsertModeration(row.TargetPubkey, row.Action, row.SourceAdmin, row.Timestamp, row.Reason); err != nil {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance_sync.apply_failed target=%s action=%s err=%v", row.TargetPubkey, row.Action, err)
+			}
+			continue
+		}
+		applied++
+	}
+
+	logsInserted := 0
+	for _, row := range message.GovernanceLogs {
+		if strings.TrimSpace(row.TargetPubkey) == "" || strings.TrimSpace(row.SourceAdmin) == "" {
+			continue
+		}
+		action := strings.ToUpper(strings.TrimSpace(row.Action))
+		if action != "SHADOW_BAN" && action != "UNBAN" {
+			continue
+		}
+		if strings.TrimSpace(strings.ToLower(row.Result)) != "applied" {
+			continue
+		}
+
+		trusted, err := a.isTrustedAdmin(row.SourceAdmin)
+		if err != nil || !trusted {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance_sync.skip_untrusted_log target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, action)
+			}
+			continue
+		}
+
+		inserted, err := a.insertModerationLogIfAbsent(ModerationLog{
+			TargetPubkey: row.TargetPubkey,
+			Action:       action,
+			SourceAdmin:  row.SourceAdmin,
+			Timestamp:    row.Timestamp,
+			Reason:       row.Reason,
+			Result:       "applied",
+		})
+		if err != nil {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "governance_sync.log_apply_failed target=%s action=%s err=%v", row.TargetPubkey, action, err)
+			}
+			continue
+		}
+		if inserted {
+			logsInserted++
+		}
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "governance_sync.response applied request_id=%s states=%d applied=%d logs=%d logs_inserted=%d", strings.TrimSpace(message.RequestID), len(states), applied, len(message.GovernanceLogs), logsInserted)
+		if applied > 0 || logsInserted > 0 {
+			runtime.EventsEmit(a.ctx, "feed:updated")
+		}
 	}
 }
 
