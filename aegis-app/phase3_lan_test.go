@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// TestPhase3P2PReplication is a long-term integration regression test.
+// It verifies that a structured public post published by node A is replicated to node B over P2P.
 func TestPhase3P2PReplication(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -69,9 +71,10 @@ func TestPhase3P2PReplication(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	content := "phase3-lan-test-message"
-	if err = nodeA.PublishPost("node-a-pubkey", content); err != nil {
-		t.Fatalf("nodeA PublishPost failed: %v", err)
+	title := "phase3-lan-test-title"
+	body := "phase3-lan-test-message"
+	if err = nodeA.PublishPostStructuredToSub("node-a-pubkey", title, body, "general"); err != nil {
+		t.Fatalf("nodeA PublishPostStructuredToSub failed: %v", err)
 	}
 
 	deadline := time.Now().Add(8 * time.Second)
@@ -79,7 +82,7 @@ func TestPhase3P2PReplication(t *testing.T) {
 		feed, feedErr := nodeB.GetFeed()
 		if feedErr == nil {
 			for _, message := range feed {
-				if message.Content == content {
+				if message.Title == title && message.Body == body {
 					return
 				}
 			}

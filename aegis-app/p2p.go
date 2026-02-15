@@ -11,11 +11,13 @@ import (
 	libp2p "github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const forumTopicName = "aegis-forum-global"
+const mdnsServiceTag = "aegis-forum-mdns"
 
 type P2PStatus struct {
 	Started        bool     `json:"started"`
@@ -72,6 +74,13 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 	a.p2pTopic = topic
 	a.p2pSub = subscription
 
+	mdnsService := mdns.NewMdnsService(host, mdnsServiceTag, &mdnsNotifee{app: a})
+	if err = mdnsService.Start(); err == nil {
+		a.mdnsSvc = mdnsService
+	} else if a.ctx != nil {
+		runtime.LogWarningf(a.ctx, "mdns start failed: %v", err)
+	}
+
 	go a.consumeP2PMessages(ctx, host.ID(), subscription)
 
 	for _, address := range bootstrapPeers {
@@ -80,6 +89,10 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 			continue
 		}
 		_ = a.connectPeerLocked(trimmed)
+	}
+
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "p2p:updated")
 	}
 
 	return a.getP2PStatusLocked(), nil
@@ -98,13 +111,18 @@ func (a *App) StopP2P() error {
 		a.p2pSub.Cancel()
 	}
 	if a.p2pTopic != nil {
-		if err := a.p2pTopic.Close(); err != nil && firstErr == nil {
-			firstErr = err
+		if closeErr := a.p2pTopic.Close(); closeErr != nil {
+			firstErr = errors.Join(firstErr, closeErr)
+		}
+	}
+	if a.mdnsSvc != nil {
+		if closeErr := a.mdnsSvc.Close(); closeErr != nil {
+			firstErr = errors.Join(firstErr, closeErr)
 		}
 	}
 	if a.p2pHost != nil {
-		if err := a.p2pHost.Close(); err != nil && firstErr == nil {
-			firstErr = err
+		if closeErr := a.p2pHost.Close(); closeErr != nil {
+			firstErr = errors.Join(firstErr, closeErr)
 		}
 	}
 
@@ -113,6 +131,11 @@ func (a *App) StopP2P() error {
 	a.p2pSub = nil
 	a.p2pTopic = nil
 	a.p2pHost = nil
+	a.mdnsSvc = nil
+
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "p2p:updated")
+	}
 
 	return firstErr
 }
@@ -121,7 +144,12 @@ func (a *App) ConnectPeer(address string) error {
 	a.p2pMu.Lock()
 	defer a.p2pMu.Unlock()
 
-	return a.connectPeerLocked(address)
+	err := a.connectPeerLocked(address)
+	if err == nil && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "p2p:updated")
+	}
+
+	return err
 }
 
 func (a *App) connectPeerLocked(address string) error {
@@ -145,12 +173,31 @@ func (a *App) connectPeerLocked(address string) error {
 	return a.p2pHost.Connect(ctx, *info)
 }
 
-func (a *App) PublishPost(pubkey string, content string) error {
-	if strings.TrimSpace(pubkey) == "" {
+func (a *App) PublishPostStructured(pubkey string, title string, body string) error {
+	return a.PublishPostStructuredToSub(pubkey, title, body, defaultSubID)
+}
+
+func (a *App) PublishPostStructuredToSub(pubkey string, title string, body string, subID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
 		return errors.New("pubkey is required")
 	}
-	if strings.TrimSpace(content) == "" {
-		return errors.New("content is required")
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	if title == "" {
+		title = deriveTitle(body)
+	}
+	if title == "" || body == "" {
+		return errors.New("title and body are required")
+	}
+
+	shadowBanned, err := a.isShadowBanned(pubkey)
+	if err != nil {
+		return err
+	}
+	if shadowBanned {
+		_, err = a.AddLocalPostStructuredToSub(pubkey, title, body, "public", subID)
+		return err
 	}
 
 	a.p2pMu.Lock()
@@ -163,13 +210,24 @@ func (a *App) PublishPost(pubkey string, content string) error {
 	}
 
 	now := time.Now().Unix()
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
+	}
+
 	msg := IncomingMessage{
-		Type:      "POST",
-		ID:        buildMessageID(pubkey, content, now),
-		Pubkey:    pubkey,
-		Content:   content,
-		Timestamp: now,
-		Signature: "",
+		Type:        "POST",
+		ID:          buildMessageID(pubkey, body, now),
+		Pubkey:      pubkey,
+		DisplayName: strings.TrimSpace(profile.DisplayName),
+		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
+		Title:       title,
+		Body:        body,
+		ContentCID:  buildContentCID(body),
+		Content:     "",
+		SubID:       normalizeSubID(subID),
+		Timestamp:   now,
+		Signature:   "",
 	}
 
 	payload, err := json.Marshal(msg)
@@ -186,6 +244,233 @@ func (a *App) PublishPost(pubkey string, content string) error {
 
 func (a *App) PublishShadowBan(targetPubkey string, adminPubkey string, reason string) error {
 	return a.publishGovernanceMessage("SHADOW_BAN", targetPubkey, adminPubkey, reason)
+}
+
+func (a *App) PublishCreateSub(subID string, title string, description string) error {
+	subID = normalizeSubID(subID)
+	if strings.TrimSpace(subID) == "" {
+		return errors.New("sub id is required")
+	}
+
+	now := time.Now().Unix()
+	msg := IncomingMessage{
+		Type:      "SUB_CREATE",
+		SubID:     subID,
+		SubTitle:  strings.TrimSpace(title),
+		SubDesc:   strings.TrimSpace(description),
+		Timestamp: now,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return nil
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishComment(pubkey string, postID string, parentID string, body string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	parentID = strings.TrimSpace(parentID)
+	body = strings.TrimSpace(body)
+
+	if pubkey == "" || postID == "" || body == "" {
+		return errors.New("pubkey, post id and body are required")
+	}
+
+	shadowBanned, err := a.isShadowBanned(pubkey)
+	if err != nil {
+		return err
+	}
+	if shadowBanned {
+		_, err = a.AddLocalComment(pubkey, postID, parentID, body)
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
+	now := time.Now().Unix()
+	raw := fmt.Sprintf("%s|%s|%s", postID, parentID, body)
+	msg := IncomingMessage{
+		Type:      "COMMENT",
+		ID:        buildMessageID(pubkey, raw, now),
+		Pubkey:    pubkey,
+		PostID:    postID,
+		ParentID:  parentID,
+		Body:      body,
+		Timestamp: now,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishPostUpvote(pubkey string, postID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
+	msg := IncomingMessage{
+		Type:        "POST_UPVOTE",
+		Pubkey:      pubkey,
+		VoterPubkey: pubkey,
+		PostID:      postID,
+		Timestamp:   time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || postID == "" || commentID == "" {
+		return errors.New("pubkey, post id and comment id are required")
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
+	msg := IncomingMessage{
+		Type:        "COMMENT_UPVOTE",
+		Pubkey:      pubkey,
+		VoterPubkey: pubkey,
+		PostID:      postID,
+		CommentID:   commentID,
+		Timestamp:   time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return errors.New("pubkey is required")
+	}
+
+	now := time.Now().Unix()
+	msg := IncomingMessage{
+		Type:        "PROFILE_UPDATE",
+		Pubkey:      pubkey,
+		DisplayName: strings.TrimSpace(displayName),
+		AvatarURL:   strings.TrimSpace(avatarURL),
+		Timestamp:   now,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return nil
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishGovernancePolicy(hideHistoryOnShadowBan bool) error {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
+	now := time.Now().Unix()
+	msg := IncomingMessage{
+		Type:                   "GOVERNANCE_POLICY_UPDATE",
+		HideHistoryOnShadowBan: hideHistoryOnShadowBan,
+		Timestamp:              now,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	return topic.Publish(ctx, payload)
 }
 
 func (a *App) PublishUnban(targetPubkey string, adminPubkey string, reason string) error {
@@ -205,6 +490,15 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 		return errors.New("admin pubkey is required")
 	}
 
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
 	now := time.Now().Unix()
 	msg := IncomingMessage{
 		Type:         action,
@@ -221,15 +515,6 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
-	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return nil
 	}
 
 	return topic.Publish(ctx, payload)
@@ -278,6 +563,10 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 			continue
 		}
 
+		var incoming IncomingMessage
+		_ = json.Unmarshal(message.Data, &incoming)
+		messageType := strings.ToUpper(strings.TrimSpace(incoming.Type))
+
 		if err = a.ProcessIncomingMessage(message.Data); err != nil {
 			if a.ctx != nil {
 				runtime.LogErrorf(a.ctx, "process p2p message failed: %v", err)
@@ -286,7 +575,45 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		}
 
 		if a.ctx != nil {
+			if messageType == "COMMENT" || messageType == "COMMENT_UPVOTE" {
+				postID := strings.TrimSpace(incoming.PostID)
+				if postID != "" {
+					runtime.EventsEmit(a.ctx, "comments:updated", map[string]string{"postId": postID})
+					continue
+				}
+			}
+
 			runtime.EventsEmit(a.ctx, "feed:updated")
 		}
+	}
+}
+
+type mdnsNotifee struct {
+	app *App
+}
+
+func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
+	if n == nil || n.app == nil {
+		return
+	}
+
+	n.app.p2pMu.Lock()
+	defer n.app.p2pMu.Unlock()
+
+	if n.app.p2pHost == nil || n.app.p2pCtx == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(n.app.p2pCtx, 5*time.Second)
+	defer cancel()
+
+	if err := n.app.p2pHost.Connect(ctx, info); err != nil && n.app.ctx != nil {
+		runtime.LogWarningf(n.app.ctx, "mdns connect failed: %v", err)
+		return
+	}
+
+	if n.app.ctx != nil {
+		runtime.LogInfof(n.app.ctx, "mdns connected peer: %s", info.ID.String())
+		runtime.EventsEmit(n.app.ctx, "p2p:updated")
 	}
 }

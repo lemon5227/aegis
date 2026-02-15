@@ -7,7 +7,10 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"io"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -30,6 +33,7 @@ type App struct {
 	p2pHost   host.Host
 	p2pTopic  *pubsub.Topic
 	p2pSub    *pubsub.Subscription
+	mdnsSvc   io.Closer
 }
 
 type Identity struct {
@@ -76,6 +80,34 @@ func (a *App) startup(ctx context.Context) {
 				runtime.LogErrorf(ctx, "seed trusted admin failed (%s): %v", adminPubkey, err)
 			}
 		}
+	}
+
+	if !shouldAutoStartP2P() {
+		return
+	}
+
+	listenPort := resolveAutoStartP2PPort()
+	bootstrapPeers := resolveBootstrapPeers()
+	started := false
+	for _, candidatePort := range resolveAutoStartPortCandidates(listenPort) {
+		if !isTCPPortAvailable(candidatePort) {
+			continue
+		}
+
+		if _, err := a.StartP2P(candidatePort, bootstrapPeers); err != nil {
+			runtime.LogWarningf(ctx, "p2p auto start failed on port %d: %v", candidatePort, err)
+			continue
+		}
+
+		started = true
+		if candidatePort != listenPort {
+			runtime.LogInfof(ctx, "p2p auto start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
+		}
+		break
+	}
+
+	if !started {
+		runtime.LogErrorf(ctx, "p2p auto start failed: no available port in range [%d,%d]", listenPort, listenPort+20)
 	}
 }
 
@@ -184,4 +216,82 @@ func (a *App) VerifyMessage(publicKeyHex string, message string, signatureHex st
 	}
 
 	return ed25519.Verify(publicKey, []byte(message), signature), nil
+}
+
+func shouldAutoStartP2P() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("AEGIS_AUTOSTART_P2P")))
+	if raw == "" {
+		return true
+	}
+
+	switch raw {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func resolveAutoStartP2PPort() int {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_P2P_PORT"))
+	if raw == "" {
+		return 40100
+	}
+
+	port, err := strconv.Atoi(raw)
+	if err != nil || port <= 0 {
+		return 40100
+	}
+
+	return port
+}
+
+func resolveBootstrapPeers() []string {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_BOOTSTRAP_PEERS"))
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	peers := make([]string, 0, len(parts))
+	for _, candidate := range parts {
+		peerAddr := strings.TrimSpace(candidate)
+		if peerAddr == "" {
+			continue
+		}
+		peers = append(peers, peerAddr)
+	}
+
+	if len(peers) == 0 {
+		return nil
+	}
+
+	return peers
+}
+
+func resolveAutoStartPortCandidates(preferredPort int) []int {
+	if preferredPort <= 0 {
+		preferredPort = 40100
+	}
+
+	result := make([]int, 0, 21)
+	result = append(result, preferredPort)
+	for offset := 1; offset <= 20; offset++ {
+		result = append(result, preferredPort+offset)
+	}
+
+	return result
+}
+
+func isTCPPortAvailable(port int) bool {
+	if port <= 0 {
+		return false
+	}
+
+	listener, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
 }
