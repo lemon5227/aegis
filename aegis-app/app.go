@@ -47,8 +47,13 @@ type App struct {
 	mediaFetchGroup     singleflight.Group
 	mediaFetchWaiters   map[string]chan IncomingMessage
 
-	antiEntropyMu    sync.Mutex
-	antiEntropyStats AntiEntropyStats
+	antiEntropyMu      sync.Mutex
+	antiEntropyStats   AntiEntropyStats
+	observabilityMu    sync.Mutex
+	observabilityStats ObservabilityStats
+	releaseAlertMu     sync.Mutex
+	releaseAlertState  map[string]int64
+	releaseAlertActive map[string]ReleaseAlert
 }
 
 type AntiEntropyStats struct {
@@ -84,6 +89,8 @@ func NewApp() *App {
 		fetchRateState:      make(map[string]fetchRateWindow),
 		peerBlacklist:       make(map[string]struct{}),
 		peerGreylist:        make(map[string]int64),
+		releaseAlertState:   make(map[string]int64),
+		releaseAlertActive:  make(map[string]ReleaseAlert),
 	}
 }
 

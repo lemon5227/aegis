@@ -848,18 +848,31 @@ func (a *App) GetPostBodyByCID(contentCID string) (PostBodyBlob, error) {
 
 	body, err := a.getContentBlobLocal(contentCID)
 	if err == nil {
+		a.noteBlobCacheHit()
 		return body, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return PostBodyBlob{}, err
 	}
+	a.noteBlobCacheMiss()
 
 	status := a.GetP2PStatus()
 	if !status.Started {
 		return PostBodyBlob{}, errors.New("content not found")
 	}
 
-	if fetchErr := a.fetchContentBlobFromNetwork(contentCID, 4*time.Second); fetchErr != nil {
+	maxAttempts := resolveFetchRetryAttempts()
+	var fetchErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		fetchErr = a.fetchContentBlobFromNetwork(contentCID, 4*time.Second)
+		if fetchErr == nil {
+			break
+		}
+		if attempt < maxAttempts {
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+	if fetchErr != nil {
 		return PostBodyBlob{}, fetchErr
 	}
 
@@ -908,18 +921,31 @@ func (a *App) GetMediaByCID(contentCID string) (MediaBlob, error) {
 
 	media, err := a.getMediaBlobLocal(contentCID)
 	if err == nil {
+		a.noteBlobCacheHit()
 		return media, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return MediaBlob{}, err
 	}
+	a.noteBlobCacheMiss()
 
 	status := a.GetP2PStatus()
 	if !status.Started {
 		return MediaBlob{}, errors.New("media not found")
 	}
 
-	if fetchErr := a.fetchMediaBlobFromNetwork(contentCID, 5*time.Second); fetchErr != nil {
+	maxAttempts := resolveFetchRetryAttempts()
+	var fetchErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		fetchErr = a.fetchMediaBlobFromNetwork(contentCID, 5*time.Second)
+		if fetchErr == nil {
+			break
+		}
+		if attempt < maxAttempts {
+			time.Sleep(150 * time.Millisecond)
+		}
+	}
+	if fetchErr != nil {
 		return MediaBlob{}, fetchErr
 	}
 

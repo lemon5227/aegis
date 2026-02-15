@@ -140,6 +140,7 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 
 	go a.consumeP2PMessages(ctx, host.ID(), subscription)
 	go a.runAntiEntropySyncWorker(ctx, host.ID())
+	go a.runReleaseAlertWorker(ctx)
 
 	for _, address := range bootstrapPeers {
 		trimmed := strings.TrimSpace(address)
@@ -687,8 +688,10 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 	if timeout <= 0 {
 		timeout = 4 * time.Second
 	}
+	startedAt := time.Now()
+	a.noteContentFetchAttempt()
 
-	_, err, _ := a.contentFetchGroup.Do("cid:"+contentCID, func() (any, error) {
+	_, err, shared := a.contentFetchGroup.Do("cid:"+contentCID, func() (any, error) {
 		a.p2pMu.Lock()
 		topic := a.p2pTopic
 		ctx := a.p2pCtx
@@ -722,6 +725,17 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 			ContentCID:      contentCID,
 			Timestamp:       time.Now().Unix(),
 		}
+		if a.ctx != nil {
+			runtime.LogInfof(
+				a.ctx,
+				"content_fetch.request request_id=%s cid=%s peer_count=%d timeout_ms=%d retry_budget=%d",
+				requestID,
+				contentCID,
+				len(host.Network().Peers()),
+				timeout.Milliseconds(),
+				resolveFetchRetryAttempts()-1,
+			)
+		}
 
 		payload, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
@@ -745,8 +759,33 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 			return nil, errContentFetchTimeout
 		}
 	})
+	elapsedMs := time.Since(startedAt).Milliseconds()
+	if err != nil {
+		a.noteContentFetchResult(false, time.Since(startedAt))
+		if a.ctx != nil {
+			runtime.LogWarningf(
+				a.ctx,
+				"content_fetch.result cid=%s success=false elapsed_ms=%d dedup_shared=%t error=%v",
+				contentCID,
+				elapsedMs,
+				shared,
+				err,
+			)
+		}
+		return err
+	}
+	a.noteContentFetchResult(true, time.Since(startedAt))
+	if a.ctx != nil {
+		runtime.LogInfof(
+			a.ctx,
+			"content_fetch.result cid=%s success=true elapsed_ms=%d dedup_shared=%t",
+			contentCID,
+			elapsedMs,
+			shared,
+		)
+	}
 
-	return err
+	return nil
 }
 
 func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration) error {
@@ -792,6 +831,17 @@ func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration
 			ContentCID:      contentCID,
 			Timestamp:       time.Now().Unix(),
 		}
+		if a.ctx != nil {
+			runtime.LogInfof(
+				a.ctx,
+				"media_fetch.request request_id=%s cid=%s peer_count=%d timeout_ms=%d retry_budget=%d",
+				requestID,
+				contentCID,
+				len(host.Network().Peers()),
+				timeout.Milliseconds(),
+				resolveFetchRetryAttempts()-1,
+			)
+		}
 
 		payload, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
@@ -819,6 +869,13 @@ func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration
 			return nil, errMediaFetchTimeout
 		}
 	})
+	if a.ctx != nil {
+		if err != nil {
+			runtime.LogWarningf(a.ctx, "media_fetch.result cid=%s success=false error=%v", contentCID, err)
+		} else {
+			runtime.LogInfof(a.ctx, "media_fetch.result cid=%s success=true", contentCID)
+		}
+	}
 
 	return err
 }

@@ -242,6 +242,47 @@
 - 验证：
   - `go test ./... -count=1` 全量通过
 
+### R5（发布级稳定性与观测）
+- 状态：In Progress
+- 已完成（第一批）：
+  - 新增发布指标快照接口：`GetReleaseMetrics`
+  - 指标口径落地：
+    - `content_fetch_success_rate`
+    - `content_fetch_latency_p95`（毫秒）
+    - `blob_cache_hit_rate`
+    - `sync_lag_seconds`
+  - 指标采集路径落地：
+    - 正文/媒体读取路径缓存命中与 miss 计数（`GetPostBodyByCID` / `GetMediaByCID`）
+    - 正文回源请求与结果计数、延迟采样（用于 success rate 与 p95）
+  - 结构化日志增强：
+    - `content_fetch.request/result`（含 cid、peer_count、timeout、耗时、结果）
+    - `media_fetch.request/result`（含 cid、peer_count、timeout、结果）
+    - 新增 `retry_budget` 字段，结合 `AEGIS_FETCH_RETRY_ATTEMPTS` 观测重试预算
+  - 新增 R5 回归测试：
+    - `TestR5ReleaseMetricsDerivedValues`
+    - `TestR5BlobCacheMetricsRecordedFromReadPath`
+  - 新增排障文档：`docs/R5_OBSERVABILITY_RUNBOOK.md`
+- 已完成（第二批）：
+  - 告警规则引擎接入应用运行时：
+    - 周期评估 worker：`runReleaseAlertWorker`
+    - 手动触发入口：`TriggerReleaseAlertEvaluationNow`
+    - 活跃告警查询：`GetReleaseAlerts`
+  - 告警规则按阈值+持续窗口落地（warning/critical）：
+    - `content_fetch_success_rate`
+    - `content_fetch_latency_p95`
+    - `blob_cache_hit_rate`
+    - `sync_lag_seconds`
+  - 告警结构化日志落地：
+    - `release_alert.raised`
+    - `release_alert.recovered`
+  - 新增 R5 告警回归测试：
+    - `TestR5ReleaseAlertRaisedAfterSustainWindow`
+    - `TestR5ReleaseAlertRecoveryClearsActiveState`
+- 待完成：
+  - “10 分钟内定位详情打不开”手工演练留档
+- 验证：
+  - `go test ./... -run 'TestR5ReleaseMetricsDerivedValues|TestR5BlobCacheMetricsRecordedFromReadPath|TestR5ReleaseAlertRaisedAfterSustainWindow|TestR5ReleaseAlertRecoveryClearsActiveState' -count=1` 通过
+
 产品 UI 约束（正式版）：
 - 回源失败提示应用户友好（例如“内容暂时不可用，请稍后重试”）。
 - “立即重试/抓包/调试”类按钮仅出现在诊断模式，不作为默认产品 UI。
