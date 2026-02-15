@@ -14,6 +14,10 @@ export function AddLocalPostStructuredToSub(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['AddLocalPostStructuredToSub'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function AddLocalPostWithImageToSub(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['AddLocalPostWithImageToSub'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function AddTrustedAdmin(arg1, arg2) {
   return window['go']['main']['App']['AddTrustedAdmin'](arg1, arg2);
 }
@@ -36,6 +40,10 @@ export function CreateSub(arg1, arg2, arg3) {
 
 export function GenerateIdentity() {
   return window['go']['main']['App']['GenerateIdentity']();
+}
+
+export function GetAntiEntropyStats() {
+  return window['go']['main']['App']['GetAntiEntropyStats']();
 }
 
 export function GetCommentsByPost(arg1) {
@@ -66,6 +74,10 @@ export function GetIdentityState() {
   return window['go']['main']['App']['GetIdentityState']();
 }
 
+export function GetMediaByCID(arg1) {
+  return window['go']['main']['App']['GetMediaByCID'](arg1);
+}
+
 export function GetModerationLogs(arg1) {
   return window['go']['main']['App']['GetModerationLogs'](arg1);
 }
@@ -84,6 +96,10 @@ export function GetPostBodyByCID(arg1) {
 
 export function GetPostBodyByID(arg1) {
   return window['go']['main']['App']['GetPostBodyByID'](arg1);
+}
+
+export function GetPostMediaByID(arg1) {
+  return window['go']['main']['App']['GetPostMediaByID'](arg1);
 }
 
 export function GetPrivateFeed() {
@@ -146,6 +162,10 @@ export function PublishPostUpvote(arg1, arg2) {
   return window['go']['main']['App']['PublishPostUpvote'](arg1, arg2);
 }
 
+export function PublishPostWithImageToSub(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['PublishPostWithImageToSub'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function PublishProfileUpdate(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishProfileUpdate'](arg1, arg2, arg3);
 }
@@ -176,6 +196,10 @@ export function StartP2P(arg1, arg2) {
 
 export function StopP2P() {
   return window['go']['main']['App']['StopP2P']();
+}
+
+export function TriggerAntiEntropySyncNow() {
+  return window['go']['main']['App']['TriggerAntiEntropySyncNow']();
 }
 
 export function UpdateProfile(arg1, arg2) {

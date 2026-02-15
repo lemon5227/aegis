@@ -77,6 +77,28 @@ func TestC1GovernancePolicyAffectsHistoricalVisibility(t *testing.T) {
 		t.Fatalf("expected 0 visible historical posts when policy on, got %d", len(feed))
 	}
 
+	if _, err = app.SetGovernancePolicy(false); err != nil {
+		t.Fatalf("SetGovernancePolicy(false) failed: %v", err)
+	}
+	feed, err = app.GetFeedBySubSorted("general", "new")
+	if err != nil {
+		t.Fatalf("GetFeedBySubSorted failed: %v", err)
+	}
+	if len(feed) != 1 {
+		t.Fatalf("expected 1 visible historical post after policy off restore, got %d", len(feed))
+	}
+
+	if _, err = app.SetGovernancePolicy(true); err != nil {
+		t.Fatalf("SetGovernancePolicy(true) failed: %v", err)
+	}
+	feed, err = app.GetFeedBySubSorted("general", "new")
+	if err != nil {
+		t.Fatalf("GetFeedBySubSorted failed: %v", err)
+	}
+	if len(feed) != 0 {
+		t.Fatalf("expected 0 visible historical posts after policy on reapply, got %d", len(feed))
+	}
+
 	if err = app.upsertModeration(pubkey, "UNBAN", "admin-a", now+2, "restore"); err != nil {
 		t.Fatalf("upsertModeration unban failed: %v", err)
 	}

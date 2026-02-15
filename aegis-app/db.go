@@ -1,18 +1,28 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+
 	_ "github.com/mattn/go-sqlite3"
+	xdraw "golang.org/x/image/draw"
 )
 
 const (
@@ -27,6 +37,12 @@ type ForumMessage struct {
 	Title       string `json:"title"`
 	Body        string `json:"body"`
 	ContentCID  string `json:"contentCid"`
+	ImageCID    string `json:"imageCid"`
+	ThumbCID    string `json:"thumbCid"`
+	ImageMIME   string `json:"imageMime"`
+	ImageSize   int64  `json:"imageSize"`
+	ImageWidth  int    `json:"imageWidth"`
+	ImageHeight int    `json:"imageHeight"`
 	Content     string `json:"content"`
 	Score       int64  `json:"score"`
 	Timestamp   int64  `json:"timestamp"`
@@ -43,6 +59,12 @@ type PostIndex struct {
 	Title       string `json:"title"`
 	BodyPreview string `json:"bodyPreview"`
 	ContentCID  string `json:"contentCid"`
+	ImageCID    string `json:"imageCid"`
+	ThumbCID    string `json:"thumbCid"`
+	ImageMIME   string `json:"imageMime"`
+	ImageSize   int64  `json:"imageSize"`
+	ImageWidth  int    `json:"imageWidth"`
+	ImageHeight int    `json:"imageHeight"`
 	Score       int64  `json:"score"`
 	Timestamp   int64  `json:"timestamp"`
 	Zone        string `json:"zone"`
@@ -54,6 +76,16 @@ type PostBodyBlob struct {
 	ContentCID string `json:"contentCid"`
 	Body       string `json:"body"`
 	SizeBytes  int64  `json:"sizeBytes"`
+}
+
+type MediaBlob struct {
+	ContentCID  string `json:"contentCid"`
+	DataBase64  string `json:"dataBase64"`
+	Mime        string `json:"mime"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	IsThumbnail bool   `json:"isThumbnail"`
 }
 
 type Sub struct {
@@ -125,29 +157,61 @@ type GovernanceAdmin struct {
 	Active      bool   `json:"active"`
 }
 
+type SyncPostDigest struct {
+	ID          string `json:"id"`
+	Pubkey      string `json:"pubkey"`
+	Title       string `json:"title"`
+	ContentCID  string `json:"content_cid"`
+	ImageCID    string `json:"image_cid"`
+	ThumbCID    string `json:"thumb_cid"`
+	ImageMIME   string `json:"image_mime"`
+	ImageSize   int64  `json:"image_size"`
+	ImageWidth  int    `json:"image_width"`
+	ImageHeight int    `json:"image_height"`
+	Timestamp   int64  `json:"timestamp"`
+	SubID       string `json:"sub_id"`
+}
+
 type IncomingMessage struct {
-	Type                   string `json:"type"`
-	ID                     string `json:"id"`
-	Pubkey                 string `json:"pubkey"`
-	VoterPubkey            string `json:"voter_pubkey"`
-	PostID                 string `json:"post_id"`
-	CommentID              string `json:"comment_id"`
-	ParentID               string `json:"parent_id"`
-	DisplayName            string `json:"display_name"`
-	AvatarURL              string `json:"avatar_url"`
-	Title                  string `json:"title"`
-	Body                   string `json:"body"`
-	ContentCID             string `json:"content_cid"`
-	Content                string `json:"content"`
-	SubID                  string `json:"sub_id"`
-	SubTitle               string `json:"sub_title"`
-	SubDesc                string `json:"sub_desc"`
-	Timestamp              int64  `json:"timestamp"`
-	Signature              string `json:"signature"`
-	TargetPubkey           string `json:"target_pubkey"`
-	AdminPubkey            string `json:"admin_pubkey"`
-	Reason                 string `json:"reason"`
-	HideHistoryOnShadowBan bool   `json:"hide_history_on_shadowban"`
+	Type                   string           `json:"type"`
+	ID                     string           `json:"id"`
+	Pubkey                 string           `json:"pubkey"`
+	VoterPubkey            string           `json:"voter_pubkey"`
+	PostID                 string           `json:"post_id"`
+	CommentID              string           `json:"comment_id"`
+	ParentID               string           `json:"parent_id"`
+	DisplayName            string           `json:"display_name"`
+	AvatarURL              string           `json:"avatar_url"`
+	Title                  string           `json:"title"`
+	Body                   string           `json:"body"`
+	ContentCID             string           `json:"content_cid"`
+	ImageCID               string           `json:"image_cid"`
+	ThumbCID               string           `json:"thumb_cid"`
+	ImageMIME              string           `json:"image_mime"`
+	ImageSize              int64            `json:"image_size"`
+	ImageWidth             int              `json:"image_width"`
+	ImageHeight            int              `json:"image_height"`
+	ImageDataBase64        string           `json:"image_data_base64,omitempty"`
+	IsThumbnail            bool             `json:"is_thumbnail,omitempty"`
+	RequestID              string           `json:"request_id"`
+	RequesterPeerID        string           `json:"requester_peer_id"`
+	ResponderPeerID        string           `json:"responder_peer_id"`
+	SyncSinceTimestamp     int64            `json:"sync_since_timestamp,omitempty"`
+	SyncWindowSeconds      int64            `json:"sync_window_seconds,omitempty"`
+	SyncBatchSize          int              `json:"sync_batch_size,omitempty"`
+	Found                  bool             `json:"found"`
+	SizeBytes              int64            `json:"size_bytes"`
+	Content                string           `json:"content"`
+	SubID                  string           `json:"sub_id"`
+	SubTitle               string           `json:"sub_title"`
+	SubDesc                string           `json:"sub_desc"`
+	Timestamp              int64            `json:"timestamp"`
+	Signature              string           `json:"signature"`
+	TargetPubkey           string           `json:"target_pubkey"`
+	AdminPubkey            string           `json:"admin_pubkey"`
+	Reason                 string           `json:"reason"`
+	Summaries              []SyncPostDigest `json:"summaries,omitempty"`
+	HideHistoryOnShadowBan bool             `json:"hide_history_on_shadowban"`
 }
 
 const defaultSubID = "general"
@@ -193,6 +257,12 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			title TEXT NOT NULL DEFAULT '',
 			body TEXT NOT NULL DEFAULT '',
 			content_cid TEXT NOT NULL DEFAULT '',
+			image_cid TEXT NOT NULL DEFAULT '',
+			thumb_cid TEXT NOT NULL DEFAULT '',
+			image_mime TEXT NOT NULL DEFAULT '',
+			image_size INTEGER NOT NULL DEFAULT 0,
+			image_width INTEGER NOT NULL DEFAULT 0,
+			image_height INTEGER NOT NULL DEFAULT 0,
 			content TEXT NOT NULL,
 			score INTEGER NOT NULL DEFAULT 0,
 			timestamp INTEGER NOT NULL,
@@ -204,13 +274,24 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_zone_timestamp ON messages(zone, timestamp);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_pubkey_timestamp ON messages(pubkey, timestamp);`,
-		`CREATE INDEX IF NOT EXISTS idx_messages_content_cid ON messages(content_cid);`,
 		`CREATE TABLE IF NOT EXISTS content_blobs (
 			content_cid TEXT PRIMARY KEY,
 			body TEXT NOT NULL,
 			size_bytes INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
-			last_accessed_at INTEGER NOT NULL,
+			last_accessed_at INTEGER NOT NULL DEFAULT 0,
+			pinned INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE TABLE IF NOT EXISTS media_blobs (
+			content_cid TEXT PRIMARY KEY,
+			data BLOB NOT NULL,
+			mime TEXT NOT NULL DEFAULT '',
+			size_bytes INTEGER NOT NULL,
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
+			is_thumbnail INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			last_accessed_at INTEGER NOT NULL DEFAULT 0,
 			pinned INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE TABLE IF NOT EXISTS subs (
@@ -320,6 +401,54 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN image_cid TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN thumb_cid TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN image_mime TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN image_size INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN image_width INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN image_height INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_content_cid ON messages(content_cid);`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_image_cid ON messages(image_cid);`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_media_blobs_last_accessed ON media_blobs(last_accessed_at);`); err != nil {
+		return err
 	}
 
 	if _, err := db.Exec(`ALTER TABLE content_blobs ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
@@ -645,7 +774,7 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 	}
 
 	query := `
-		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, score, timestamp, zone, sub_id, visibility
+		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
 		FROM messages
 		WHERE zone = 'public' AND (visibility = 'normal' OR pubkey = ?) AND sub_id = ?
 		ORDER BY timestamp DESC
@@ -667,6 +796,12 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 			&item.Title,
 			&item.BodyPreview,
 			&item.ContentCID,
+			&item.ImageCID,
+			&item.ThumbCID,
+			&item.ImageMIME,
+			&item.ImageSize,
+			&item.ImageWidth,
+			&item.ImageHeight,
 			&item.Score,
 			&item.Timestamp,
 			&item.Zone,
@@ -711,20 +846,28 @@ func (a *App) GetPostBodyByCID(contentCID string) (PostBodyBlob, error) {
 		return PostBodyBlob{}, errors.New("content cid is required")
 	}
 
-	var body PostBodyBlob
-	err := a.db.QueryRow(`
-		SELECT content_cid, body, size_bytes
-		FROM content_blobs
-		WHERE content_cid = ?;
-	`, contentCID).Scan(&body.ContentCID, &body.Body, &body.SizeBytes)
+	body, err := a.getContentBlobLocal(contentCID)
+	if err == nil {
+		return body, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PostBodyBlob{}, err
+	}
+
+	status := a.GetP2PStatus()
+	if !status.Started {
+		return PostBodyBlob{}, errors.New("content not found")
+	}
+
+	if fetchErr := a.fetchContentBlobFromNetwork(contentCID, 4*time.Second); fetchErr != nil {
+		return PostBodyBlob{}, fetchErr
+	}
+
+	body, err = a.getContentBlobLocal(contentCID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PostBodyBlob{}, errors.New("content not found")
 	}
 	if err != nil {
-		return PostBodyBlob{}, err
-	}
-
-	if _, err = a.db.Exec(`UPDATE content_blobs SET last_accessed_at = ? WHERE content_cid = ?;`, time.Now().Unix(), contentCID); err != nil {
 		return PostBodyBlob{}, err
 	}
 
@@ -751,6 +894,371 @@ func (a *App) GetPostBodyByID(postID string) (PostBodyBlob, error) {
 	}
 
 	return a.GetPostBodyByCID(contentCID)
+}
+
+func (a *App) GetMediaByCID(contentCID string) (MediaBlob, error) {
+	if a.db == nil {
+		return MediaBlob{}, errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	if contentCID == "" {
+		return MediaBlob{}, errors.New("media cid is required")
+	}
+
+	media, err := a.getMediaBlobLocal(contentCID)
+	if err == nil {
+		return media, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return MediaBlob{}, err
+	}
+
+	status := a.GetP2PStatus()
+	if !status.Started {
+		return MediaBlob{}, errors.New("media not found")
+	}
+
+	if fetchErr := a.fetchMediaBlobFromNetwork(contentCID, 5*time.Second); fetchErr != nil {
+		return MediaBlob{}, fetchErr
+	}
+
+	media, err = a.getMediaBlobLocal(contentCID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MediaBlob{}, errors.New("media not found")
+	}
+	if err != nil {
+		return MediaBlob{}, err
+	}
+
+	return media, nil
+}
+
+func (a *App) GetPostMediaByID(postID string) (MediaBlob, error) {
+	if a.db == nil {
+		return MediaBlob{}, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return MediaBlob{}, errors.New("post id is required")
+	}
+
+	var imageCID string
+	err := a.db.QueryRow(`SELECT image_cid FROM messages WHERE id = ?;`, postID).Scan(&imageCID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MediaBlob{}, errors.New("post not found")
+	}
+	if err != nil {
+		return MediaBlob{}, err
+	}
+	imageCID = strings.TrimSpace(imageCID)
+	if imageCID == "" {
+		return MediaBlob{}, errors.New("post has no image")
+	}
+
+	return a.GetMediaByCID(imageCID)
+}
+
+func (a *App) getMediaBlobRawLocal(contentCID string) (MediaBlob, []byte, error) {
+	var media MediaBlob
+	var raw []byte
+	var isThumb int
+	err := a.db.QueryRow(`
+		SELECT content_cid, data, mime, size_bytes, width, height, is_thumbnail
+		FROM media_blobs
+		WHERE content_cid = ?;
+	`, contentCID).Scan(&media.ContentCID, &raw, &media.Mime, &media.SizeBytes, &media.Width, &media.Height, &isThumb)
+	if err != nil {
+		return MediaBlob{}, nil, err
+	}
+
+	media.IsThumbnail = isThumb == 1
+	media.DataBase64 = base64.StdEncoding.EncodeToString(raw)
+
+	if _, err = a.db.Exec(`UPDATE media_blobs SET last_accessed_at = ? WHERE content_cid = ?;`, time.Now().Unix(), contentCID); err != nil {
+		return MediaBlob{}, nil, err
+	}
+
+	return media, raw, nil
+}
+
+func (a *App) getMediaBlobLocal(contentCID string) (MediaBlob, error) {
+	media, _, err := a.getMediaBlobRawLocal(contentCID)
+	if err != nil {
+		return MediaBlob{}, err
+	}
+	return media, nil
+}
+
+func (a *App) upsertMediaBlobRaw(contentCID string, mime string, data []byte, width int, height int, isThumbnail bool) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	mime = strings.TrimSpace(mime)
+	if contentCID == "" || len(data) == 0 {
+		return errors.New("invalid media blob")
+	}
+
+	thumbFlag := 0
+	if isThumbnail {
+		thumbFlag = 1
+	}
+
+	now := time.Now().Unix()
+	_, err := a.db.Exec(`
+		INSERT INTO media_blobs (content_cid, data, mime, size_bytes, width, height, is_thumbnail, created_at, last_accessed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(content_cid) DO UPDATE SET
+			data = excluded.data,
+			mime = excluded.mime,
+			size_bytes = excluded.size_bytes,
+			width = excluded.width,
+			height = excluded.height,
+			is_thumbnail = excluded.is_thumbnail,
+			last_accessed_at = excluded.last_accessed_at;
+	`, contentCID, data, mime, int64(len(data)), width, height, thumbFlag, now, now)
+	return err
+}
+
+func (a *App) getContentBlobLocal(contentCID string) (PostBodyBlob, error) {
+	var body PostBodyBlob
+	err := a.db.QueryRow(`
+		SELECT content_cid, body, size_bytes
+		FROM content_blobs
+		WHERE content_cid = ?;
+	`, contentCID).Scan(&body.ContentCID, &body.Body, &body.SizeBytes)
+	if err != nil {
+		return PostBodyBlob{}, err
+	}
+
+	if _, err = a.db.Exec(`UPDATE content_blobs SET last_accessed_at = ? WHERE content_cid = ?;`, time.Now().Unix(), contentCID); err != nil {
+		return PostBodyBlob{}, err
+	}
+
+	return body, nil
+}
+
+func (a *App) upsertContentBlob(contentCID string, body string, sizeBytes int64) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	body = strings.TrimSpace(body)
+	if contentCID == "" || body == "" {
+		return errors.New("invalid content blob")
+	}
+	if sizeBytes <= 0 {
+		sizeBytes = int64(len([]byte(body)))
+	}
+
+	now := time.Now().Unix()
+	_, err := a.db.Exec(`
+		INSERT INTO content_blobs (content_cid, body, size_bytes, created_at, last_accessed_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(content_cid) DO UPDATE SET
+			body = excluded.body,
+			size_bytes = excluded.size_bytes,
+			last_accessed_at = excluded.last_accessed_at;
+	`, contentCID, body, sizeBytes, now, now)
+	return err
+}
+
+func (a *App) listRecentPublicPostDigests(limit int) ([]SyncPostDigest, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	rows, err := a.db.Query(`
+		SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
+		FROM messages
+		WHERE zone = 'public' AND visibility = 'normal' AND content_cid != ''
+		ORDER BY timestamp DESC
+		LIMIT ?;
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]SyncPostDigest, 0, limit)
+	for rows.Next() {
+		var digest SyncPostDigest
+		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.SubID); err != nil {
+			return nil, err
+		}
+		result = append(result, digest)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) getLatestPublicPostTimestamp() (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	var latest sql.NullInt64
+	if err := a.db.QueryRow(`
+		SELECT MAX(timestamp)
+		FROM messages
+		WHERE zone = 'public' AND visibility = 'normal';
+	`).Scan(&latest); err != nil {
+		return 0, err
+	}
+
+	if !latest.Valid {
+		return 0, nil
+	}
+
+	return latest.Int64, nil
+}
+
+func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]SyncPostDigest, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	var rows *sql.Rows
+	var err error
+	if sinceTimestamp > 0 {
+		rows, err = a.db.Query(`
+			SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
+			FROM messages
+			WHERE zone = 'public' AND visibility = 'normal' AND content_cid != '' AND timestamp >= ?
+			ORDER BY timestamp ASC
+			LIMIT ?;
+		`, sinceTimestamp, limit)
+	} else {
+		rows, err = a.db.Query(`
+			SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
+			FROM messages
+			WHERE zone = 'public' AND visibility = 'normal' AND content_cid != ''
+			ORDER BY timestamp DESC
+			LIMIT ?;
+		`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]SyncPostDigest, 0, limit)
+	for rows.Next() {
+		var digest SyncPostDigest
+		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.SubID); err != nil {
+			return nil, err
+		}
+		result = append(result, digest)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	digest.ID = strings.TrimSpace(digest.ID)
+	digest.Pubkey = strings.TrimSpace(digest.Pubkey)
+	digest.Title = strings.TrimSpace(digest.Title)
+	digest.ContentCID = strings.TrimSpace(digest.ContentCID)
+	digest.ImageCID = strings.TrimSpace(digest.ImageCID)
+	digest.ThumbCID = strings.TrimSpace(digest.ThumbCID)
+	digest.ImageMIME = strings.TrimSpace(digest.ImageMIME)
+	digest.SubID = normalizeSubID(digest.SubID)
+	if digest.Timestamp <= 0 {
+		digest.Timestamp = time.Now().Unix()
+	}
+
+	if digest.ID == "" || digest.Pubkey == "" || digest.ContentCID == "" {
+		return false, errors.New("invalid sync digest")
+	}
+	if digest.Title == "" {
+		digest.Title = "Untitled"
+	}
+
+	result, err := a.db.Exec(`
+		INSERT INTO messages (
+			id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+		)
+		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, 0, 'public', ?, 0, 'normal')
+		ON CONFLICT(id) DO UPDATE SET
+			content_cid = CASE WHEN COALESCE(messages.content_cid, '') = '' THEN excluded.content_cid ELSE messages.content_cid END,
+			image_cid = CASE WHEN COALESCE(messages.image_cid, '') = '' THEN excluded.image_cid ELSE messages.image_cid END,
+			thumb_cid = CASE WHEN COALESCE(messages.thumb_cid, '') = '' THEN excluded.thumb_cid ELSE messages.thumb_cid END,
+			image_mime = CASE WHEN COALESCE(messages.image_mime, '') = '' THEN excluded.image_mime ELSE messages.image_mime END,
+			image_size = CASE WHEN COALESCE(messages.image_size, 0) = 0 THEN excluded.image_size ELSE messages.image_size END,
+			image_width = CASE WHEN COALESCE(messages.image_width, 0) = 0 THEN excluded.image_width ELSE messages.image_width END,
+			image_height = CASE WHEN COALESCE(messages.image_height, 0) = 0 THEN excluded.image_height ELSE messages.image_height END,
+			sub_id = CASE WHEN COALESCE(messages.sub_id, '') = '' THEN excluded.sub_id ELSE messages.sub_id END;
+	`, digest.ID, digest.Pubkey, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.SubID)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
+}
+
+func (a *App) hasContentBlobLocal(contentCID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	if contentCID == "" {
+		return false, nil
+	}
+
+	var exists int
+	err := a.db.QueryRow(`SELECT 1 FROM content_blobs WHERE content_cid = ? LIMIT 1;`, contentCID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (a *App) hasMediaBlobLocal(contentCID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	if contentCID == "" {
+		return false, nil
+	}
+
+	var exists int
+	err := a.db.QueryRow(`SELECT 1 FROM media_blobs WHERE content_cid = ? LIMIT 1;`, contentCID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func computeHotScore(score int64, createdAt int64, now int64) float64 {
@@ -1012,6 +1520,31 @@ func (a *App) SetGovernancePolicy(hideHistoryOnShadowBan bool) (GovernancePolicy
 		return GovernancePolicy{}, err
 	}
 
+	if hideHistoryOnShadowBan {
+		if _, err = a.db.Exec(`
+			UPDATE messages
+			SET visibility = 'shadowed'
+			WHERE zone = 'public'
+			  AND pubkey IN (
+				SELECT target_pubkey FROM moderation WHERE action = 'SHADOW_BAN'
+			  );
+		`); err != nil {
+			return GovernancePolicy{}, err
+		}
+	} else {
+		if _, err = a.db.Exec(`
+			UPDATE messages
+			SET visibility = 'normal'
+			WHERE zone = 'public'
+			  AND visibility = 'shadowed'
+			  AND pubkey IN (
+				SELECT target_pubkey FROM moderation WHERE action = 'SHADOW_BAN'
+			  );
+		`); err != nil {
+			return GovernancePolicy{}, err
+		}
+	}
+
 	return GovernancePolicy{HideHistoryOnShadowBan: hideHistoryOnShadowBan}, nil
 }
 
@@ -1102,8 +1635,15 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		_, err := a.upsertSub(message.SubID, message.SubTitle, message.SubDesc, message.Timestamp)
 		return err
 	case "GOVERNANCE_POLICY_UPDATE":
-		_, err := a.SetGovernancePolicy(message.HideHistoryOnShadowBan)
-		return err
+		trusted, trustErr := a.isTrustedAdmin(message.AdminPubkey)
+		if trustErr != nil {
+			return trustErr
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
+		_, policyErr := a.SetGovernancePolicy(message.HideHistoryOnShadowBan)
+		return policyErr
 	case "PROFILE_UPDATE":
 		_, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp)
 		return err
@@ -1223,6 +1763,12 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			Title:       title,
 			Body:        body,
 			ContentCID:  strings.TrimSpace(message.ContentCID),
+			ImageCID:    strings.TrimSpace(message.ImageCID),
+			ThumbCID:    strings.TrimSpace(message.ThumbCID),
+			ImageMIME:   strings.TrimSpace(message.ImageMIME),
+			ImageSize:   message.ImageSize,
+			ImageWidth:  message.ImageWidth,
+			ImageHeight: message.ImageHeight,
 			Content:     "",
 			Score:       0,
 			Timestamp:   message.Timestamp,
@@ -1388,6 +1934,173 @@ func (a *App) AddLocalPostStructuredToSub(pubkey string, title string, body stri
 	return a.insertMessage(message)
 }
 
+func (a *App) AddLocalPostWithImageToSub(pubkey string, title string, body string, zone string, subID string, imageBase64 string, imageMIME string) (ForumMessage, error) {
+	message, err := a.AddLocalPostStructuredToSub(pubkey, title, body, zone, subID)
+	if err != nil {
+		return ForumMessage{}, err
+	}
+
+	imageBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(imageBase64))
+	if err != nil || len(imageBytes) == 0 {
+		return ForumMessage{}, errors.New("invalid image payload")
+	}
+
+	processedBytes, processedMime, width, height, thumbBytes, thumbMime, _, _, prepErr := prepareImageAssets(imageBytes, imageMIME)
+	if prepErr != nil {
+		return ForumMessage{}, prepErr
+	}
+
+	imageCID := buildBinaryCID(processedBytes)
+	thumbCID := imageCID
+	if err = a.upsertMediaBlobRaw(imageCID, processedMime, processedBytes, width, height, false); err != nil {
+		return ForumMessage{}, err
+	}
+
+	if len(thumbBytes) > 0 {
+		candidateThumbCID := buildBinaryCID(thumbBytes)
+		thumbCID = candidateThumbCID
+		if candidateThumbCID != imageCID {
+			if err = a.upsertMediaBlobRaw(candidateThumbCID, thumbMime, thumbBytes, 0, 0, true); err != nil {
+				return ForumMessage{}, err
+			}
+		}
+	}
+
+	if _, err = a.db.Exec(`
+		UPDATE messages
+		SET image_cid = ?, thumb_cid = ?, image_mime = ?, image_size = ?, image_width = ?, image_height = ?
+		WHERE id = ?;
+	`, imageCID, thumbCID, processedMime, int64(len(processedBytes)), width, height, message.ID); err != nil {
+		return ForumMessage{}, err
+	}
+
+	message.ImageCID = imageCID
+	message.ThumbCID = thumbCID
+	message.ImageMIME = processedMime
+	message.ImageSize = int64(len(processedBytes))
+	message.ImageWidth = width
+	message.ImageHeight = height
+
+	return message, nil
+}
+
+func prepareImageAssets(source []byte, hintMIME string) (mainBytes []byte, mainMIME string, width int, height int, thumbBytes []byte, thumbMIME string, thumbWidth int, thumbHeight int, err error) {
+	hintMIME = strings.TrimSpace(strings.ToLower(hintMIME))
+	decoded, format, decodeErr := image.Decode(bytes.NewReader(source))
+	if decodeErr != nil {
+		fallbackMIME := hintMIME
+		if fallbackMIME == "" {
+			fallbackMIME = "application/octet-stream"
+		}
+		return source, fallbackMIME, 0, 0, nil, "", 0, 0, nil
+	}
+
+	bounds := decoded.Bounds()
+	width = bounds.Dx()
+	height = bounds.Dy()
+
+	mainMIME = normalizedImageMIME(hintMIME, format)
+
+	compressedImage := resizeImageIfNeeded(decoded, 1920)
+	compressedBytes, compressedMIME, encodeErr := encodeImageForStorage(compressedImage, mainMIME)
+	if encodeErr != nil {
+		return nil, "", 0, 0, nil, "", 0, 0, encodeErr
+	}
+
+	thumbImage := resizeImageIfNeeded(decoded, 320)
+	thumbWidth = thumbImage.Bounds().Dx()
+	thumbHeight = thumbImage.Bounds().Dy()
+	thumbBytes, thumbMIME, err = encodeImageForStorage(thumbImage, "image/jpeg")
+	if err != nil {
+		return nil, "", 0, 0, nil, "", 0, 0, err
+	}
+
+	return compressedBytes, compressedMIME, width, height, thumbBytes, thumbMIME, thumbWidth, thumbHeight, nil
+}
+
+func normalizedImageMIME(hint string, format string) string {
+	hint = strings.TrimSpace(strings.ToLower(hint))
+	if strings.HasPrefix(hint, "image/") {
+		return hint
+	}
+
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "jpeg", "jpg":
+		return "image/jpeg"
+	case "png":
+		return "image/png"
+	case "gif":
+		return "image/gif"
+	default:
+		return "image/jpeg"
+	}
+}
+
+func encodeImageForStorage(img image.Image, preferredMIME string) ([]byte, string, error) {
+	preferredMIME = strings.TrimSpace(strings.ToLower(preferredMIME))
+	if preferredMIME == "image/png" && !hasTransparency(img) {
+		preferredMIME = "image/jpeg"
+	}
+
+	var buffer bytes.Buffer
+	switch preferredMIME {
+	case "image/png":
+		encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+		if err := encoder.Encode(&buffer, img); err != nil {
+			return nil, "", err
+		}
+		return buffer.Bytes(), "image/png", nil
+	default:
+		if err := jpeg.Encode(&buffer, img, &jpeg.Options{Quality: 82}); err != nil {
+			return nil, "", err
+		}
+		return buffer.Bytes(), "image/jpeg", nil
+	}
+}
+
+func resizeImageIfNeeded(src image.Image, maxEdge int) image.Image {
+	if maxEdge <= 0 {
+		return src
+	}
+
+	bounds := src.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	if width <= maxEdge && height <= maxEdge {
+		return src
+	}
+
+	scale := float64(maxEdge) / float64(width)
+	if height > width {
+		scale = float64(maxEdge) / float64(height)
+	}
+	newWidth := int(float64(width) * scale)
+	newHeight := int(float64(height) * scale)
+	if newWidth < 1 {
+		newWidth = 1
+	}
+	if newHeight < 1 {
+		newHeight = 1
+	}
+
+	destination := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+	xdraw.ApproxBiLinear.Scale(destination, destination.Bounds(), src, bounds, xdraw.Over, nil)
+	return destination
+}
+
+func hasTransparency(img image.Image) bool {
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha := img.At(x, y).RGBA()
+			if alpha < 0xffff {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) ApplyShadowBan(targetPubkey string, adminPubkey string, reason string) error {
 	trusted, err := a.isTrustedAdmin(adminPubkey)
 	if err != nil {
@@ -1550,13 +2263,19 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	}
 
 	_, err = tx.Exec(
-		`INSERT OR REPLACE INTO messages (id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+		`INSERT OR REPLACE INTO messages (id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		message.ID,
 		message.Pubkey,
 		message.Title,
 		message.Body,
 		message.ContentCID,
+		message.ImageCID,
+		message.ThumbCID,
+		message.ImageMIME,
+		message.ImageSize,
+		message.ImageWidth,
+		message.ImageHeight,
 		message.Content,
 		message.Score,
 		message.Timestamp,
@@ -2007,6 +2726,11 @@ func buildContentCID(body string) string {
 	trimmed := strings.TrimSpace(body)
 	hash := sha256.Sum256([]byte(trimmed))
 	return "cidv1-" + hex.EncodeToString(hash[:])
+}
+
+func buildBinaryCID(data []byte) string {
+	hash := sha256.Sum256(data)
+	return "cidv1-bin-" + hex.EncodeToString(hash[:])
 }
 
 func deriveTitle(body string) string {

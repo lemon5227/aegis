@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import {
+    AddLocalPostWithImageToSub,
     AddLocalPostStructuredToSub,
     AddTrustedAdmin,
     ConnectPeer,
@@ -11,14 +12,17 @@ import {
     GetGovernancePolicy,
     GetModerationState,
     GetModerationLogs,
+    GetMediaByCID,
     GetP2PStatus,
     GetPostBodyByID,
+    GetPostMediaByID,
     GetProfile,
     GetPrivateFeed,
     GetStorageUsage,
     GetSubs,
     GetTrustedAdmins,
     PublishPostStructuredToSub,
+    PublishPostWithImageToSub,
     PublishPostUpvote,
     PublishGovernancePolicy,
     PublishCreateSub,
@@ -41,6 +45,12 @@ type ForumMessage = {
     title: string;
     body: string;
     contentCid: string;
+    imageCid: string;
+    thumbCid: string;
+    imageMime: string;
+    imageSize: number;
+    imageWidth: number;
+    imageHeight: number;
     score: number;
     timestamp: number;
     sizeBytes: number;
@@ -123,6 +133,16 @@ type PostBodyBlob = {
     sizeBytes: number;
 };
 
+type MediaBlob = {
+    contentCid: string;
+    dataBase64: string;
+    mime: string;
+    sizeBytes: number;
+    width: number;
+    height: number;
+    isThumbnail: boolean;
+};
+
 const bytesToMB = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
 function App() {
@@ -130,6 +150,9 @@ function App() {
     const [publicKey, setPublicKey] = useState('');
     const [postTitle, setPostTitle] = useState('Hello Aegis');
     const [postBody, setPostBody] = useState('Hello Aegis from local node');
+    const [postImageBase64, setPostImageBase64] = useState('');
+    const [postImageMime, setPostImageMime] = useState('');
+    const [postImagePreviewURL, setPostImagePreviewURL] = useState('');
     const [postZone, setPostZone] = useState<'private' | 'public'>('public');
     const [moderationTarget, setModerationTarget] = useState('');
     const [moderationReason, setModerationReason] = useState('manual-test');
@@ -165,9 +188,17 @@ function App() {
     const [profilesByPubkey, setProfilesByPubkey] = useState<Record<string, Profile>>({});
     const [postBodyCache, setPostBodyCache] = useState<Record<string, string>>({});
     const [selectedBodyLoading, setSelectedBodyLoading] = useState(false);
+    const [selectedBodyHint, setSelectedBodyHint] = useState('');
+    const [thumbnailURLByCID, setThumbnailURLByCID] = useState<Record<string, string>>({});
+    const [selectedImageURL, setSelectedImageURL] = useState('');
+    const [selectedImageLoading, setSelectedImageLoading] = useState(false);
+    const postImageInputRef = useRef<HTMLInputElement | null>(null);
     const selectedPostIdRef = useRef('');
+    const selectedBodyRetryTimerRef = useRef<number | null>(null);
+    const selectedBodyRetryCountRef = useRef(0);
     const identityReady = publicKey.trim().length > 0;
     const currentAdmin = trustedAdmins.find((admin) => admin.adminPubkey === publicKey);
+    const isGovernanceAdmin = !!currentAdmin;
     const currentRoleLabel = currentAdmin ? (currentAdmin.role === 'genesis' ? 'Genesis Admin' : 'Trusted Admin') : 'Normal Node';
 
     const hasWailsRuntime = () => {
@@ -237,6 +268,27 @@ function App() {
         return '';
     };
 
+    const clearSelectedBodyRetryTimer = () => {
+        if (selectedBodyRetryTimerRef.current !== null) {
+            window.clearTimeout(selectedBodyRetryTimerRef.current);
+            selectedBodyRetryTimerRef.current = null;
+        }
+    };
+
+    const scheduleSelectedBodyRetry = (post: ForumMessage) => {
+        if (selectedBodyRetryCountRef.current >= 3) {
+            return;
+        }
+
+        clearSelectedBodyRetryTimer();
+        selectedBodyRetryTimerRef.current = window.setTimeout(() => {
+            if (selectedPostIdRef.current !== post.id) {
+                return;
+            }
+            void hydrateSelectedPostBody(post, true);
+        }, 2000);
+    };
+
     async function loadProfiles(pubkeys: string[]) {
         const unique = Array.from(new Set(pubkeys.map((item) => item.trim()).filter((item) => item.length > 0)));
         if (unique.length === 0) {
@@ -277,6 +329,12 @@ function App() {
             title: item.title,
             body: item.bodyPreview || '',
             contentCid: item.contentCid || '',
+            imageCid: item.imageCid || '',
+            thumbCid: item.thumbCid || '',
+            imageMime: item.imageMime || '',
+            imageSize: item.imageSize || 0,
+            imageWidth: item.imageWidth || 0,
+            imageHeight: item.imageHeight || 0,
             score: item.score || 0,
             timestamp: item.timestamp || 0,
             sizeBytes: 0,
@@ -285,30 +343,116 @@ function App() {
             visibility: item.visibility || 'normal',
         })) as ForumMessage[];
         setFeed(mapped);
+        await preloadFeedThumbnails(mapped);
     }
 
-    async function hydrateSelectedPostBody(post: ForumMessage) {
+    async function preloadFeedThumbnails(rows: ForumMessage[]) {
+        const targets = rows
+            .map((item) => item.thumbCid || item.imageCid)
+            .map((cid) => (cid || '').trim())
+            .filter((cid) => cid.length > 0)
+            .slice(0, 20);
+
+        const missing = targets.filter((cid) => !thumbnailURLByCID[cid]);
+        if (missing.length === 0) {
+            return;
+        }
+
+        const fetched = await Promise.all(missing.map(async (cid) => {
+            try {
+                const media = await GetMediaByCID(cid) as MediaBlob;
+                if (!media?.dataBase64) {
+                    return { cid, url: '' };
+                }
+                const mime = media.mime || 'image/jpeg';
+                return { cid, url: `data:${mime};base64,${media.dataBase64}` };
+            } catch {
+                return { cid, url: '' };
+            }
+        }));
+
+        setThumbnailURLByCID((previous) => {
+            const next = { ...previous };
+            for (const item of fetched) {
+                if (item.url) {
+                    next[item.cid] = item.url;
+                }
+            }
+            return next;
+        });
+    }
+
+    async function hydrateSelectedPostBody(post: ForumMessage, backgroundRetry = false) {
         const cached = postBodyCache[post.id];
         if (cached) {
+            clearSelectedBodyRetryTimer();
+            selectedBodyRetryCountRef.current = 0;
+            setSelectedBodyHint('');
             setSelectedPublicPost({ ...post, body: cached });
             return;
         }
 
-        setSelectedBodyLoading(true);
+        if (!backgroundRetry) {
+            clearSelectedBodyRetryTimer();
+            selectedBodyRetryCountRef.current = 0;
+            setSelectedBodyHint('正在请求完整正文...');
+            setSelectedBodyLoading(true);
+        }
+
         try {
             const blob = await GetPostBodyByID(post.id) as PostBodyBlob;
             const fullBody = (blob?.body || '').trim();
             if (!fullBody) {
                 setSelectedPublicPost(post);
+                setSelectedBodyHint('正文正在同步中，会自动刷新。');
+                selectedBodyRetryCountRef.current += 1;
+                scheduleSelectedBodyRetry(post);
                 return;
             }
 
+            clearSelectedBodyRetryTimer();
+            selectedBodyRetryCountRef.current = 0;
+            setSelectedBodyHint('');
             setPostBodyCache((previous) => ({ ...previous, [post.id]: fullBody }));
             setSelectedPublicPost({ ...post, body: fullBody, contentCid: blob.contentCid || post.contentCid });
         } catch {
             setSelectedPublicPost(post);
+            setSelectedBodyHint('正文正在同步中，会自动重试。');
+            selectedBodyRetryCountRef.current += 1;
+            scheduleSelectedBodyRetry(post);
         } finally {
-            setSelectedBodyLoading(false);
+            if (!backgroundRetry) {
+                setSelectedBodyLoading(false);
+            }
+        }
+    }
+
+    async function hydrateSelectedPostImage(post: ForumMessage) {
+        const mediaCID = (post.imageCid || '').trim();
+        if (!mediaCID) {
+            setSelectedImageURL('');
+            return;
+        }
+
+        setSelectedImageLoading(true);
+        try {
+            const media = await GetPostMediaByID(post.id) as MediaBlob;
+            if (!media?.dataBase64) {
+                setSelectedImageURL('');
+                return;
+            }
+
+            const mime = media.mime || 'image/jpeg';
+            const url = `data:${mime};base64,${media.dataBase64}`;
+            setSelectedImageURL(url);
+            setThumbnailURLByCID((previous) => ({
+                ...previous,
+                [mediaCID]: previous[mediaCID] || url,
+            }));
+        } catch {
+            setSelectedImageURL('');
+        } finally {
+            setSelectedImageLoading(false);
         }
     }
 
@@ -337,6 +481,12 @@ function App() {
                 title: item.title,
                 body: item.bodyPreview || '',
                 contentCid: item.contentCid || '',
+                imageCid: item.imageCid || '',
+                thumbCid: item.thumbCid || '',
+                imageMime: item.imageMime || '',
+                imageSize: item.imageSize || 0,
+                imageWidth: item.imageWidth || 0,
+                imageHeight: item.imageHeight || 0,
                 score: item.score || 0,
                 timestamp: item.timestamp || 0,
                 sizeBytes: 0,
@@ -345,6 +495,7 @@ function App() {
                 visibility: item.visibility || 'normal',
             })) as ForumMessage[];
             setFeed(mapped);
+            await preloadFeedThumbnails(mapped);
         } catch (exception) {
             setError(String(exception));
         }
@@ -448,6 +599,12 @@ function App() {
                 title: item.title,
                 body: item.bodyPreview || '',
                 contentCid: item.contentCid || '',
+                imageCid: item.imageCid || '',
+                thumbCid: item.thumbCid || '',
+                imageMime: item.imageMime || '',
+                imageSize: item.imageSize || 0,
+                imageWidth: item.imageWidth || 0,
+                imageHeight: item.imageHeight || 0,
                 score: item.score || 0,
                 timestamp: item.timestamp || 0,
                 sizeBytes: 0,
@@ -456,6 +613,7 @@ function App() {
                 visibility: item.visibility || 'normal',
             })) as ForumMessage[];
             setFeed(publicRows);
+            await preloadFeedThumbnails(publicRows);
 
             const relatedPubkeys = [...publicRows.map((item) => item.pubkey), ...((privateMessages as ForumMessage[]).map((item) => item.pubkey))];
             if (publicKey.trim()) {
@@ -471,6 +629,7 @@ function App() {
                 const selected = publicRows.find((item) => item.id === selectedPostIdRef.current);
                 if (selected) {
                     await hydrateSelectedPostBody(selected);
+                    await hydrateSelectedPostImage(selected);
                 }
             }
         } catch (exception) {
@@ -519,7 +678,18 @@ function App() {
                 throw new Error('请先创建身份后再写入帖子');
             }
 
-            await AddLocalPostStructuredToSub(publicKey, postTitle.trim(), postBody.trim(), postZone, currentSubId);
+            if (postImageBase64.trim()) {
+                await AddLocalPostWithImageToSub(publicKey, postTitle.trim(), postBody.trim(), postZone, currentSubId, postImageBase64.trim(), postImageMime.trim() || 'image/jpeg');
+            } else {
+                await AddLocalPostStructuredToSub(publicKey, postTitle.trim(), postBody.trim(), postZone, currentSubId);
+            }
+
+            setPostImageBase64('');
+            setPostImageMime('');
+            setPostImagePreviewURL('');
+            if (postImageInputRef.current) {
+                postImageInputRef.current.value = '';
+            }
             await refreshDashboard();
         } catch (exception) {
             setError(String(exception));
@@ -577,6 +747,9 @@ function App() {
         setGovernanceStatus('');
         try {
             ensureRuntime();
+            if (!isGovernanceAdmin) {
+                throw new Error('仅治理管理员可修改策略');
+            }
             const nextValue = !governancePolicy.hideHistoryOnShadowBan;
             await PublishGovernancePolicy(nextValue);
             setGovernancePolicy({ hideHistoryOnShadowBan: nextValue });
@@ -675,8 +848,52 @@ function App() {
                 throw new Error('请先创建身份后再广播帖子');
             }
 
-            await PublishPostStructuredToSub(publicKey, postTitle.trim(), postBody.trim(), currentSubId);
+            if (postImageBase64.trim()) {
+                await PublishPostWithImageToSub(publicKey, postTitle.trim(), postBody.trim(), postImageBase64.trim(), postImageMime.trim() || 'image/jpeg', currentSubId);
+            } else {
+                await PublishPostStructuredToSub(publicKey, postTitle.trim(), postBody.trim(), currentSubId);
+            }
+
+            setPostImageBase64('');
+            setPostImageMime('');
+            setPostImagePreviewURL('');
+            if (postImageInputRef.current) {
+                postImageInputRef.current.value = '';
+            }
             await refreshDashboard();
+        } catch (exception) {
+            setError(String(exception));
+        }
+    }
+
+    async function handleSelectPostImage(event: React.ChangeEvent<HTMLInputElement>) {
+        setError('');
+        try {
+            const file = event.target.files?.[0];
+            if (!file) {
+                setPostImageBase64('');
+                setPostImageMime('');
+                setPostImagePreviewURL('');
+                return;
+            }
+
+            const mime = file.type || 'image/jpeg';
+            const dataURL = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('读取图片失败'));
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.readAsDataURL(file);
+            });
+
+            const marker = ';base64,';
+            const index = dataURL.indexOf(marker);
+            if (index <= 0) {
+                throw new Error('图片编码失败');
+            }
+
+            setPostImageMime(mime);
+            setPostImageBase64(dataURL.slice(index + marker.length));
+            setPostImagePreviewURL(dataURL);
         } catch (exception) {
             setError(String(exception));
         }
@@ -819,6 +1036,16 @@ function App() {
     }, [selectedPublicPost?.id]);
 
     useEffect(() => {
+        if (!selectedPublicPost?.id) {
+            clearSelectedBodyRetryTimer();
+            selectedBodyRetryCountRef.current = 0;
+            setSelectedBodyHint('');
+            setSelectedImageURL('');
+            setSelectedImageLoading(false);
+        }
+    }, [selectedPublicPost?.id]);
+
+    useEffect(() => {
         if (!hasWailsRuntime()) {
             return;
         }
@@ -830,6 +1057,12 @@ function App() {
 
         loadCommentsForPost(selectedPublicPost.id);
     }, [selectedPublicPost?.id]);
+
+    useEffect(() => {
+        return () => {
+            clearSelectedBodyRetryTimer();
+        };
+    }, []);
 
     return (
         <div id="App">
@@ -961,6 +1194,38 @@ function App() {
                     onChange={(event) => setPostBody(event.target.value)}
                     placeholder="Input post body"
                 />
+                <input
+                    ref={postImageInputRef}
+                    className="input"
+                    type="file"
+                    accept="image/*"
+                    onClick={(event) => {
+                        event.currentTarget.value = '';
+                    }}
+                    onChange={handleSelectPostImage}
+                />
+                {postImagePreviewURL ? (
+                    <div className="row">
+                        <img
+                            src={postImagePreviewURL}
+                            alt="post-image-preview"
+                            style={{ maxWidth: 200, maxHeight: 160, borderRadius: 6 }}
+                        />
+                        <button
+                            className="btn"
+                            onClick={() => {
+                                setPostImageBase64('');
+                                setPostImageMime('');
+                                setPostImagePreviewURL('');
+                                if (postImageInputRef.current) {
+                                    postImageInputRef.current.value = '';
+                                }
+                            }}
+                        >
+                            Remove Image
+                        </button>
+                    </div>
+                ) : null}
                 <div className="row">
                     <select value={postZone} onChange={(event) => setPostZone(event.target.value as 'private' | 'public')}>
                         <option value="public">public</option>
@@ -1041,8 +1306,9 @@ function App() {
                 <h3>Moderation Controls (Broadcast)</h3>
                 <div className="row">
                     <span className="badge">Hide History On Shadow Ban: {governancePolicy.hideHistoryOnShadowBan ? 'ON' : 'OFF'}</span>
-                    <button className="btn" onClick={toggleHideHistoryOnShadowBan}>Toggle Policy</button>
+                    <button className="btn" onClick={toggleHideHistoryOnShadowBan} disabled={!isGovernanceAdmin}>Toggle Policy</button>
                 </div>
+                {!isGovernanceAdmin ? <p className="hint">仅 Genesis / Trusted Admin 可修改治理策略。</p> : null}
                 <input
                     className="input"
                     value={moderationTarget}
@@ -1109,6 +1375,7 @@ function App() {
                             {feed.slice(0, 10).map((item) => (
                                 <li key={item.id} onClick={() => {
                                     hydrateSelectedPostBody(item);
+                                    hydrateSelectedPostImage(item);
                                     loadCommentsForPost(item.id);
                                 }}>
                                     {getAuthorAvatar(item.pubkey) ? (
@@ -1119,6 +1386,13 @@ function App() {
                                             onError={(event) => {
                                                 event.currentTarget.style.display = 'none';
                                             }}
+                                        />
+                                    ) : null}
+                                    {(item.thumbCid && thumbnailURLByCID[item.thumbCid]) ? (
+                                        <img
+                                            src={thumbnailURLByCID[item.thumbCid]}
+                                            alt="post-thumb"
+                                            style={{ width: 40, height: 40, borderRadius: 6, marginRight: 6, objectFit: 'cover', verticalAlign: 'middle' }}
                                         />
                                     ) : null}
                                     [{item.subId || 'general'}] <strong>{item.title}</strong> · {toPreview(item.body)} · @{getAuthorLabel(item.pubkey)}
@@ -1149,6 +1423,19 @@ function App() {
                             ) : null}
                             <p>{selectedPublicPost.body}</p>
                             {selectedBodyLoading ? <p className="hint">Loading full body...</p> : null}
+                            {!selectedBodyLoading && selectedBodyHint ? <p className="hint">{selectedBodyHint}</p> : null}
+                            {selectedPublicPost.imageCid ? (
+                                <div>
+                                    {selectedImageLoading ? <p className="hint">Loading image...</p> : null}
+                                    {!selectedImageLoading && selectedImageURL ? (
+                                        <img
+                                            src={selectedImageURL}
+                                            alt="post-image"
+                                            style={{ maxWidth: 520, maxHeight: 420, borderRadius: 8 }}
+                                        />
+                                    ) : null}
+                                </div>
+                            ) : null}
 
                             <div className="panel">
                                 <h4>Comments ({postComments.length})</h4>

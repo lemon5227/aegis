@@ -1,5 +1,37 @@
 export namespace main {
 	
+	export class AntiEntropyStats {
+	    syncRequestsSent: number;
+	    syncRequestsReceived: number;
+	    syncResponsesReceived: number;
+	    syncSummariesReceived: number;
+	    indexInsertions: number;
+	    blobFetchAttempts: number;
+	    blobFetchSuccess: number;
+	    blobFetchFailures: number;
+	    lastSyncAt: number;
+	    lastRemoteSummaryTs: number;
+	    lastObservedSyncLagSec: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AntiEntropyStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.syncRequestsSent = source["syncRequestsSent"];
+	        this.syncRequestsReceived = source["syncRequestsReceived"];
+	        this.syncResponsesReceived = source["syncResponsesReceived"];
+	        this.syncSummariesReceived = source["syncSummariesReceived"];
+	        this.indexInsertions = source["indexInsertions"];
+	        this.blobFetchAttempts = source["blobFetchAttempts"];
+	        this.blobFetchSuccess = source["blobFetchSuccess"];
+	        this.blobFetchFailures = source["blobFetchFailures"];
+	        this.lastSyncAt = source["lastSyncAt"];
+	        this.lastRemoteSummaryTs = source["lastRemoteSummaryTs"];
+	        this.lastObservedSyncLagSec = source["lastObservedSyncLagSec"];
+	    }
+	}
 	export class Comment {
 	    id: string;
 	    postId: string;
@@ -30,6 +62,12 @@ export namespace main {
 	    title: string;
 	    body: string;
 	    contentCid: string;
+	    imageCid: string;
+	    thumbCid: string;
+	    imageMime: string;
+	    imageSize: number;
+	    imageWidth: number;
+	    imageHeight: number;
 	    content: string;
 	    score: number;
 	    timestamp: number;
@@ -50,6 +88,12 @@ export namespace main {
 	        this.title = source["title"];
 	        this.body = source["body"];
 	        this.contentCid = source["contentCid"];
+	        this.imageCid = source["imageCid"];
+	        this.thumbCid = source["thumbCid"];
+	        this.imageMime = source["imageMime"];
+	        this.imageSize = source["imageSize"];
+	        this.imageWidth = source["imageWidth"];
+	        this.imageHeight = source["imageHeight"];
 	        this.content = source["content"];
 	        this.score = source["score"];
 	        this.timestamp = source["timestamp"];
@@ -122,6 +166,30 @@ export namespace main {
 	        this.publicQuotaBytes = source["publicQuotaBytes"];
 	        this.privateQuotaBytes = source["privateQuotaBytes"];
 	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class MediaBlob {
+	    contentCid: string;
+	    dataBase64: string;
+	    mime: string;
+	    sizeBytes: number;
+	    width: number;
+	    height: number;
+	    isThumbnail: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MediaBlob(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.contentCid = source["contentCid"];
+	        this.dataBase64 = source["dataBase64"];
+	        this.mime = source["mime"];
+	        this.sizeBytes = source["sizeBytes"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.isThumbnail = source["isThumbnail"];
 	    }
 	}
 	export class ModerationLog {
@@ -210,6 +278,12 @@ export namespace main {
 	    title: string;
 	    bodyPreview: string;
 	    contentCid: string;
+	    imageCid: string;
+	    thumbCid: string;
+	    imageMime: string;
+	    imageSize: number;
+	    imageWidth: number;
+	    imageHeight: number;
 	    score: number;
 	    timestamp: number;
 	    zone: string;
@@ -227,6 +301,12 @@ export namespace main {
 	        this.title = source["title"];
 	        this.bodyPreview = source["bodyPreview"];
 	        this.contentCid = source["contentCid"];
+	        this.imageCid = source["imageCid"];
+	        this.thumbCid = source["thumbCid"];
+	        this.imageMime = source["imageMime"];
+	        this.imageSize = source["imageSize"];
+	        this.imageWidth = source["imageWidth"];
+	        this.imageHeight = source["imageHeight"];
 	        this.score = source["score"];
 	        this.timestamp = source["timestamp"];
 	        this.zone = source["zone"];

@@ -8,6 +8,8 @@ export function AddLocalPostStructured(arg1:string,arg2:string,arg3:string,arg4:
 
 export function AddLocalPostStructuredToSub(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<main.ForumMessage>;
 
+export function AddLocalPostWithImageToSub(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<main.ForumMessage>;
+
 export function AddTrustedAdmin(arg1:string,arg2:string):Promise<void>;
 
 export function ApplyShadowBan(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -19,6 +21,8 @@ export function ConnectPeer(arg1:string):Promise<void>;
 export function CreateSub(arg1:string,arg2:string,arg3:string):Promise<main.Sub>;
 
 export function GenerateIdentity():Promise<main.Identity>;
+
+export function GetAntiEntropyStats():Promise<main.AntiEntropyStats>;
 
 export function GetCommentsByPost(arg1:string):Promise<Array<main.Comment>>;
 
@@ -34,6 +38,8 @@ export function GetGovernancePolicy():Promise<main.GovernancePolicy>;
 
 export function GetIdentityState():Promise<Array<main.IdentityState>>;
 
+export function GetMediaByCID(arg1:string):Promise<main.MediaBlob>;
+
 export function GetModerationLogs(arg1:number):Promise<Array<main.ModerationLog>>;
 
 export function GetModerationState():Promise<Array<main.ModerationState>>;
@@ -43,6 +49,8 @@ export function GetP2PStatus():Promise<main.P2PStatus>;
 export function GetPostBodyByCID(arg1:string):Promise<main.PostBodyBlob>;
 
 export function GetPostBodyByID(arg1:string):Promise<main.PostBodyBlob>;
+
+export function GetPostMediaByID(arg1:string):Promise<main.MediaBlob>;
 
 export function GetPrivateFeed():Promise<Array<main.ForumMessage>>;
 
@@ -74,6 +82,8 @@ export function PublishPostStructuredToSub(arg1:string,arg2:string,arg3:string,a
 
 export function PublishPostUpvote(arg1:string,arg2:string):Promise<void>;
 
+export function PublishPostWithImageToSub(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<void>;
+
 export function PublishProfileUpdate(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function PublishShadowBan(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -89,6 +99,8 @@ export function SignMessage(arg1:string,arg2:string):Promise<string>;
 export function StartP2P(arg1:number,arg2:Array<string>):Promise<main.P2PStatus>;
 
 export function StopP2P():Promise<void>;
+
+export function TriggerAntiEntropySyncNow():Promise<void>;
 
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
 

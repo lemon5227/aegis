@@ -177,3 +177,108 @@
 - `docs/ENHANCEMENT_TASKS.md` 继续记录 A/B/C 功能演进状态。
 - 本文档用于“从可运行到可发布”的发布瀑布计划。
 - 两份文档同时维护：功能进度（Enhancement）+ 发布就绪（Release）。
+
+---
+
+## 6. 当前执行状态（2026-02-15）
+
+### R1（网络回源）
+- 状态：Done
+- 已完成：
+  - `CONTENT_FETCH_REQUEST/RESPONSE` 协议落地
+  - `GetPostBodyByCID` 本地 miss 自动触发网络请求
+  - 回源成功后自动回填 `content_blobs`
+  - 请求去重与并发控制（同一 CID 防重复风暴）
+  - 更细粒度失败原因（超时/无 peers/无副本）
+  - UI 侧默认自动请求与自动重试，不暴露技术型重试按钮
+  - 两节点与失败场景测试通过：`TestR1ContentFetchFromPeerOnLocalMiss` / `TestR1ContentFetchNoPeers` / `TestR1ContentFetchTimeout`
+
+### R2（反熵同步）
+- 状态：Done
+- 已完成：
+  - `SYNC_SUMMARY_REQUEST/RESPONSE` 摘要交换协议落地
+  - 摘要交换升级为“时间窗 + 批次增量”（`sync_since_timestamp/sync_window_seconds/sync_batch_size`）
+  - 节点收到摘要后自动补齐缺失索引（`messages`）
+  - 对缺失正文自动触发后台回源回填（`content_blobs`）
+  - 后台周期反熵任务已启用（默认 12 秒，可通过 `AEGIS_ANTI_ENTROPY_INTERVAL_SEC` 调整）
+  - 增量窗口与批次可配置（`AEGIS_ANTI_ENTROPY_WINDOW_SEC` / `AEGIS_ANTI_ENTROPY_BATCH_SIZE`）
+  - 缺口补齐优先级与预算策略完成（按新到旧优先；`AEGIS_ANTI_ENTROPY_INDEX_BUDGET` / `AEGIS_ANTI_ENTROPY_BODY_BUDGET`）
+  - R2 指标与结构化日志落地（请求/响应计数、摘要量、索引插入、正文抓取成功失败、同步滞后）
+  - 新增手动触发入口：`TriggerAntiEntropySyncNow`（用于诊断与测试）
+- 验证：
+  - `TestR2AntiEntropyManualSyncRecoversMissedPost`
+  - `TestR2AntiEntropyPeriodicSyncRecoversMissedPost`
+  - `TestR2DigestWindowReturnsOnlySinceTimestamp`
+  - `TestR2LatestPublicTimestamp`
+  - `TestR2OfflineRejoinConvergesWithinWindow`
+
+### R3（媒体链路）
+- 状态：Done
+- 已完成：
+  - 帖子模型增加图片元数据：`image_cid/thumb_cid/image_mime/image_size/image_width/image_height`
+  - 新增 `media_blobs`（按 CID 去重存储媒体数据）
+  - 新增本地 API：`AddLocalPostWithImageToSub` / `GetPostMediaByID` / `GetMediaByCID`
+  - 新增网络协议：`MEDIA_FETCH_REQUEST/RESPONSE`，支持图片按 CID 回源
+  - R2 反熵摘要已携带图片元数据，离线回归可补齐图片索引并触发媒体回源
+  - 上传链路补齐：图片尺寸压缩（主图最大边 1920）、真实缩略图生成（最大边 320）、JPEG/PNG 编码策略
+  - 前端链路补齐：发帖图片选择与预览、列表缩略图展示、详情原图按需加载
+- 验证：
+  - `TestR3ImageBlobDeduplicatedByCID`
+  - `TestR3MediaFetchFromPeerOnLocalMiss`
+  - `go test ./... -count=1` 全量通过（含 R3 媒体链路回归）
+
+### R4（互联网连通与安全）
+- 状态：Done
+- 已完成：
+  - 自动启动网络主路径已启用：应用启动默认自动拉起 P2P（可通过 `AEGIS_AUTOSTART_P2P` 关闭）
+  - 端口冲突自动回退已启用：优先端口不可用时，在 `[AEGIS_P2P_PORT, AEGIS_P2P_PORT+20]` 内自动选择可用端口
+  - 引导节点配置已启用：支持 `AEGIS_BOOTSTRAP_PEERS` 注入 bootstrap 列表
+  - NAT 连通性能力已启用：`NATPortMap + NATService + AutoNATv2`
+  - 打洞能力已启用：`EnableHolePunching`
+  - relay 回退能力已启用：`EnableRelay`，并在配置静态 relay（`AEGIS_RELAY_PEERS` 或 bootstrap 含 relay）时自动启用 `AutoRelayWithStaticRelays`
+  - 防滥用基线已落地：`CONTENT_FETCH` / `MEDIA_FETCH` 按来源 peer 做窗口限流（`AEGIS_FETCH_REQUEST_LIMIT` + `AEGIS_FETCH_REQUEST_WINDOW_SEC`）
+  - 请求来源绑定修正：媒体/正文回源响应目标改为真实来源 peer，降低伪造 requester 字段风险
+  - 连接级防护已落地：最大连接数限制（`AEGIS_MAX_CONNECTED_PEERS`）+ 黑名单（`AEGIS_P2P_BLACKLIST_PEERS`）+ 灰名单短时封禁（`AEGIS_P2P_GREYLIST_PEERS` / `AEGIS_P2P_GREYLIST_TTL_SEC`）
+- 验证：
+  - `go test ./... -count=1` 全量通过
+
+产品 UI 约束（正式版）：
+- 回源失败提示应用户友好（例如“内容暂时不可用，请稍后重试”）。
+- “立即重试/抓包/调试”类按钮仅出现在诊断模式，不作为默认产品 UI。
+
+---
+
+## 7. 执行纪律（自动文档同步）
+- 每次完成任一阶段任务或收口项后，立即同步更新本文档状态（不等待人工提醒）。
+- 更新内容至少包含：状态变化（In Progress/Done）、完成项、验证结果（测试名或联调结论）。
+- 若代码已完成但文档未更新，视为该项未完成，不可进入下一阶段。
+
+---
+
+## 8. 数据库迁移纪律（必须执行）
+- 任何 schema 变更必须同时提供“新库建表路径 + 旧库升级路径”，两条路径都要可启动。
+- 迁移顺序必须遵循：先 `ALTER TABLE ADD COLUMN`，再创建依赖该列的索引/查询/回填逻辑。
+- 每次新增列后必须补三项验证：
+  - 旧库启动验证（保留旧 DB 文件直接启动）
+  - 空库启动验证（新建 DB 首次启动）
+  - 身份回读验证（`local_identity` 可正常加载）
+- 出现迁移事故后，必须在本文档记录“根因 + 修复 + 回归用例”，避免重复踩坑。
+
+### 近期迁移事故记录（2026-02-15）
+- 现象：应用启动报错 `database initialization failed: no such column: content_cid`，导致身份加载失败表现为“identity 丢失”。
+- 根因：`messages.content_cid` 在旧库尚未 `ALTER` 完成前，代码先执行了 `idx_messages_content_cid` 索引创建。
+- 修复：调整迁移顺序为“先补列再建索引”，并补 `content_blobs.last_accessed_at` 默认值兼容。
+- 状态：已修复并通过全量测试。
+
+### 近期一致性观察记录（2026-02-15）
+- 现象：三节点手测时 `Public Feed` 计数出现差异（A=13，B/Genesis=8）。
+- 根因：R2 反熵默认时间窗为 24h，导致超过 24h 的历史 `normal` 帖子未进入摘要交换；同时 `shadowed` 帖子按产品语义仅作者本地可见。
+- 修复：反熵默认时间窗调整为 30 天（`AEGIS_ANTI_ENTROPY_WINDOW_SEC` 仍可覆盖配置）。
+- 手测口径：比较“全局一致性”时应对齐 `visibility=normal` 集合；`shadowed` 的本地可见差异属于预期。
+
+### 近期治理权限修正记录（2026-02-15）
+- 现象：普通节点 UI 可点击治理策略开关，造成“谁都能改策略”的误解与风险。
+- 修复：治理策略更新改为管理员强校验（消息必须携带受信任 `admin_pubkey`）；普通节点前端禁用 `Toggle Policy`。
+- 验证：
+  - `TestC1GovernancePolicyUpdateMessageApplied`（受信任管理员可生效）
+  - `TestC1GovernancePolicyUpdateMessageRejectsUntrustedAdmin`（非管理员被拒绝）

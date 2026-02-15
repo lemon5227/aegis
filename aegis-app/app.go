@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/tyler-smith/go-bip39"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/sync/singleflight"
 )
 
 // App struct
@@ -34,6 +35,34 @@ type App struct {
 	p2pTopic  *pubsub.Topic
 	p2pSub    *pubsub.Subscription
 	mdnsSvc   io.Closer
+
+	fetchRateMu    sync.Mutex
+	fetchRateState map[string]fetchRateWindow
+	peerPolicyMu   sync.Mutex
+	peerBlacklist  map[string]struct{}
+	peerGreylist   map[string]int64
+
+	contentFetchGroup   singleflight.Group
+	contentFetchWaiters map[string]chan IncomingMessage
+	mediaFetchGroup     singleflight.Group
+	mediaFetchWaiters   map[string]chan IncomingMessage
+
+	antiEntropyMu    sync.Mutex
+	antiEntropyStats AntiEntropyStats
+}
+
+type AntiEntropyStats struct {
+	SyncRequestsSent       int64 `json:"syncRequestsSent"`
+	SyncRequestsReceived   int64 `json:"syncRequestsReceived"`
+	SyncResponsesReceived  int64 `json:"syncResponsesReceived"`
+	SyncSummariesReceived  int64 `json:"syncSummariesReceived"`
+	IndexInsertions        int64 `json:"indexInsertions"`
+	BlobFetchAttempts      int64 `json:"blobFetchAttempts"`
+	BlobFetchSuccess       int64 `json:"blobFetchSuccess"`
+	BlobFetchFailures      int64 `json:"blobFetchFailures"`
+	LastSyncAt             int64 `json:"lastSyncAt"`
+	LastRemoteSummaryTs    int64 `json:"lastRemoteSummaryTs"`
+	LastObservedSyncLagSec int64 `json:"lastObservedSyncLagSec"`
 }
 
 type Identity struct {
@@ -48,7 +77,14 @@ func NewApp() *App {
 		databasePath = "aegis_node.db"
 	}
 
-	return &App{dbPath: databasePath}
+	return &App{
+		dbPath:              databasePath,
+		contentFetchWaiters: make(map[string]chan IncomingMessage),
+		mediaFetchWaiters:   make(map[string]chan IncomingMessage),
+		fetchRateState:      make(map[string]fetchRateWindow),
+		peerBlacklist:       make(map[string]struct{}),
+		peerGreylist:        make(map[string]int64),
+	}
 }
 
 func (a *App) SetDatabasePath(path string) {
@@ -57,6 +93,12 @@ func (a *App) SetDatabasePath(path string) {
 		return
 	}
 	a.dbPath = trimmed
+}
+
+func (a *App) GetAntiEntropyStats() AntiEntropyStats {
+	a.antiEntropyMu.Lock()
+	defer a.antiEntropyMu.Unlock()
+	return a.antiEntropyStats
 }
 
 // startup is called when the app starts. The context is saved
