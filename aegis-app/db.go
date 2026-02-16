@@ -14,6 +14,7 @@ import (
 	"image/png"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	_ "image/png"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -151,6 +153,33 @@ type StorageUsage struct {
 	TotalQuota       int64 `json:"totalQuota"`
 }
 
+type FeedStreamItem struct {
+	Post                ForumMessage `json:"post"`
+	Reason              string       `json:"reason"`
+	IsSubscribed        bool         `json:"isSubscribed"`
+	RecommendationScore float64      `json:"recommendationScore"`
+}
+
+type FeedStream struct {
+	Items       []FeedStreamItem `json:"items"`
+	Algorithm   string           `json:"algorithm"`
+	GeneratedAt int64            `json:"generatedAt"`
+}
+
+type PostIndexPage struct {
+	Items      []PostIndex `json:"items"`
+	NextCursor string      `json:"nextCursor"`
+}
+
+type FavoriteOpRecord struct {
+	OpID      string `json:"opId"`
+	Pubkey    string `json:"pubkey"`
+	PostID    string `json:"postId"`
+	Op        string `json:"op"`
+	CreatedAt int64  `json:"createdAt"`
+	Signature string `json:"signature"`
+}
+
 type GovernanceAdmin struct {
 	AdminPubkey string `json:"adminPubkey"`
 	Role        string `json:"role"`
@@ -173,51 +202,56 @@ type SyncPostDigest struct {
 }
 
 type IncomingMessage struct {
-	Type                   string            `json:"type"`
-	ID                     string            `json:"id"`
-	Pubkey                 string            `json:"pubkey"`
-	VoterPubkey            string            `json:"voter_pubkey"`
-	PostID                 string            `json:"post_id"`
-	CommentID              string            `json:"comment_id"`
-	ParentID               string            `json:"parent_id"`
-	DisplayName            string            `json:"display_name"`
-	AvatarURL              string            `json:"avatar_url"`
-	Title                  string            `json:"title"`
-	Body                   string            `json:"body"`
-	ContentCID             string            `json:"content_cid"`
-	ImageCID               string            `json:"image_cid"`
-	ThumbCID               string            `json:"thumb_cid"`
-	ImageMIME              string            `json:"image_mime"`
-	ImageSize              int64             `json:"image_size"`
-	ImageWidth             int               `json:"image_width"`
-	ImageHeight            int               `json:"image_height"`
-	ImageDataBase64        string            `json:"image_data_base64,omitempty"`
-	IsThumbnail            bool              `json:"is_thumbnail,omitempty"`
-	RequestID              string            `json:"request_id"`
-	RequesterPeerID        string            `json:"requester_peer_id"`
-	ResponderPeerID        string            `json:"responder_peer_id"`
-	SyncSinceTimestamp     int64             `json:"sync_since_timestamp,omitempty"`
-	SyncWindowSeconds      int64             `json:"sync_window_seconds,omitempty"`
-	SyncBatchSize          int               `json:"sync_batch_size,omitempty"`
-	GovernanceSinceTs      int64             `json:"governance_since_ts,omitempty"`
-	GovernanceBatchSize    int               `json:"governance_batch_size,omitempty"`
-	GovernanceLogSinceTs   int64             `json:"governance_log_since_ts,omitempty"`
-	GovernanceLogLimit     int               `json:"governance_log_limit,omitempty"`
-	GovernanceStates       []ModerationState `json:"governance_states,omitempty"`
-	GovernanceLogs         []ModerationLog   `json:"governance_logs,omitempty"`
-	Found                  bool              `json:"found"`
-	SizeBytes              int64             `json:"size_bytes"`
-	Content                string            `json:"content"`
-	SubID                  string            `json:"sub_id"`
-	SubTitle               string            `json:"sub_title"`
-	SubDesc                string            `json:"sub_desc"`
-	Timestamp              int64             `json:"timestamp"`
-	Signature              string            `json:"signature"`
-	TargetPubkey           string            `json:"target_pubkey"`
-	AdminPubkey            string            `json:"admin_pubkey"`
-	Reason                 string            `json:"reason"`
-	Summaries              []SyncPostDigest  `json:"summaries,omitempty"`
-	HideHistoryOnShadowBan bool              `json:"hide_history_on_shadowban"`
+	Type                   string             `json:"type"`
+	ID                     string             `json:"id"`
+	Pubkey                 string             `json:"pubkey"`
+	VoterPubkey            string             `json:"voter_pubkey"`
+	PostID                 string             `json:"post_id"`
+	CommentID              string             `json:"comment_id"`
+	ParentID               string             `json:"parent_id"`
+	DisplayName            string             `json:"display_name"`
+	AvatarURL              string             `json:"avatar_url"`
+	Title                  string             `json:"title"`
+	Body                   string             `json:"body"`
+	ContentCID             string             `json:"content_cid"`
+	ImageCID               string             `json:"image_cid"`
+	ThumbCID               string             `json:"thumb_cid"`
+	ImageMIME              string             `json:"image_mime"`
+	ImageSize              int64              `json:"image_size"`
+	ImageWidth             int                `json:"image_width"`
+	ImageHeight            int                `json:"image_height"`
+	ImageDataBase64        string             `json:"image_data_base64,omitempty"`
+	IsThumbnail            bool               `json:"is_thumbnail,omitempty"`
+	RequestID              string             `json:"request_id"`
+	RequesterPeerID        string             `json:"requester_peer_id"`
+	ResponderPeerID        string             `json:"responder_peer_id"`
+	SyncSinceTimestamp     int64              `json:"sync_since_timestamp,omitempty"`
+	SyncWindowSeconds      int64              `json:"sync_window_seconds,omitempty"`
+	SyncBatchSize          int                `json:"sync_batch_size,omitempty"`
+	GovernanceSinceTs      int64              `json:"governance_since_ts,omitempty"`
+	GovernanceBatchSize    int                `json:"governance_batch_size,omitempty"`
+	GovernanceLogSinceTs   int64              `json:"governance_log_since_ts,omitempty"`
+	GovernanceLogLimit     int                `json:"governance_log_limit,omitempty"`
+	GovernanceStates       []ModerationState  `json:"governance_states,omitempty"`
+	GovernanceLogs         []ModerationLog    `json:"governance_logs,omitempty"`
+	FavoriteOpID           string             `json:"favorite_op_id,omitempty"`
+	FavoriteOp             string             `json:"favorite_op,omitempty"`
+	FavoriteSinceTs        int64              `json:"favorite_since_ts,omitempty"`
+	FavoriteBatchSize      int                `json:"favorite_batch_size,omitempty"`
+	FavoriteOps            []FavoriteOpRecord `json:"favorite_ops,omitempty"`
+	Found                  bool               `json:"found"`
+	SizeBytes              int64              `json:"size_bytes"`
+	Content                string             `json:"content"`
+	SubID                  string             `json:"sub_id"`
+	SubTitle               string             `json:"sub_title"`
+	SubDesc                string             `json:"sub_desc"`
+	Timestamp              int64              `json:"timestamp"`
+	Signature              string             `json:"signature"`
+	TargetPubkey           string             `json:"target_pubkey"`
+	AdminPubkey            string             `json:"admin_pubkey"`
+	Reason                 string             `json:"reason"`
+	Summaries              []SyncPostDigest   `json:"summaries,omitempty"`
+	HideHistoryOnShadowBan bool               `json:"hide_history_on_shadowban"`
 }
 
 const defaultSubID = "general"
@@ -306,6 +340,31 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			description TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS sub_subscriptions (
+			sub_id TEXT PRIMARY KEY,
+			subscribed_at INTEGER NOT NULL,
+			FOREIGN KEY(sub_id) REFERENCES subs(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_sub_subscriptions_subscribed_at ON sub_subscriptions(subscribed_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS post_favorites_state (
+			pubkey TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			last_op_id TEXT NOT NULL,
+			PRIMARY KEY (pubkey, post_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_post_favorites_state_pubkey_updated_at ON post_favorites_state(pubkey, updated_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_post_favorites_state_post_id ON post_favorites_state(post_id);`,
+		`CREATE TABLE IF NOT EXISTS post_favorite_ops (
+			op_id TEXT PRIMARY KEY,
+			pubkey TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			op TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			signature TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_post_favorite_ops_pubkey_created_at ON post_favorite_ops(pubkey, created_at, op_id);`,
 		`CREATE TABLE IF NOT EXISTS profiles (
 			pubkey TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL DEFAULT '',
@@ -763,6 +822,132 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	return messages, nil
 }
 
+func (a *App) GetFeedStream(limit int) (FeedStream, error) {
+	return a.GetFeedStreamWithStrategy(limit, "hot-v1")
+}
+
+func (a *App) GetFeedStreamWithStrategy(limit int, algorithm string) (FeedStream, error) {
+	if a.db == nil {
+		return FeedStream{}, errors.New("database not initialized")
+	}
+
+	now := time.Now().Unix()
+	limit = normalizeFeedStreamLimit(limit)
+	algorithm = normalizeFeedStreamAlgorithm(algorithm)
+
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	subscribedSubIDs, err := a.listSubscribedSubIDs()
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	subscribedQuota := int(math.Ceil(float64(limit) * 0.7))
+	if subscribedQuota < 1 {
+		subscribedQuota = 1
+	}
+	recommendedQuota := limit - subscribedQuota
+	if recommendedQuota < 0 {
+		recommendedQuota = 0
+	}
+
+	subscribedPosts := make([]ForumMessage, 0)
+	if len(subscribedSubIDs) > 0 {
+		subscribedPosts, err = a.queryPostsBySubSet(viewerPubkey, subscribedSubIDs, subscribedQuota*3)
+		if err != nil {
+			return FeedStream{}, err
+		}
+	}
+
+	recommendedPosts, err := a.queryRecommendedPosts(viewerPubkey, subscribedSubIDs, max(limit*4, 40))
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	items := make([]FeedStreamItem, 0, limit)
+	seen := make(map[string]struct{}, limit)
+
+	si := 0
+	ri := 0
+	for len(items) < limit && (si < len(subscribedPosts) || ri < len(recommendedPosts)) {
+		appendedSubscribed := 0
+		for appendedSubscribed < 2 && si < len(subscribedPosts) && len(items) < limit && countFeedItemsByReason(items, "subscribed") < subscribedQuota {
+			post := subscribedPosts[si]
+			si++
+			if _, exists := seen[post.ID]; exists {
+				continue
+			}
+			seen[post.ID] = struct{}{}
+			items = append(items, FeedStreamItem{
+				Post:                post,
+				Reason:              "subscribed",
+				IsSubscribed:        true,
+				RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+			})
+			appendedSubscribed++
+		}
+
+		for ri < len(recommendedPosts) && len(items) < limit && countFeedItemsByReason(items, "recommended_hot") < recommendedQuota {
+			post := recommendedPosts[ri]
+			ri++
+			if _, exists := seen[post.ID]; exists {
+				continue
+			}
+			seen[post.ID] = struct{}{}
+			items = append(items, FeedStreamItem{
+				Post:                post,
+				Reason:              "recommended_hot",
+				IsSubscribed:        false,
+				RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+			})
+			break
+		}
+
+		if si >= len(subscribedPosts) && ri < len(recommendedPosts) {
+			for ri < len(recommendedPosts) && len(items) < limit {
+				post := recommendedPosts[ri]
+				ri++
+				if _, exists := seen[post.ID]; exists {
+					continue
+				}
+				seen[post.ID] = struct{}{}
+				items = append(items, FeedStreamItem{
+					Post:                post,
+					Reason:              "recommended_hot",
+					IsSubscribed:        false,
+					RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+				})
+			}
+		}
+
+		if ri >= len(recommendedPosts) && si < len(subscribedPosts) {
+			for si < len(subscribedPosts) && len(items) < limit {
+				post := subscribedPosts[si]
+				si++
+				if _, exists := seen[post.ID]; exists {
+					continue
+				}
+				seen[post.ID] = struct{}{}
+				items = append(items, FeedStreamItem{
+					Post:                post,
+					Reason:              "subscribed",
+					IsSubscribed:        true,
+					RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+				})
+			}
+		}
+	}
+
+	return FeedStream{
+		Items:       items,
+		Algorithm:   algorithm,
+		GeneratedAt: now,
+	}, nil
+}
+
 func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostIndex, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")
@@ -1198,6 +1383,78 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 	return result, rows.Err()
 }
 
+func (a *App) getLatestFavoriteOpTimestamp(pubkey string) (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, nil
+	}
+
+	var latest sql.NullInt64
+	if err := a.db.QueryRow(`
+		SELECT MAX(created_at)
+		FROM post_favorite_ops
+		WHERE pubkey = ?;
+	`, pubkey).Scan(&latest); err != nil {
+		return 0, err
+	}
+	if !latest.Valid {
+		return 0, nil
+	}
+
+	return latest.Int64, nil
+}
+
+func (a *App) listFavoriteOpsSince(pubkey string, sinceTimestamp int64, limit int) ([]FavoriteOpRecord, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return []FavoriteOpRecord{}, nil
+	}
+	if sinceTimestamp < 0 {
+		sinceTimestamp = 0
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	rows, err := a.db.Query(`
+		SELECT op_id, pubkey, post_id, op, created_at, signature
+		FROM post_favorite_ops
+		WHERE pubkey = ? AND created_at >= ?
+		ORDER BY created_at ASC, op_id ASC
+		LIMIT ?;
+	`, pubkey, sinceTimestamp, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]FavoriteOpRecord, 0, limit)
+	for rows.Next() {
+		var record FavoriteOpRecord
+		if err = rows.Scan(
+			&record.OpID,
+			&record.Pubkey,
+			&record.PostID,
+			&record.Op,
+			&record.CreatedAt,
+			&record.Signature,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, record)
+	}
+
+	return result, rows.Err()
+}
+
 func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, error) {
 	if a.db == nil {
 		return false, errors.New("database not initialized")
@@ -1408,6 +1665,222 @@ func (a *App) GetSubs() ([]Sub, error) {
 			return nil, err
 		}
 		result = append(result, sub)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) SubscribeSub(subID string) (Sub, error) {
+	if a.db == nil {
+		return Sub{}, errors.New("database not initialized")
+	}
+
+	subID = normalizeSubID(subID)
+	now := time.Now().Unix()
+
+	var sub Sub
+	err := a.db.QueryRow(`
+		SELECT id, title, description, created_at
+		FROM subs
+		WHERE id = ?;
+	`, subID).Scan(&sub.ID, &sub.Title, &sub.Description, &sub.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		sub, err = a.upsertSub(subID, subID, "", now)
+		if err != nil {
+			return Sub{}, err
+		}
+	} else if err != nil {
+		return Sub{}, err
+	}
+
+	result, err := a.db.Exec(`
+		INSERT INTO sub_subscriptions (sub_id, subscribed_at)
+		VALUES (?, ?)
+		ON CONFLICT(sub_id) DO NOTHING;
+	`, subID, now)
+	if err != nil {
+		return Sub{}, err
+	}
+
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "subs:subscriptions_updated")
+	}
+
+	return sub, nil
+}
+
+func (a *App) UnsubscribeSub(subID string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	subID = normalizeSubID(subID)
+	result, err := a.db.Exec(`DELETE FROM sub_subscriptions WHERE sub_id = ?;`, subID)
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "subs:subscriptions_updated")
+	}
+
+	return nil
+}
+
+func (a *App) GetSubscribedSubs() ([]Sub, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	rows, err := a.db.Query(`
+		SELECT s.id, s.title, s.description, s.created_at
+		FROM sub_subscriptions ss
+		INNER JOIN subs s ON s.id = ss.sub_id
+		ORDER BY ss.subscribed_at DESC, s.id ASC;
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]Sub, 0)
+	for rows.Next() {
+		var sub Sub
+		if err := rows.Scan(&sub.ID, &sub.Title, &sub.Description, &sub.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, sub)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) SearchSubs(keyword string, limit int) ([]Sub, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return []Sub{}, nil
+	}
+	limit = normalizeSearchLimit(limit)
+
+	lowerKeyword := strings.ToLower(keyword)
+	pattern := "%" + lowerKeyword + "%"
+
+	rows, err := a.db.Query(`
+		SELECT id, title, description, created_at
+		FROM subs
+		WHERE LOWER(id) LIKE ?
+		   OR LOWER(title) LIKE ?
+		   OR LOWER(description) LIKE ?
+		ORDER BY
+			CASE
+				WHEN LOWER(id) = ? THEN 0
+				WHEN LOWER(title) = ? THEN 1
+				ELSE 2
+			END,
+			created_at DESC
+		LIMIT ?;
+	`, pattern, pattern, pattern, lowerKeyword, lowerKeyword, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]Sub, 0, limit)
+	for rows.Next() {
+		var sub Sub
+		if err := rows.Scan(&sub.ID, &sub.Title, &sub.Description, &sub.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, sub)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) SearchPosts(keyword string, subID string, limit int) ([]ForumMessage, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return []ForumMessage{}, nil
+	}
+	limit = normalizeSearchLimit(limit)
+
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	lowerKeyword := strings.ToLower(keyword)
+	pattern := "%" + lowerKeyword + "%"
+
+	subID = strings.TrimSpace(subID)
+	var rows *sql.Rows
+	var err error
+	if subID != "" {
+		rows, err = a.db.Query(`
+			SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id, m.is_protected, m.visibility
+			FROM messages m
+			LEFT JOIN content_blobs cb ON cb.content_cid = m.content_cid
+			WHERE m.zone = 'public'
+			  AND (m.visibility = 'normal' OR m.pubkey = ?)
+			  AND m.sub_id = ?
+			  AND (
+				LOWER(m.title) LIKE ?
+				OR LOWER(m.body) LIKE ?
+				OR LOWER(COALESCE(cb.body, '')) LIKE ?
+			  )
+			ORDER BY m.timestamp DESC
+			LIMIT ?;
+		`, viewerPubkey, normalizeSubID(subID), pattern, pattern, pattern, limit)
+	} else {
+		rows, err = a.db.Query(`
+			SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id, m.is_protected, m.visibility
+			FROM messages m
+			LEFT JOIN content_blobs cb ON cb.content_cid = m.content_cid
+			WHERE m.zone = 'public'
+			  AND (m.visibility = 'normal' OR m.pubkey = ?)
+			  AND (
+				LOWER(m.title) LIKE ?
+				OR LOWER(m.body) LIKE ?
+				OR LOWER(COALESCE(cb.body, '')) LIKE ?
+			  )
+			ORDER BY m.timestamp DESC
+			LIMIT ?;
+		`, viewerPubkey, pattern, pattern, pattern, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ForumMessage, 0, limit)
+	for rows.Next() {
+		var message ForumMessage
+		if err := rows.Scan(
+			&message.ID,
+			&message.Pubkey,
+			&message.Title,
+			&message.Body,
+			&message.ContentCID,
+			&message.Content,
+			&message.Score,
+			&message.Timestamp,
+			&message.SizeBytes,
+			&message.Zone,
+			&message.SubID,
+			&message.IsProtected,
+			&message.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, message)
 	}
 
 	return result, rows.Err()
@@ -1850,6 +2323,39 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 
 		return a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID)
+	case messageTypeFavoriteOp:
+		localIdentity, err := a.getLocalIdentity()
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "identity not found") {
+				return nil
+			}
+			return err
+		}
+		localPubkey := strings.TrimSpace(localIdentity.PublicKey)
+		if localPubkey == "" {
+			return nil
+		}
+
+		record := FavoriteOpRecord{
+			OpID:      strings.TrimSpace(message.FavoriteOpID),
+			Pubkey:    strings.TrimSpace(message.Pubkey),
+			PostID:    strings.TrimSpace(message.PostID),
+			Op:        strings.TrimSpace(message.FavoriteOp),
+			CreatedAt: message.Timestamp,
+			Signature: strings.TrimSpace(message.Signature),
+		}
+		if record.Pubkey != localPubkey {
+			return nil
+		}
+
+		applied, applyErr := a.applyFavoriteOperation(record, true)
+		if applyErr != nil {
+			return applyErr
+		}
+		if applied {
+			a.emitFavoritesUpdated(record.PostID)
+		}
+		return nil
 	case "COMMENT":
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid comment payload")
@@ -1940,7 +2446,7 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			message.Timestamp = time.Now().Unix()
 		}
 
-		_, err = a.insertMessage(ForumMessage{
+		insertedMessage, err := a.insertMessage(ForumMessage{
 			ID:          message.ID,
 			Pubkey:      message.Pubkey,
 			Title:       title,
@@ -1961,7 +2467,12 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			Visibility:  "normal",
 			IsProtected: 0,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+
+		a.emitSubscribedSubUpdate(insertedMessage)
+		return nil
 	default:
 		return fmt.Errorf("unsupported message type: %s", message.Type)
 	}
@@ -2024,6 +2535,288 @@ func (a *App) UpvoteComment(commentID string) error {
 	}
 
 	return a.applyCommentUpvote(identity.PublicKey, commentID, "")
+}
+
+func (a *App) AddFavorite(postID string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return errors.New("post id is required")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return errors.New("identity pubkey is empty")
+	}
+
+	exists, err := a.postExists(postID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("post not found")
+	}
+
+	active, err := a.isFavoritedByPubkey(pubkey, postID)
+	if err != nil {
+		return err
+	}
+	if active {
+		return nil
+	}
+
+	record, err := a.buildLocalFavoriteOperation(identity, postID, "ADD")
+	if err != nil {
+		return err
+	}
+
+	applied, err := a.applyFavoriteOperation(record, true)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return nil
+	}
+
+	a.emitFavoritesUpdated(postID)
+	if err = a.publishFavoriteOperation(record); err != nil && a.ctx != nil {
+		runtime.LogWarningf(a.ctx, "favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
+	}
+
+	return nil
+}
+
+func (a *App) RemoveFavorite(postID string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return errors.New("post id is required")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return errors.New("identity pubkey is empty")
+	}
+
+	active, err := a.isFavoritedByPubkey(pubkey, postID)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return nil
+	}
+
+	record, err := a.buildLocalFavoriteOperation(identity, postID, "REMOVE")
+	if err != nil {
+		return err
+	}
+
+	applied, err := a.applyFavoriteOperation(record, true)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return nil
+	}
+
+	a.emitFavoritesUpdated(postID)
+	if err = a.publishFavoriteOperation(record); err != nil && a.ctx != nil {
+		runtime.LogWarningf(a.ctx, "favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
+	}
+
+	return nil
+}
+
+func (a *App) IsFavorited(postID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return false, errors.New("post id is required")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return false, err
+	}
+
+	return a.isFavoritedByPubkey(identity.PublicKey, postID)
+}
+
+func (a *App) GetFavoritePostIDs() ([]string, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return nil, err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return nil, errors.New("identity pubkey is empty")
+	}
+
+	rows, err := a.db.Query(`
+		SELECT post_id
+		FROM post_favorites_state
+		WHERE pubkey = ? AND state = 'active'
+		ORDER BY updated_at DESC, post_id DESC;
+	`, pubkey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]string, 0)
+	for rows.Next() {
+		var postID string
+		if err = rows.Scan(&postID); err != nil {
+			return nil, err
+		}
+		result = append(result, strings.TrimSpace(postID))
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) GetFavorites(limit int, cursor string) (PostIndexPage, error) {
+	if a.db == nil {
+		return PostIndexPage{}, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return PostIndexPage{}, errors.New("identity pubkey is empty")
+	}
+
+	limit = normalizeFavoriteLimit(limit)
+	cursorTs, cursorPostID, err := decodeFavoriteCursor(cursor)
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+
+	args := []interface{}{pubkey, pubkey, pubkey}
+	query := `
+		SELECT
+			m.id,
+			m.pubkey,
+			m.title,
+			SUBSTR(m.body, 1, 140) AS body_preview,
+			m.content_cid,
+			m.image_cid,
+			m.thumb_cid,
+			m.image_mime,
+			m.image_size,
+			m.image_width,
+			m.image_height,
+			m.score,
+			m.timestamp,
+			m.zone,
+			m.sub_id,
+			m.visibility,
+			s.updated_at,
+			s.post_id
+		FROM post_favorites_state s
+		INNER JOIN messages m ON m.id = s.post_id
+		WHERE s.pubkey = ?
+		  AND s.state = 'active'
+		  AND (
+			(m.zone = 'public' AND (m.visibility = 'normal' OR m.pubkey = ?))
+			OR (m.zone = 'private' AND m.pubkey = ?)
+		  )
+	`
+	if cursorTs > 0 && cursorPostID != "" {
+		query += `
+		  AND (s.updated_at < ? OR (s.updated_at = ? AND s.post_id < ?))
+		`
+		args = append(args, cursorTs, cursorTs, cursorPostID)
+	}
+	query += `
+		ORDER BY s.updated_at DESC, s.post_id DESC
+		LIMIT ?;
+	`
+	args = append(args, limit+1)
+
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+	defer rows.Close()
+
+	type favoriteRow struct {
+		item      PostIndex
+		updatedAt int64
+		postID    string
+	}
+
+	resultRows := make([]favoriteRow, 0, limit+1)
+	for rows.Next() {
+		var row favoriteRow
+		if err = rows.Scan(
+			&row.item.ID,
+			&row.item.Pubkey,
+			&row.item.Title,
+			&row.item.BodyPreview,
+			&row.item.ContentCID,
+			&row.item.ImageCID,
+			&row.item.ThumbCID,
+			&row.item.ImageMIME,
+			&row.item.ImageSize,
+			&row.item.ImageWidth,
+			&row.item.ImageHeight,
+			&row.item.Score,
+			&row.item.Timestamp,
+			&row.item.Zone,
+			&row.item.SubID,
+			&row.item.Visibility,
+			&row.updatedAt,
+			&row.postID,
+		); err != nil {
+			return PostIndexPage{}, err
+		}
+		resultRows = append(resultRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		return PostIndexPage{}, err
+	}
+
+	page := PostIndexPage{
+		Items:      make([]PostIndex, 0, min(limit, len(resultRows))),
+		NextCursor: "",
+	}
+
+	if len(resultRows) > limit {
+		cursorRow := resultRows[limit-1]
+		page.NextCursor = encodeFavoriteCursor(cursorRow.updatedAt, cursorRow.postID)
+		resultRows = resultRows[:limit]
+	}
+
+	for _, row := range resultRows {
+		page.Items = append(page.Items, row.item)
+	}
+
+	return page, nil
 }
 
 func (a *App) upsertSub(id string, title string, description string, createdAt int64) (Sub, error) {
@@ -2629,6 +3422,219 @@ func (a *App) applyCommentUpvote(voterPubkey string, commentID string, postID st
 	return tx.Commit()
 }
 
+func (a *App) postExists(postID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return false, nil
+	}
+
+	var exists int
+	err := a.db.QueryRow(`SELECT 1 FROM messages WHERE id = ? LIMIT 1;`, postID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (a *App) isFavoritedByPubkey(pubkey string, postID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return false, nil
+	}
+
+	var state string
+	err := a.db.QueryRow(`
+		SELECT state
+		FROM post_favorites_state
+		WHERE pubkey = ? AND post_id = ?;
+	`, pubkey, postID).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return strings.EqualFold(strings.TrimSpace(state), "active"), nil
+}
+
+func (a *App) buildLocalFavoriteOperation(identity Identity, postID string, op string) (FavoriteOpRecord, error) {
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	mnemonic := strings.TrimSpace(identity.Mnemonic)
+	postID = strings.TrimSpace(postID)
+	normalizedOp, err := normalizeFavoriteOperation(op)
+	if err != nil {
+		return FavoriteOpRecord{}, err
+	}
+	if pubkey == "" || mnemonic == "" || postID == "" {
+		return FavoriteOpRecord{}, errors.New("invalid favorite operation identity")
+	}
+
+	now := time.Now()
+	createdAt := now.Unix()
+	opID := buildMessageID(pubkey, fmt.Sprintf("favorite|%s|%s|%d", normalizedOp, postID, now.UnixNano()), createdAt)
+	signaturePayload := buildFavoriteSignaturePayload(pubkey, postID, normalizedOp, createdAt, opID)
+	signature, err := a.SignMessage(mnemonic, signaturePayload)
+	if err != nil {
+		return FavoriteOpRecord{}, err
+	}
+
+	return FavoriteOpRecord{
+		OpID:      opID,
+		Pubkey:    pubkey,
+		PostID:    postID,
+		Op:        normalizedOp,
+		CreatedAt: createdAt,
+		Signature: signature,
+	}, nil
+}
+
+func (a *App) applyFavoriteOperation(record FavoriteOpRecord, verifySignature bool) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	record.OpID = strings.TrimSpace(record.OpID)
+	record.Pubkey = strings.TrimSpace(record.Pubkey)
+	record.PostID = strings.TrimSpace(record.PostID)
+	record.Signature = strings.TrimSpace(record.Signature)
+
+	normalizedOp, err := normalizeFavoriteOperation(record.Op)
+	if err != nil {
+		return false, err
+	}
+	record.Op = normalizedOp
+
+	if record.Pubkey == "" || record.PostID == "" {
+		return false, errors.New("invalid favorite operation payload")
+	}
+	if record.CreatedAt <= 0 {
+		record.CreatedAt = time.Now().Unix()
+	}
+	if record.OpID == "" {
+		record.OpID = buildMessageID(record.Pubkey, fmt.Sprintf("favorite|%s|%s", record.Op, record.PostID), record.CreatedAt)
+	}
+	if verifySignature {
+		if record.Signature == "" {
+			return false, errors.New("favorite operation signature is required")
+		}
+		valid, verifyErr := a.verifyFavoriteOperationSignature(record)
+		if verifyErr != nil {
+			return false, verifyErr
+		}
+		if !valid {
+			return false, errors.New("invalid favorite operation signature")
+		}
+	}
+
+	nextState := favoriteStateForOperation(record.Op)
+	tx, err := a.db.Begin()
+	if err != nil {
+		return false, err
+	}
+
+	result, err := tx.Exec(`
+		INSERT INTO post_favorite_ops (op_id, pubkey, post_id, op, created_at, signature)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(op_id) DO NOTHING;
+	`, record.OpID, record.Pubkey, record.PostID, record.Op, record.CreatedAt, record.Signature)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+
+	insertedCount, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+
+	if insertedCount == 0 {
+		if err = tx.Commit(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	var existingUpdatedAt int64
+	var existingLastOpID string
+	err = tx.QueryRow(`
+		SELECT updated_at, last_op_id
+		FROM post_favorites_state
+		WHERE pubkey = ? AND post_id = ?;
+	`, record.Pubkey, record.PostID).Scan(&existingUpdatedAt, &existingLastOpID)
+
+	shouldApply := true
+	if err == nil {
+		shouldApply = favoriteOperationWins(existingUpdatedAt, strings.TrimSpace(existingLastOpID), record.CreatedAt, record.OpID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		_ = tx.Rollback()
+		return false, err
+	}
+
+	if shouldApply {
+		if _, err = tx.Exec(`
+			INSERT INTO post_favorites_state (pubkey, post_id, state, updated_at, last_op_id)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(pubkey, post_id) DO UPDATE SET
+				state = excluded.state,
+				updated_at = excluded.updated_at,
+				last_op_id = excluded.last_op_id;
+		`, record.Pubkey, record.PostID, nextState, record.CreatedAt, record.OpID); err != nil {
+			_ = tx.Rollback()
+			return false, err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+
+	return shouldApply, nil
+}
+
+func (a *App) verifyFavoriteOperationSignature(record FavoriteOpRecord) (bool, error) {
+	pubkey := strings.TrimSpace(record.Pubkey)
+	postID := strings.TrimSpace(record.PostID)
+	opID := strings.TrimSpace(record.OpID)
+	signature := strings.TrimSpace(record.Signature)
+	if pubkey == "" || postID == "" || opID == "" || signature == "" {
+		return false, nil
+	}
+
+	normalizedOp, err := normalizeFavoriteOperation(record.Op)
+	if err != nil {
+		return false, err
+	}
+	payload := buildFavoriteSignaturePayload(pubkey, postID, normalizedOp, record.CreatedAt, opID)
+	return a.VerifyMessage(pubkey, payload, signature)
+}
+
+func (a *App) emitFavoritesUpdated(postID string) {
+	if a.ctx == nil {
+		return
+	}
+
+	payload := map[string]string{
+		"postId": strings.TrimSpace(postID),
+	}
+	runtime.EventsEmit(a.ctx, "favorites:updated", payload)
+	runtime.EventsEmit(a.ctx, "feed:updated")
+}
+
 func ensureZoneQuota(tx *sql.Tx, zone string, quota int64, incomingBytes int64) error {
 	if incomingBytes > quota {
 		return errors.New("message exceeds zone quota")
@@ -2972,6 +3978,306 @@ func normalizeSubID(subID string) string {
 	}
 
 	return clean
+}
+
+func normalizeSearchLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func normalizeFavoriteLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
+func normalizeFavoriteOperation(op string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(op))
+	if normalized == "ADD" || normalized == "REMOVE" {
+		return normalized, nil
+	}
+
+	return "", errors.New("invalid favorite operation")
+}
+
+func favoriteStateForOperation(op string) string {
+	if strings.ToUpper(strings.TrimSpace(op)) == "ADD" {
+		return "active"
+	}
+
+	return "removed"
+}
+
+func favoriteOperationWins(existingUpdatedAt int64, existingOpID string, incomingUpdatedAt int64, incomingOpID string) bool {
+	if incomingUpdatedAt > existingUpdatedAt {
+		return true
+	}
+	if incomingUpdatedAt < existingUpdatedAt {
+		return false
+	}
+
+	return strings.Compare(strings.TrimSpace(incomingOpID), strings.TrimSpace(existingOpID)) > 0
+}
+
+func buildFavoriteSignaturePayload(pubkey string, postID string, op string, createdAt int64, opID string) string {
+	return fmt.Sprintf(
+		"favorite|%s|%s|%s|%d|%s",
+		strings.TrimSpace(pubkey),
+		strings.TrimSpace(postID),
+		strings.ToUpper(strings.TrimSpace(op)),
+		createdAt,
+		strings.TrimSpace(opID),
+	)
+}
+
+func encodeFavoriteCursor(updatedAt int64, postID string) string {
+	raw := fmt.Sprintf("%d|%s", updatedAt, strings.TrimSpace(postID))
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeFavoriteCursor(cursor string) (int64, string, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return 0, "", nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, "", errors.New("invalid favorite cursor")
+	}
+
+	parts := strings.SplitN(string(decoded), "|", 2)
+	if len(parts) != 2 {
+		return 0, "", errors.New("invalid favorite cursor")
+	}
+
+	updatedAt, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	if err != nil || updatedAt <= 0 {
+		return 0, "", errors.New("invalid favorite cursor")
+	}
+	postID := strings.TrimSpace(parts[1])
+	if postID == "" {
+		return 0, "", errors.New("invalid favorite cursor")
+	}
+
+	return updatedAt, postID, nil
+}
+
+func normalizeFeedStreamLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
+func normalizeFeedStreamAlgorithm(algorithm string) string {
+	normalized := strings.TrimSpace(strings.ToLower(algorithm))
+	if normalized == "" {
+		return "hot-v1"
+	}
+	return normalized
+}
+
+func scoreFeedRecommendation(message ForumMessage, now int64, algorithm string) float64 {
+	switch strings.TrimSpace(strings.ToLower(algorithm)) {
+	case "hot-v1":
+		return computeHotScore(message.Score, message.Timestamp, now)
+	default:
+		return computeHotScore(message.Score, message.Timestamp, now)
+	}
+}
+
+func countFeedItemsByReason(items []FeedStreamItem, reason string) int {
+	total := 0
+	for _, item := range items {
+		if item.Reason == reason {
+			total++
+		}
+	}
+	return total
+}
+
+func (a *App) listSubscribedSubIDs() ([]string, error) {
+	rows, err := a.db.Query(`SELECT sub_id FROM sub_subscriptions ORDER BY subscribed_at DESC;`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]string, 0)
+	for rows.Next() {
+		var subID string
+		if err := rows.Scan(&subID); err != nil {
+			return nil, err
+		}
+		result = append(result, normalizeSubID(subID))
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) queryPostsBySubSet(viewerPubkey string, subIDs []string, limit int) ([]ForumMessage, error) {
+	if len(subIDs) == 0 {
+		return []ForumMessage{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	placeholders := makeSQLPlaceholders(len(subIDs))
+	args := make([]interface{}, 0, len(subIDs)+2)
+	args = append(args, viewerPubkey)
+	for _, subID := range subIDs {
+		args = append(args, normalizeSubID(subID))
+	}
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`
+		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+		FROM messages
+		WHERE zone = 'public'
+		  AND (visibility = 'normal' OR pubkey = ?)
+		  AND sub_id IN (%s)
+		ORDER BY timestamp DESC
+		LIMIT ?;
+	`, placeholders)
+
+	return a.queryForumMessages(query, args...)
+}
+
+func (a *App) queryRecommendedPosts(viewerPubkey string, subscribedSubIDs []string, limit int) ([]ForumMessage, error) {
+	if limit <= 0 {
+		limit = 40
+	}
+
+	if len(subscribedSubIDs) == 0 {
+		return a.queryForumMessages(`
+			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+			FROM messages
+			WHERE zone = 'public'
+			  AND (visibility = 'normal' OR pubkey = ?)
+			ORDER BY score DESC, timestamp DESC
+			LIMIT ?;
+		`, viewerPubkey, limit)
+	}
+
+	placeholders := makeSQLPlaceholders(len(subscribedSubIDs))
+	args := make([]interface{}, 0, len(subscribedSubIDs)+2)
+	args = append(args, viewerPubkey)
+	for _, subID := range subscribedSubIDs {
+		args = append(args, normalizeSubID(subID))
+	}
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`
+		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+		FROM messages
+		WHERE zone = 'public'
+		  AND (visibility = 'normal' OR pubkey = ?)
+		  AND sub_id NOT IN (%s)
+		ORDER BY score DESC, timestamp DESC
+		LIMIT ?;
+	`, placeholders)
+
+	return a.queryForumMessages(query, args...)
+}
+
+func (a *App) queryForumMessages(query string, args ...interface{}) ([]ForumMessage, error) {
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]ForumMessage, 0)
+	for rows.Next() {
+		var message ForumMessage
+		if err := rows.Scan(
+			&message.ID,
+			&message.Pubkey,
+			&message.Title,
+			&message.Body,
+			&message.ContentCID,
+			&message.Content,
+			&message.Score,
+			&message.Timestamp,
+			&message.SizeBytes,
+			&message.Zone,
+			&message.SubID,
+			&message.IsProtected,
+			&message.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, message)
+	}
+
+	return result, rows.Err()
+}
+
+func makeSQLPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+
+	parts := make([]string, count)
+	for i := range count {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ",")
+}
+
+func (a *App) isSubSubscribed(subID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	subID = normalizeSubID(subID)
+
+	var count int
+	if err := a.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM sub_subscriptions
+		WHERE sub_id = ?;
+	`, subID).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+func (a *App) emitSubscribedSubUpdate(message ForumMessage) {
+	if a.ctx == nil {
+		return
+	}
+	if strings.TrimSpace(message.Zone) != "public" {
+		return
+	}
+
+	subscribed, err := a.isSubSubscribed(message.SubID)
+	if err != nil || !subscribed {
+		return
+	}
+
+	runtime.EventsEmit(a.ctx, "sub:updated", map[string]interface{}{
+		"subId":     message.SubID,
+		"postId":    message.ID,
+		"title":     message.Title,
+		"timestamp": message.Timestamp,
+		"pubkey":    message.Pubkey,
+	})
 }
 
 func (a *App) saveLocalIdentity(identity Identity) error {

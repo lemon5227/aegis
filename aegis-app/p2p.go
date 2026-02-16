@@ -33,6 +33,9 @@ const (
 	messageTypeSyncSummaryResponse    = "SYNC_SUMMARY_RESPONSE"
 	messageTypeGovernanceSyncRequest  = "GOVERNANCE_SYNC_REQUEST"
 	messageTypeGovernanceSyncResponse = "GOVERNANCE_SYNC_RESPONSE"
+	messageTypeFavoriteOp             = "FAVORITE_OP"
+	messageTypeFavoriteSyncRequest    = "FAVORITE_SYNC_REQUEST"
+	messageTypeFavoriteSyncResponse   = "FAVORITE_SYNC_RESPONSE"
 )
 
 var (
@@ -44,6 +47,7 @@ var (
 	errMediaFetchNotFound    = errors.New("media fetch not found")
 	errAntiEntropyNoPeers    = errors.New("anti-entropy no peers")
 	errGovernanceSyncNoPeers = errors.New("governance sync no peers")
+	errFavoriteSyncNoPeers   = errors.New("favorite sync no peers")
 )
 
 type fetchRateWindow struct {
@@ -550,6 +554,48 @@ func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID strin
 	return topic.Publish(ctx, payload)
 }
 
+func (a *App) publishFavoriteOperation(record FavoriteOpRecord) error {
+	record.OpID = strings.TrimSpace(record.OpID)
+	record.Pubkey = strings.TrimSpace(record.Pubkey)
+	record.PostID = strings.TrimSpace(record.PostID)
+	record.Signature = strings.TrimSpace(record.Signature)
+
+	normalizedOp, err := normalizeFavoriteOperation(record.Op)
+	if err != nil {
+		return err
+	}
+	record.Op = normalizedOp
+
+	if record.OpID == "" || record.Pubkey == "" || record.PostID == "" || record.CreatedAt <= 0 || record.Signature == "" {
+		return errors.New("invalid favorite operation payload")
+	}
+
+	msg := IncomingMessage{
+		Type:         messageTypeFavoriteOp,
+		Pubkey:       record.Pubkey,
+		PostID:       record.PostID,
+		FavoriteOpID: record.OpID,
+		FavoriteOp:   record.Op,
+		Timestamp:    record.CreatedAt,
+		Signature:    record.Signature,
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil {
+		return nil
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
 func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL string) error {
 	pubkey = strings.TrimSpace(pubkey)
 	if pubkey == "" {
@@ -914,6 +960,13 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "governance sync initial request failed: %v", err)
 			}
+			if err := a.publishFavoriteSyncRequest(); err != nil &&
+				!errors.Is(err, errFavoriteSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				!strings.Contains(strings.ToLower(err.Error()), "identity not found") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "favorite sync initial request failed: %v", err)
+			}
 		case <-ticker.C:
 			if err := a.publishSyncSummaryRequest(); err != nil &&
 				!errors.Is(err, errAntiEntropyNoPeers) &&
@@ -926,6 +979,13 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "governance sync periodic request failed: %v", err)
+			}
+			if err := a.publishFavoriteSyncRequest(); err != nil &&
+				!errors.Is(err, errFavoriteSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				!strings.Contains(strings.ToLower(err.Error()), "identity not found") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "favorite sync periodic request failed: %v", err)
 			}
 		}
 	}
@@ -1122,6 +1182,65 @@ func (a *App) publishGovernanceSyncRequest() error {
 	return topic.Publish(ctx, payload)
 }
 
+func (a *App) publishFavoriteSyncRequest() error {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	host := a.p2pHost
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil || host == nil {
+		return errors.New("p2p not started")
+	}
+	if len(host.Network().Peers()) == 0 {
+		return errFavoriteSyncNoPeers
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return nil
+	}
+
+	latestTimestamp, err := a.getLatestFavoriteOpTimestamp(pubkey)
+	if err != nil {
+		return err
+	}
+
+	windowSeconds := resolveAntiEntropyWindowSeconds()
+	sinceTimestamp := int64(0)
+	if latestTimestamp > 0 {
+		sinceTimestamp = latestTimestamp - windowSeconds
+		if sinceTimestamp < 0 {
+			sinceTimestamp = 0
+		}
+	}
+
+	batchSize := resolveAntiEntropyBatchSize()
+	request := IncomingMessage{
+		Type:              messageTypeFavoriteSyncRequest,
+		RequestID:         buildMessageID(host.ID().String(), "favorite-sync", time.Now().UnixNano()),
+		RequesterPeerID:   host.ID().String(),
+		Pubkey:            pubkey,
+		FavoriteSinceTs:   sinceTimestamp,
+		FavoriteBatchSize: batchSize,
+		Timestamp:         time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "favorite_sync.request sent request_id=%s pubkey=%s since=%d batch=%d", request.RequestID, request.Pubkey, request.FavoriteSinceTs, request.FavoriteBatchSize)
+	}
+	return topic.Publish(ctx, payload)
+}
+
 func (a *App) getP2PStatusLocked() P2PStatus {
 	status := P2PStatus{
 		Started: false,
@@ -1202,6 +1321,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		case messageTypeGovernanceSyncResponse:
 			a.handleGovernanceSyncResponse(localPeerID.String(), incoming)
 			continue
+		case messageTypeFavoriteSyncRequest:
+			a.handleFavoriteSyncRequest(localPeerID.String(), incoming)
+			continue
+		case messageTypeFavoriteSyncResponse:
+			a.handleFavoriteSyncResponse(localPeerID.String(), incoming)
+			continue
 		}
 
 		if err = a.ProcessIncomingMessage(message.Data); err != nil {
@@ -1212,6 +1337,9 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		}
 
 		if a.ctx != nil {
+			if messageType == messageTypeFavoriteOp {
+				continue
+			}
 			if messageType == "COMMENT" || messageType == "COMMENT_UPVOTE" {
 				postID := strings.TrimSpace(incoming.PostID)
 				if postID != "" {
@@ -1824,6 +1952,145 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 		if applied > 0 || logsInserted > 0 {
 			runtime.EventsEmit(a.ctx, "feed:updated")
 		}
+	}
+}
+
+func (a *App) handleFavoriteSyncRequest(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	requestID := strings.TrimSpace(message.RequestID)
+	pubkey := strings.TrimSpace(message.Pubkey)
+	if requester == "" || requestID == "" || requester == localPeerID || pubkey == "" {
+		return
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return
+	}
+	localPubkey := strings.TrimSpace(identity.PublicKey)
+	if localPubkey == "" || localPubkey != pubkey {
+		return
+	}
+
+	sinceTs := message.FavoriteSinceTs
+	if sinceTs < 0 {
+		sinceTs = 0
+	}
+	batchSize := message.FavoriteBatchSize
+	if batchSize <= 0 || batchSize > 500 {
+		batchSize = resolveAntiEntropyBatchSize()
+	}
+
+	ops, err := a.listFavoriteOpsSince(pubkey, sinceTs, batchSize)
+	if err != nil {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "favorite_sync.build failed request_id=%s err=%v", requestID, err)
+		}
+		return
+	}
+
+	response := IncomingMessage{
+		Type:              messageTypeFavoriteSyncResponse,
+		RequestID:         requestID,
+		RequesterPeerID:   requester,
+		ResponderPeerID:   localPeerID,
+		Pubkey:            pubkey,
+		FavoriteSinceTs:   sinceTs,
+		FavoriteBatchSize: batchSize,
+		FavoriteOps:       ops,
+		Timestamp:         time.Now().Unix(),
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "favorite_sync.response sent request_id=%s pubkey=%s since=%d ops=%d", requestID, pubkey, sinceTs, len(ops))
+	}
+}
+
+func (a *App) handleFavoriteSyncResponse(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	if requester == "" || requester != localPeerID {
+		return
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return
+	}
+	localPubkey := strings.TrimSpace(identity.PublicKey)
+	if localPubkey == "" {
+		return
+	}
+
+	messagePubkey := strings.TrimSpace(message.Pubkey)
+	if messagePubkey != "" && messagePubkey != localPubkey {
+		return
+	}
+
+	ops := make([]FavoriteOpRecord, 0, len(message.FavoriteOps))
+	for _, row := range message.FavoriteOps {
+		record := FavoriteOpRecord{
+			OpID:      strings.TrimSpace(row.OpID),
+			Pubkey:    strings.TrimSpace(row.Pubkey),
+			PostID:    strings.TrimSpace(row.PostID),
+			Op:        strings.TrimSpace(row.Op),
+			CreatedAt: row.CreatedAt,
+			Signature: strings.TrimSpace(row.Signature),
+		}
+		if record.Pubkey == "" {
+			record.Pubkey = messagePubkey
+		}
+		if record.Pubkey != localPubkey {
+			continue
+		}
+		if record.OpID == "" || record.PostID == "" || record.CreatedAt <= 0 || record.Signature == "" {
+			continue
+		}
+		if _, normalizeErr := normalizeFavoriteOperation(record.Op); normalizeErr != nil {
+			continue
+		}
+		ops = append(ops, record)
+	}
+
+	sort.SliceStable(ops, func(i int, j int) bool {
+		if ops[i].CreatedAt == ops[j].CreatedAt {
+			return ops[i].OpID < ops[j].OpID
+		}
+		return ops[i].CreatedAt < ops[j].CreatedAt
+	})
+
+	applied := 0
+	for _, row := range ops {
+		changed, applyErr := a.applyFavoriteOperation(row, true)
+		if applyErr != nil {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "favorite_sync.apply_failed op_id=%s post_id=%s err=%v", row.OpID, row.PostID, applyErr)
+			}
+			continue
+		}
+		if changed {
+			applied++
+		}
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "favorite_sync.response applied request_id=%s received=%d applied=%d", strings.TrimSpace(message.RequestID), len(ops), applied)
+	}
+	if applied > 0 {
+		a.emitFavoritesUpdated("")
 	}
 }
 
