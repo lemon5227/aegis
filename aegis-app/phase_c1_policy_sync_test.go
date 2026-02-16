@@ -1,1 +1,0 @@
-tests/regression/phase_c1_policy_sync_test.go.src

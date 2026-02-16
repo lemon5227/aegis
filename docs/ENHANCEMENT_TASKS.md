@@ -1,6 +1,7 @@
 # Aegis 增强实现任务清单（可执行版）
 
 ## 使用方式
+- 新阶段默认主文档：`docs/NEXT_WATERFALL_PLAN_2026-02-15.md`（N 系列）。
 - 按阶段顺序执行，不要跳阶段。
 - 每阶段都包含：目标、任务、完成标准（DoD）、验证步骤。
 - 每完成一阶段，建议做一次里程碑提交。
@@ -16,6 +17,8 @@
 - B3 Hot 评分稳定化：Done
 - C1 治理产品化：Auto-Verified（自动化门禁通过，待三节点手工联调后置为 Done）
 - C2 存储升级：In Progress（已完成 content_cid、索引列表 API、详情按 CID 取正文、前端正文缓存）
+- D1 订阅与搜索（Sub Subscription + Search）：In Progress（后端 S1/S2/S3/S4 已完成，前端 S5 待开始）
+- D2 FeedStream 聚合流：In Progress（后端 S6 已完成，策略扩展与前端接入待完成）
 
 ## 变更单（执行偏差记录）
 ### CR-2026-02-14-C1-EarlyStart

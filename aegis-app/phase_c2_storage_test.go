@@ -1,1 +1,0 @@
-tests/regression/phase_c2_storage_test.go.src

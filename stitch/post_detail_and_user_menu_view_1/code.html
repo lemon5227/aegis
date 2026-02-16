@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aegis - Post Detail</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                "warm-bg": "#F4EFE6", // Almond/cream
+                "warm-surface": "#FAF9F6", // Soft off-white
+                "warm-sidebar": "#EAE2D6", // Pale taupe
+                "warm-text": "#3E2C23", // Espresso brown
+                "warm-accent": "#D97706", // Terracotta/Amber
+                "warm-accent-hover": "#B45309",
+                "warm-border": "#DBCFB6",
+                "primary": "#D97706", 
+              },
+              fontFamily: {
+                "display": ["Inter", "sans-serif"]
+              },
+              borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+              boxShadow: {
+                'soft': '0 4px 20px -2px rgba(62, 44, 35, 0.05)',
+              }
+            },
+          },
+        }
+      </script>
+<style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent; 
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #DBCFB6; 
+            border-radius: 20px;
+        }
+        .custom-scrollbar:hover::-webkit-scrollbar-thumb {
+            background-color: #BCA680; 
+        }
+    </style>
+</head>
+<body class="bg-warm-bg font-display text-warm-text h-screen overflow-hidden flex selection:bg-warm-accent selection:text-white">
+<aside class="w-64 bg-warm-sidebar flex flex-col border-r border-warm-border z-30 hidden lg:flex shrink-0">
+<div class="p-6 flex items-center gap-3">
+<div class="p-2 rounded-xl bg-warm-accent/10">
+<span class="material-icons text-warm-accent text-2xl">shield</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight text-warm-text">Aegis</h1>
+</div>
+<nav class="flex-1 overflow-y-auto px-4 space-y-8 custom-scrollbar pt-2">
+<div>
+<h3 class="text-xs font-bold text-warm-text/50 uppercase tracking-wider mb-3 px-2">Feeds</h3>
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-warm-surface/50 text-warm-accent font-medium shadow-sm ring-1 ring-warm-border/50" href="#">
+<span class="material-icons text-xl">home</span>
+                        Home
+                    </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<span class="material-icons text-xl">trending_up</span>
+                        Popular
+                    </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<span class="material-icons text-xl">new_releases</span>
+                        New
+                    </a>
+</div>
+</div>
+<div>
+<h3 class="text-xs font-bold text-warm-text/50 uppercase tracking-wider mb-3 px-2">Sub-Communities</h3>
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<div class="w-5 h-5 rounded-full bg-warm-accent/20 flex items-center justify-center text-xs font-bold text-warm-accent">G</div>
+                        Governance
+                    </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<div class="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">A</div>
+                        Announcements
+                    </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<div class="w-5 h-5 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold">D</div>
+                        DeFi
+                    </a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-warm-text/70 hover:bg-warm-surface/30 hover:text-warm-text transition-colors" href="#">
+<div class="w-5 h-5 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold">N</div>
+                        NFTs
+                    </a>
+</div>
+</div>
+</nav>
+<div class="p-4 border-t border-warm-border mt-auto">
+<button class="flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg bg-warm-text text-warm-surface font-medium hover:bg-warm-text/90 transition-all shadow-lg shadow-warm-text/10 mb-2">
+<span class="material-icons text-xl">add</span>
+                Create Sub
+            </button>
+</div>
+</aside>
+<main class="flex-1 flex flex-col h-full bg-warm-bg min-w-0">
+<header class="h-16 px-6 border-b border-warm-border flex items-center justify-between bg-warm-surface/80 backdrop-blur-md sticky top-0 z-20 shrink-0">
+<div class="flex items-center gap-4 flex-1">
+<button class="lg:hidden text-warm-text/60">
+<span class="material-icons">menu</span>
+</button>
+<div class="relative max-w-md w-full hidden md:block">
+<span class="material-icons absolute left-3 top-2.5 text-warm-text/40 text-sm">search</span>
+<input class="w-full bg-warm-bg border border-warm-border/50 rounded-full py-2 pl-9 pr-4 text-sm text-warm-text focus:ring-1 focus:ring-warm-accent placeholder-warm-text/40 focus:border-warm-accent transition-all" placeholder="Search Aegis..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-3 ml-4">
+<button class="p-2 text-warm-text/60 hover:text-warm-accent hover:bg-warm-bg rounded-full transition-colors flex items-center justify-center">
+<span class="material-symbols-outlined text-xl">light_mode</span>
+</button>
+<button class="p-2 text-warm-text/60 hover:text-warm-accent hover:bg-warm-bg rounded-full transition-colors relative flex items-center justify-center">
+<span class="material-icons text-xl">notifications</span>
+<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full ring-2 ring-warm-surface"></span>
+</button>
+<div class="relative group ml-2">
+<button class="flex items-center gap-2 p-1 pl-2 rounded-full hover:bg-warm-bg transition-colors border border-transparent hover:border-warm-border">
+<div class="relative">
+<img alt="Current User" class="w-8 h-8 rounded-full object-cover border border-warm-border" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB_oCl0DpIaapNNTLp_TkPUQYJgdgpc3cpfTl1PD_kVm5dhkNUFSOSN1tQnSmeSQCpb_LBXNgX53Zl1esw1RCZtsqsX9Nf0bFavPuRPhRVC1TWamJFFwXHCZnDeBz-ixzZFl1O4qvIcNpQmt4lUG5ORwA2THV2pKifN5l1cz8ILb-teLeSegnrIBOpZK2Gul01adcEg-YMWyDPp5JcidDp0EW5lVvuaqEiGo2cv8ab2_jvddIMvbk2hlIG9YCDmueoenQ9WZt4rVoE"/>
+<div class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-warm-surface"></div>
+</div>
+<span class="material-icons text-warm-text/40 text-lg group-hover:text-warm-text/60 transition-transform group-hover:rotate-180">expand_more</span>
+</button>
+</div>
+</div>
+</header>
+<div class="flex-1 overflow-hidden flex flex-row">
+<div class="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 scroll-smooth">
+<div class="max-w-4xl mx-auto pb-20">
+<div class="text-sm breadcrumbs text-warm-text/60 mb-6 flex items-center gap-2">
+<span class="hover:text-warm-accent cursor-pointer flex items-center gap-1"><span class="material-icons text-base">home</span></span>
+<span class="text-warm-text/30">/</span>
+<span class="hover:text-warm-accent cursor-pointer font-medium text-warm-text/90">Governance</span>
+<span class="text-warm-text/30">/</span>
+<span class="text-warm-text/50 truncate max-w-[200px]">Proposal: Aegis Governance V2 Update</span>
+</div>
+<article class="bg-warm-surface rounded-2xl shadow-soft border border-warm-border/60 overflow-hidden mb-6">
+<div class="p-6 md:p-8 pb-2">
+<div class="flex items-start justify-between mb-4">
+<div class="flex items-center gap-3">
+<div class="bg-warm-accent/10 p-2 rounded-lg">
+<span class="material-icons text-warm-accent">gavel</span>
+</div>
+<div class="flex flex-col">
+<h1 class="text-xl md:text-2xl font-bold text-warm-text leading-tight">Proposal: Aegis Governance V2 Update</h1>
+<div class="flex items-center gap-2 mt-1 text-xs text-warm-text/60">
+<span>Posted by <span class="font-bold text-warm-text">@crypto_king</span></span>
+<span class="w-1 h-1 bg-warm-text/30 rounded-full"></span>
+<span>5h ago</span>
+<span class="w-1 h-1 bg-warm-text/30 rounded-full"></span>
+<span class="text-warm-accent font-medium">Governance</span>
+</div>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-700 text-xs font-medium border border-blue-500/10">#Proposal</span>
+<span class="px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-700 text-xs font-medium border border-purple-500/10">#V2Upgrade</span>
+<span class="px-2.5 py-0.5 rounded-full bg-green-500/10 text-green-700 text-xs font-medium border border-green-500/10">#Active</span>
+</div>
+<div class="prose max-w-none text-warm-text/90 leading-relaxed text-base space-y-4">
+<p>
+                                    This proposal outlines the new voting mechanism to prevent whale dominance within the Aegis ecosystem. We've observed that Quadratic Voting (QV) has been successful in other DAOs, and we propose implementing a modified version here.
+                                </p>
+<p>
+                                    The key changes involve:
+                                </p>
+<ul class="list-disc pl-5 space-y-1 marker:text-warm-accent text-warm-text/80">
+<li>Implementing a square root function for voting power.</li>
+<li>Introducing a cooldown period for newly acquired tokens.</li>
+<li>Adding a reputation-based multiplier for long-term holders.</li>
+</ul>
+<div class="my-6 rounded-xl overflow-hidden border border-warm-border relative group bg-warm-bg">
+<img alt="Data Chart" class="w-full h-auto object-cover mix-blend-multiply opacity-90 hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCD9zIeXUBA6U5FRCkiexAE1ugdR191buKn1FYpZLrT2IuvWityGJIFrGsYYI_JLpKTieJTSsJ4ccRmRQ1h7G9Xg1K_lsJianWnath3EQLJqb8_cpuGFSQW-Y4sx9ZB-c3Y-c3_wD4FUeeLvrih1gkyNgT_361RsEpB41gYp4g3aa0gZR6L_00UXJ8Wol7wYVQcZOHLWWjtCsSwMeomNyiyRhEnH-Ek8BKFE6fjKY0j96cLP-tKgEtbhEoTTFsSK6VugWf7zuwn1KU"/>
+</div>
+<p>
+                                    We believe these changes will create a more equitable environment for all participants. Please review the attached technical specification document before casting your vote.
+                                </p>
+</div>
+</div>
+<div class="bg-warm-bg/50 px-6 py-3 border-t border-warm-border/50 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="flex items-center bg-warm-surface border border-warm-border rounded-lg shadow-sm">
+<button class="p-1.5 px-3 rounded-l-lg hover:bg-warm-bg text-warm-accent transition-colors">
+<span class="material-icons text-xl">arrow_upward</span>
+</button>
+<span class="text-sm font-bold text-warm-text px-1">1.2k</span>
+<button class="p-1.5 px-3 rounded-r-lg hover:bg-warm-bg text-warm-text/50 hover:text-red-500 transition-colors">
+<span class="material-icons text-xl">arrow_downward</span>
+</button>
+</div>
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-warm-bg text-warm-text/60 hover:text-warm-text transition-colors">
+<span class="material-icons text-xl">chat_bubble_outline</span>
+<span class="text-sm font-medium">42 Comments</span>
+</button>
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-warm-bg text-warm-text/60 hover:text-warm-text transition-colors">
+<span class="material-icons text-xl">share</span>
+<span class="text-sm font-medium">Share</span>
+</button>
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-warm-bg text-warm-text/60 hover:text-warm-text transition-colors">
+<span class="material-icons text-xl">bookmark_border</span>
+<span class="text-sm font-medium">Save</span>
+</button>
+</div>
+<div class="text-xs text-warm-text/40 font-mono">
+                                84% Upvoted
+                            </div>
+</div>
+</article>
+<div class="mb-8">
+<div class="bg-warm-surface rounded-xl border border-warm-border p-4 mb-6 shadow-sm">
+<div class="flex gap-4">
+<div class="flex-shrink-0 pt-1">
+<div class="w-8 h-8 rounded-full bg-warm-accent/20 flex items-center justify-center text-warm-accent font-bold">Y</div>
+</div>
+<div class="flex-1">
+<textarea class="w-full bg-warm-bg border border-warm-border rounded-lg p-3 text-warm-text focus:ring-1 focus:ring-warm-accent focus:border-warm-accent placeholder-warm-text/40 resize-none text-sm" placeholder="What are your thoughts?" rows="2"></textarea>
+<div class="flex justify-end mt-2">
+<button class="bg-warm-accent hover:bg-warm-accent-hover text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md shadow-warm-accent/20 transition-colors">Comment</button>
+</div>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mb-6 px-1">
+<div class="flex items-center gap-2">
+<span class="text-xs font-bold text-warm-text/50 uppercase tracking-wide">Sort By</span>
+<select class="bg-transparent border-none text-sm font-bold text-warm-text focus:ring-0 cursor-pointer p-0 pr-6 py-0 focus:outline-none">
+<option>Best</option>
+<option>Newest</option>
+<option>Controversial</option>
+</select>
+</div>
+</div>
+<div class="space-y-6">
+<div class="relative">
+<div class="flex gap-3 group">
+<div class="flex-col items-center hidden md:flex">
+<img alt="User Avatar" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuALhuXI8DrnkFXwlbVXoG79_MmtmjJbhmde9ZkjL3hRQG3hkIiUu0z1JLeIMIQlAlVGZJLf0UFWegDJBiE_UA5vS_htyNRu99Ta0aQrVLV2C9W3UWYmUYOxuOgIU8xVL-DwNakZ85tA06gMVxbnAGtFAdH3liZPHZmpdO_i_6HTSQGZzhzg-agGbl9f2Hn9wbqsF7uH6YsumcXOQiKy8lrvo6pFyeMWjcA-t8g04jMBRivYb52IlUzMiN14nbmJHvrWlhkzO1EAW1A"/>
+<div class="w-px h-full bg-warm-border/60 my-2 group-hover:bg-warm-border transition-colors"></div>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-1">
+<span class="font-bold text-sm text-warm-text">@defi_enthusiast</span>
+<span class="text-xs text-warm-text/40">45m ago</span>
+</div>
+<div class="text-sm text-warm-text/80 mb-2">
+                                            I strongly agree with the quadratic voting implementation. The whale dominance has been a persistent issue in the last 3 proposals. Have we considered the Sybil attack vectors though?
+                                        </div>
+<div class="flex items-center gap-4 mb-2">
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-warm-accent transition-colors">
+<span class="material-icons text-base">arrow_upward</span>
+<span class="text-xs font-bold">24</span>
+</button>
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-red-500 transition-colors">
+<span class="material-icons text-base">arrow_downward</span>
+</button>
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-warm-text transition-colors ml-2">
+<span class="material-icons text-base">chat_bubble_outline</span>
+<span class="text-xs font-medium">Reply</span>
+</button>
+<button class="text-warm-text/40 hover:text-warm-text transition-colors text-xs font-medium">Share</button>
+</div>
+<div class="mt-4 pl-4 md:pl-0">
+<div class="flex gap-3 group">
+<div class="flex-col items-center hidden md:flex">
+<img alt="User Avatar" class="w-6 h-6 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuADBKX7UsHZkwxAilVmIln_TPY1yroqtKao17mPQ7pRBbYoUVlWC0jFi7clgL04H0Ftwu8FC3nDMJvHuiGxQyHNN6uNJIptJrjM1AVnUW_Ugc_YZv_ZvOxsAeo1sha5a_gJHxYn_hwLTFJBzmv5rQFraapWU32_UOaE-u3h8orqIrwBPzWTV2lLK6RTexDyYa9dy3mlB0jnRECdUuWytEF2UWaXOlmCGogu7uZxkm9FxLUY_QcoN-kvVmPuzcyYJHMYrOIN_HwrTLk"/>
+<div class="w-px h-full bg-warm-border/60 my-2"></div>
+</div>
+<div class="flex-1">
+<div class="bg-warm-accent/5 p-3 rounded-xl border border-warm-accent/10">
+<div class="flex items-center gap-2 mb-1">
+<span class="font-bold text-sm text-warm-text">@security_auditor</span>
+<span class="px-1.5 py-0.5 rounded bg-warm-accent text-white text-[10px] font-bold uppercase tracking-wide">Mod</span>
+<span class="text-xs text-warm-text/40">30m ago</span>
+</div>
+<div class="text-sm text-warm-text/80 mb-2">
+                                                            Good point. That's why we are coupling it with BrightID verification. The technical specs doc covers this in section 4.2.
+                                                        </div>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-warm-accent transition-colors">
+<span class="material-icons text-sm">arrow_upward</span>
+<span class="text-xs font-bold">8</span>
+</button>
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-red-500 transition-colors">
+<span class="material-icons text-sm">arrow_downward</span>
+</button>
+<button class="text-xs font-medium text-warm-text/50 hover:text-warm-text ml-2">Reply</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="relative">
+<div class="flex gap-3 group">
+<div class="flex-col items-center hidden md:flex">
+<img alt="User Avatar" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0r9Jlskg-pXbedeRiBp_RZV2jYy6-SsBNLNe5BRiqwaT82FzjoMtCSHb1aSqjyy825oYt8PlyTp0vKU_Lt_igbPkQ5eAwWy9y5kSuSS0J_iFkrpvwvmNVUlbYqJ21qx0K9dtWvOh1JZbFPBMMZvThGs-48c0ZLSHX2x-oSMtbbxfnW6GHZsfkzKCQX-LcTUHbCjiuxizaLKKxJ4K36P6VLCX0u3iPdeeuIUQrcTPp7iNHttEHAXPbrpu6GqR_8rp-sNdfgwBP22s"/>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-1">
+<span class="font-bold text-sm text-warm-text">@skeptic_whale</span>
+<span class="text-xs text-warm-text/40">1h ago</span>
+</div>
+<div class="text-sm text-warm-text/80 mb-2">
+                                            This penalizes early supporters who hold large bags. We took the risk when the token was $0.01. Why should our voting power be diluted now?
+                                        </div>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-warm-accent transition-colors">
+<span class="material-icons text-base">arrow_upward</span>
+<span class="text-xs font-bold">2</span>
+</button>
+<button class="flex items-center gap-1 text-warm-accent transition-colors">
+<span class="material-icons text-base">arrow_downward</span>
+<span class="text-xs font-bold text-red-500">-5</span>
+</button>
+<button class="flex items-center gap-1 text-warm-text/50 hover:text-warm-text transition-colors ml-2">
+<span class="material-icons text-base">chat_bubble_outline</span>
+<span class="text-xs font-medium">Reply</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<aside class="w-80 bg-warm-surface border-l border-warm-border p-4 hidden xl:block overflow-y-auto custom-scrollbar">
+<div class="bg-warm-bg rounded-xl p-4 border border-warm-border mb-4">
+<div class="flex items-center justify-between mb-2">
+<h2 class="font-bold text-lg text-warm-text">About Community</h2>
+<button class="text-warm-text/40 hover:text-warm-text">
+<span class="material-icons text-lg">more_horiz</span>
+</button>
+</div>
+<div class="flex items-center gap-3 mb-4">
+<div class="w-12 h-12 rounded-xl bg-warm-accent/10 flex items-center justify-center border border-warm-accent/20">
+<span class="material-icons text-warm-accent text-3xl">gavel</span>
+</div>
+<div>
+<h3 class="font-bold text-warm-text">Governance</h3>
+<p class="text-xs text-warm-text/60">r/governance</p>
+</div>
+</div>
+<p class="text-sm text-warm-text/80 mb-4 leading-relaxed">
+                        The official channel for Aegis Protocol governance proposals, discussions, and voting. Shape the future of the protocol.
+                    </p>
+<div class="flex items-center gap-6 mb-6 border-b border-warm-border/50 pb-4">
+<div>
+<div class="font-bold text-warm-text">42.5k</div>
+<div class="text-xs text-warm-text/50">Members</div>
+</div>
+<div>
+<div class="font-bold text-warm-text flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                148
+                            </div>
+<div class="text-xs text-warm-text/50">Online</div>
+</div>
+</div>
+<div class="flex items-center gap-2 mb-4">
+<span class="material-icons text-warm-text/40 text-lg">cake</span>
+<span class="text-xs text-warm-text/60">Created Oct 12, 2021</span>
+</div>
+<button class="w-full bg-warm-accent hover:bg-warm-accent-hover text-white py-2 rounded-lg font-bold shadow-md shadow-warm-accent/20 transition-all mb-2">
+                        Join Community
+                    </button>
+</div>
+<div class="bg-warm-bg rounded-xl p-4 border border-warm-border mb-4">
+<h3 class="font-bold text-sm text-warm-text mb-3 uppercase tracking-wider opacity-80">Rules</h3>
+<ol class="list-decimal pl-4 space-y-2 text-sm text-warm-text/80 marker:font-bold marker:text-warm-accent">
+<li>Be respectful to all members.</li>
+<li>No price talk or speculation.</li>
+<li>Proposals must follow the template.</li>
+<li>Stay on topic.</li>
+</ol>
+</div>
+<div class="bg-warm-bg rounded-xl p-4 border border-warm-border">
+<h3 class="font-bold text-sm text-warm-text mb-3 uppercase tracking-wider opacity-80">Moderators</h3>
+<div class="space-y-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<img alt="mod" class="w-6 h-6 rounded-full" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCsegKU1sqw5IBqM4nY6dmM2mwoz0MlFFOCA61CI0tcQwXxJt5WLJHX-2U_YmFTKaeMBmkLyFwZyD7WklYVH-bDTqC5LRPy311ARe07yDr86NevU4w7f69K6m-9zwDze_ioe0iTKvUUyoU2zodn5jfss6KbZjjijWUd5bxWWzpgRQnIU-Cmh82paJTusCC66_RiCxYZpYvJxWbSKuccBeSSfoGO9qrFc0nGekmH3p1ajh3DQFfCID1DbEYRMa0on8_ednDZhRsocTs"/>
+<span class="text-sm font-medium text-warm-accent">u/security_auditor</span>
+</div>
+<button class="text-xs bg-warm-surface border border-warm-border px-2 py-1 rounded hover:bg-warm-border/50 transition-colors">Msg</button>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-xs font-bold text-purple-600">A</div>
+<span class="text-sm font-medium text-warm-accent">u/aegis_admin</span>
+</div>
+<button class="text-xs bg-warm-surface border border-warm-border px-2 py-1 rounded hover:bg-warm-border/50 transition-colors">Msg</button>
+</div>
+</div>
+<div class="mt-4 pt-3 border-t border-warm-border/50 text-center">
+<a class="text-xs font-bold text-warm-accent hover:underline" href="#">View All Moderators</a>
+</div>
+</div>
+<div class="mt-6 flex flex-wrap gap-x-4 gap-y-2 text-xs text-warm-text/40 px-2">
+<a class="hover:underline" href="#">User Agreement</a>
+<a class="hover:underline" href="#">Privacy Policy</a>
+<a class="hover:underline" href="#">Content Policy</a>
+<a class="hover:underline" href="#">Moderator Code of Conduct</a>
+<span>© 2023 Aegis Inc.</span>
+</div>
+</aside>
+</div>
+</main>
+
+</body></html>

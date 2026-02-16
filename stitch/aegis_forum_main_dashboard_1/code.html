@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Aegis Dashboard: Soft Warm Light</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined|Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              colors: {
+                "warm-bg": "#F4EFE6","warm-sidebar": "#EAE2D6","warm-border": "#D6CEC3","warm-text-primary": "#3E2C23","warm-text-secondary": "#6B5D55","warm-accent": "#D97706","warm-accent-hover": "#B45309","warm-card": "#FAF9F6","background-dark": "#0f1115",
+                "surface-dark": "#181b21",
+                "surface-lighter": "#22262e",
+                "border-dark": "#2d323b",
+              },
+              fontFamily: {
+                "display": ["Inter", "sans-serif"]
+              },
+              borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "2xl": "1rem", "full": "9999px"},
+              boxShadow: {
+                "soft": "0 2px 8px -2px rgba(62, 44, 35, 0.05), 0 1px 4px -1px rgba(62, 44, 35, 0.02)"
+              }
+            },
+          },
+        }
+    </script>
+<style>
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #D6CEC3; 
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6B5D55;
+        }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-warm-bg dark:bg-background-dark font-display text-warm-text-primary dark:text-slate-200 h-screen overflow-hidden flex selection:bg-warm-accent selection:text-white">
+<aside class="w-64 bg-warm-sidebar dark:bg-surface-dark flex flex-col border-r border-warm-border dark:border-border-dark flex-shrink-0 z-20">
+<div class="h-16 flex items-center px-6 border-b border-warm-border/60 dark:border-border-dark/50">
+<div class="flex items-center gap-2 text-warm-accent">
+<span class="material-icons-round text-3xl">shield</span>
+<span class="text-xl font-bold tracking-tight text-warm-text-primary dark:text-white">Aegis</span>
+</div>
+</div>
+<nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+<div class="px-3 mb-2 text-xs font-semibold text-warm-text-secondary dark:text-slate-400 uppercase tracking-wider">Feeds</div>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-round mr-3 text-lg text-warm-accent">star</span>
+                Recommended Feed
+            </a>
+<div class="px-3 mt-6 mb-2 text-xs font-semibold text-warm-text-secondary dark:text-slate-400 uppercase tracking-wider">Sub-communities</div>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium bg-warm-accent/10 text-warm-accent rounded-lg border border-warm-accent/20" href="#">
+<span class="material-icons-outlined mr-3 text-lg">code</span>
+                Tech
+            </a>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-outlined mr-3 text-lg">chat_bubble_outline</span>
+                Chat
+            </a>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-outlined mr-3 text-lg">restaurant_menu</span>
+                Food
+            </a>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-outlined mr-3 text-lg">sports_esports</span>
+                Games
+            </a>
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-outlined mr-3 text-lg">currency_bitcoin</span>
+                Crypto
+            </a>
+<div class="mt-4 pt-4 border-t border-warm-border/60 dark:border-border-dark/50">
+<a class="group flex items-center px-3 py-2.5 text-sm font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-outlined mr-3 text-lg">explore</span>
+                    Discover More
+                </a>
+</div>
+</nav>
+<div class="p-4 border-t border-warm-border/60 dark:border-border-dark/50">
+<button class="w-full flex items-center justify-center gap-2 bg-warm-card dark:bg-surface-lighter hover:bg-white dark:hover:bg-border-dark text-warm-text-primary dark:text-slate-200 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors border border-warm-border dark:border-border-dark shadow-sm">
+<span class="material-icons-round text-sm">add_circle_outline</span>
+                Create Sub
+            </button>
+</div>
+</aside>
+<main class="flex-1 flex flex-col min-w-0 bg-warm-bg dark:bg-background-dark relative">
+<header class="h-16 flex items-center justify-between px-6 bg-warm-bg/95 dark:bg-background-dark/80 backdrop-blur-md sticky top-0 z-10 border-b border-warm-border dark:border-border-dark">
+<div class="flex items-center gap-4">
+<h1 class="text-lg font-bold text-warm-text-primary dark:text-white flex items-center gap-2">
+<span class="text-warm-text-secondary dark:text-slate-500 font-normal">Sub:</span> Tech
+                </h1>
+<div class="h-4 w-px bg-warm-border dark:bg-slate-700"></div>
+<button class="flex items-center gap-2 bg-warm-accent hover:bg-warm-accent-hover text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors shadow-sm">
+<span class="material-icons-round text-sm">edit_note</span>
+                    Create Post
+                </button>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative hidden md:block group">
+<span class="absolute inset-y-0 left-0 flex items-center pl-3 text-warm-text-secondary dark:text-slate-400 group-focus-within:text-warm-accent transition-colors">
+<span class="material-icons-outlined text-lg">search</span>
+</span>
+<input class="w-64 bg-warm-sidebar dark:bg-surface-dark text-sm rounded-lg py-2 pl-10 pr-4 text-warm-text-primary dark:text-white placeholder-warm-text-secondary dark:placeholder-slate-400 border-none focus:ring-1 focus:ring-warm-accent focus:bg-warm-card dark:focus:bg-surface-lighter transition-all" placeholder="Search posts..." type="text"/>
+</div>
+<div class="flex items-center gap-2 border-l border-warm-border dark:border-border-dark pl-4 ml-2">
+<button class="text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors p-1" title="Toggle Theme">
+<span class="material-icons-outlined text-2xl">light_mode</span>
+</button>
+<button class="relative text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors p-1">
+<span class="material-icons-round text-2xl">notifications</span>
+<span class="absolute top-1 right-1 block h-2 w-2 rounded-full ring-2 ring-warm-bg dark:ring-surface-dark bg-warm-accent"></span>
+</button>
+</div>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+<div class="flex items-center justify-between mb-2">
+<div class="flex gap-2">
+<button class="px-3 py-1.5 rounded-lg bg-warm-accent text-white shadow-sm text-xs font-semibold">Hot</button>
+<button class="px-3 py-1.5 rounded-lg text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar/50 dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-slate-200 text-xs font-medium transition-colors">New</button>
+<button class="px-3 py-1.5 rounded-lg text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar/50 dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-slate-200 text-xs font-medium transition-colors">Top</button>
+</div>
+</div>
+<article class="bg-warm-card dark:bg-surface-dark rounded-xl p-5 shadow-soft hover:shadow-md border border-warm-border dark:border-border-dark hover:border-warm-accent/40 dark:hover:border-slate-600 transition-all cursor-pointer group">
+<div class="flex gap-4">
+<div class="flex flex-col items-center gap-1 min-w-[2rem] pt-1">
+<button class="text-warm-text-secondary hover:text-warm-accent hover:bg-warm-accent/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_upward</span>
+</button>
+<span class="text-sm font-bold text-warm-text-primary dark:text-slate-300">248</span>
+<button class="text-warm-text-secondary hover:text-red-500 hover:bg-red-500/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_downward</span>
+</button>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="User avatar for Alex G" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCjATI76ejgMhBj09xMfcBIkvdB_8G2wC3fnIant1VvbUytpzyOELnCnVzmVesu_rPOiRFbnkMfeazhXgrINkOTeN9JG3K4v216WihYxr_bOtFj7YnGlB76ZRiBo16XZ-4F2I4FPqNfo-V2l6CN_H3tt1-mAIYlblRKWB10qxxV6jZ5cxixHipuazGILfQDSkwrhft1tsY8H2LrRlRLpxCRbmBUwVEGR5IcvodZ6WJVJfUNw3aieKH0UjLXw1SbQhKv7TTA0MeB4cs"/>
+<span class="text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:underline">u/alex_dev</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">•</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">4h ago</span>
+<span class="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium ml-2 border border-warm-border dark:border-slate-700">#Tech</span>
+<span class="bg-warm-accent/10 text-warm-accent text-[10px] px-2 py-0.5 rounded-full font-medium ml-1">GoLang</span>
+</div>
+<h2 class="text-lg font-bold text-warm-text-primary dark:text-white mb-2 group-hover:text-warm-accent transition-colors">Go Generics Best Practices</h2>
+<p class="text-sm text-warm-text-secondary dark:text-slate-400 leading-relaxed mb-3 line-clamp-2">
+                            I've been experimenting with the new 1.18 features extensively in production for the last month. Here are some patterns I've found useful and some antipatterns to avoid when migrating legacy codebases...
+                        </p>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">chat_bubble_outline</span>
+                                42 Comments
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">share</span>
+                                Share
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">bookmark_border</span>
+                                Save
+                            </button>
+</div>
+</div>
+</div>
+</article>
+<article class="bg-warm-card dark:bg-surface-dark rounded-xl p-5 shadow-soft hover:shadow-md border border-warm-border dark:border-border-dark hover:border-warm-accent/40 dark:hover:border-slate-600 transition-all cursor-pointer group">
+<div class="flex gap-4">
+<div class="flex flex-col items-center gap-1 min-w-[2rem] pt-1">
+<button class="text-warm-accent bg-warm-accent/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_upward</span>
+</button>
+<span class="text-sm font-bold text-warm-accent">1.2k</span>
+<button class="text-warm-text-secondary hover:text-red-500 hover:bg-red-500/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_downward</span>
+</button>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="User avatar for Sarah K" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCAqqYgslPJf_wTTWBdAphqdR2aBCYjyhKC7W0hzBABRSrQ_RdvaL8DneI7jBIaP4MvNVpd3m65anH-YAIzkDWNlOlBbqFMFCZN4to0IxAzv_A0IDDpcPhgcDa0D-sPNQA3ZbmqSLT-KnYau82_H6OO99NlwRCSqg6S8eKxo5ZFA4n1fFFh1DcbHq48J9DLtpW1j-th4b8UsUDzhRGsK-KnfPzxvvuUB_dhqJeq1M3JoWMWUWoXfWLGYv-x4gdAhZw10ilIag6b2M0"/>
+<span class="text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:underline">u/sarah_k</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">•</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">8h ago</span>
+<span class="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium ml-2 border border-warm-border dark:border-slate-700">#Tech</span>
+<span class="bg-purple-500/10 text-purple-600 dark:text-purple-500 text-[10px] px-2 py-0.5 rounded-full font-medium ml-1">Discussion</span>
+</div>
+<h2 class="text-lg font-bold text-warm-text-primary dark:text-white mb-2 group-hover:text-warm-accent transition-colors">The state of Web Assembly in 2024</h2>
+<p class="text-sm text-warm-text-secondary dark:text-slate-400 leading-relaxed mb-3 line-clamp-2">
+                            Is it finally time to ditch JS for heavy lifting? Looking at the latest benchmarks and browser support, things are getting interesting.
+                        </p>
+<div class="mb-3 rounded-lg overflow-hidden h-48 w-full relative group/img border border-warm-border dark:border-transparent">
+<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-60"></div>
+<img class="w-full h-full object-cover transform group-hover/img:scale-105 transition-transform duration-500" data-alt="Computer screen showing code editor with web assembly code" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDO3bSXKO4xE5-DftGqweQHlCk_BGQWJSaBNXXZSncUUzRBYjo2SZP7YrGPcQ0jwElDGJEI35U7fHpN04OE_2VHU6BWvBCOHqU1Qp2u9C289ITQQpPuxbuo0YjcFWxS6-jrAIXcX7HYPtvyKM3lmnmnTbkdpn6wMrNtl7agF6EeW-dLyQAam2P3FagCpD0v2d_RBMkImsHYQhaAwksEMceDmlIO8T8J82CP-9y6639mUCyJ4bn1ncieUPa0ZCAgw1Pa_epOxNiP-lg"/>
+</div>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">chat_bubble_outline</span>
+                                156 Comments
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">share</span>
+                                Share
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">bookmark_border</span>
+                                Save
+                            </button>
+</div>
+</div>
+</div>
+</article>
+<article class="bg-warm-card dark:bg-surface-dark rounded-xl p-5 shadow-soft hover:shadow-md border border-warm-border dark:border-border-dark hover:border-warm-accent/40 dark:hover:border-slate-600 transition-all cursor-pointer group">
+<div class="flex gap-4">
+<div class="flex flex-col items-center gap-1 min-w-[2rem] pt-1">
+<button class="text-warm-text-secondary hover:text-warm-accent hover:bg-warm-accent/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_upward</span>
+</button>
+<span class="text-sm font-bold text-warm-text-primary dark:text-slate-300">56</span>
+<button class="text-warm-text-secondary hover:text-red-500 hover:bg-red-500/10 rounded p-1 transition-colors">
+<span class="material-icons-round text-xl">arrow_downward</span>
+</button>
+</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-2">
+<img class="w-5 h-5 rounded-full object-cover" data-alt="User avatar for Mike R" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAP5pmVmRuI821i1or0cxzVnLSJOV2Gzm1sQsSHmpsaL4E8G5Q3KKufXWirPiqYRdEkR-830K2qRIue7dQvjgKcAqgG5kGWeAFGmNrNmSrt22GJeF3oD_keJ4yXpGajxJZNpMAAhKaA2WP5TyWfVZ_npz50uZKL467UBvHgJoW0tPMlbnI-DpGc016V9QejwZoXuZSBEaCMCjC1hhPZC_uG_xw5woAhll3mntrrSLPZUUyMNRRSkK2IddmMvwzX5ivIWnsMdJT4ziE"/>
+<span class="text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:underline">u/mikey_rust</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">•</span>
+<span class="text-xs text-warm-text-secondary dark:text-slate-400">12h ago</span>
+<span class="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium ml-2 border border-warm-border dark:border-slate-700">#Tech</span>
+<span class="bg-orange-500/10 text-orange-600 dark:text-orange-500 text-[10px] px-2 py-0.5 rounded-full font-medium ml-1">Help</span>
+</div>
+<h2 class="text-lg font-bold text-warm-text-primary dark:text-white mb-2 group-hover:text-warm-accent transition-colors">Understanding Lifetime annotations</h2>
+<p class="text-sm text-warm-text-secondary dark:text-slate-400 leading-relaxed mb-3 line-clamp-2">
+                            I'm stuck trying to understand why the borrow checker is yelling at me here. I have a struct that holds a reference to...
+                        </p>
+<div class="flex items-center gap-4">
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">chat_bubble_outline</span>
+                                8 Comments
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">share</span>
+                                Share
+                            </button>
+<button class="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors">
+<span class="material-icons-outlined text-base">bookmark_border</span>
+                                Save
+                            </button>
+</div>
+</div>
+</div>
+</article>
+</div>
+</main>
+<aside class="w-80 bg-warm-sidebar dark:bg-surface-dark border-l border-warm-border dark:border-border-dark hidden xl:flex flex-col flex-shrink-0">
+<div class="h-16 flex items-center justify-end px-6 border-b border-warm-border dark:border-border-dark/50 gap-4">
+<div class="flex items-center gap-3">
+<div class="flex flex-col items-end">
+<span class="text-sm font-bold text-warm-text-primary dark:text-white">Jessica D.</span>
+<span class="text-[10px] uppercase tracking-wide text-green-600 font-bold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-green-600"></span> Online
+                    </span>
+</div>
+<button class="relative">
+<img class="w-9 h-9 rounded-full ring-2 ring-warm-card dark:ring-surface-lighter cursor-pointer" data-alt="User avatar for current user Jessica D" src="https://lh3.googleusercontent.com/aida-public/AB6AXuALZo1RO1CRxz3w27GzSbpMaPWfoE1C4oIXQ9UEUeGNkJm2zxEsMqn-5-MT60e3-Ek1SsRnpQYNX8x1Nx6bVxsjFFE6tXo4sVQEhDyyQu090ftPe35pL3FwlxBijwOWn7qJtuRYaG0BdwiFsori3_SKOMX5c1nqtx-ODmNrISnT0OhoVGu1OoGRSnwUTZ80UhIpWA6JC3RMzNlxK4Qll3c_A6I8mg3uHj7-CqyNAIIBKquvAjQ1YyC2oRR-qOovJPnC4ZSTkcuoChQ"/>
+</button>
+</div>
+</div>
+<div class="p-6 overflow-y-auto">
+<div class="bg-warm-card dark:bg-surface-lighter rounded-xl p-4 mb-6 border border-warm-border dark:border-border-dark">
+<div class="flex items-center justify-between mb-3">
+<h3 class="text-sm font-bold text-warm-text-primary dark:text-white uppercase tracking-wider">About Community</h3>
+<button class="text-warm-text-secondary hover:text-warm-text-primary transition-colors">
+<span class="material-icons-outlined text-base">more_horiz</span>
+</button>
+</div>
+<div class="flex items-center gap-3 mb-4">
+<div class="w-12 h-12 rounded-lg bg-gradient-to-br from-warm-accent to-orange-400 flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
+<span class="material-icons-outlined text-2xl">code</span>
+</div>
+<div>
+<div class="font-bold text-warm-text-primary dark:text-white">Tech Enthusiasts</div>
+<div class="text-xs text-warm-text-secondary dark:text-slate-400">Created Jan 2023</div>
+</div>
+</div>
+<p class="text-sm text-warm-text-secondary dark:text-slate-300 mb-4 leading-relaxed">
+                    A place for developers, engineers, and tech lovers to discuss the latest in technology, programming languages, and hardware.
+                </p>
+<div class="grid grid-cols-2 gap-4 border-t border-warm-border/50 dark:border-border-dark pt-4 mb-4">
+<div>
+<div class="text-lg font-bold text-warm-text-primary dark:text-white">14.2k</div>
+<div class="text-xs text-warm-text-secondary dark:text-slate-400">Members</div>
+</div>
+<div>
+<div class="text-lg font-bold text-warm-text-primary dark:text-white flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-green-500"></span> 420
+                        </div>
+<div class="text-xs text-warm-text-secondary dark:text-slate-400">Online</div>
+</div>
+</div>
+<button class="w-full py-2 rounded-lg bg-warm-accent text-white hover:bg-warm-accent-hover text-sm font-medium transition-colors shadow-sm">
+                    Join Community
+                </button>
+</div>
+<div class="mb-6">
+<h3 class="text-xs font-bold text-warm-text-secondary dark:text-slate-400 uppercase tracking-wider mb-3">Rules</h3>
+<ul class="space-y-2">
+<li class="flex gap-3 text-sm text-warm-text-secondary dark:text-slate-300 p-2 hover:bg-warm-card dark:hover:bg-surface-lighter rounded-lg transition-colors cursor-default">
+<span class="font-bold text-warm-accent">1.</span>
+<span>Be respectful to others</span>
+</li>
+<li class="flex gap-3 text-sm text-warm-text-secondary dark:text-slate-300 p-2 hover:bg-warm-card dark:hover:bg-surface-lighter rounded-lg transition-colors cursor-default">
+<span class="font-bold text-warm-accent">2.</span>
+<span>No spam or self-promotion</span>
+</li>
+<li class="flex gap-3 text-sm text-warm-text-secondary dark:text-slate-300 p-2 hover:bg-warm-card dark:hover:bg-surface-lighter rounded-lg transition-colors cursor-default">
+<span class="font-bold text-warm-accent">3.</span>
+<span>Use appropriate flairs</span>
+</li>
+</ul>
+</div>
+<div>
+<h3 class="text-xs font-bold text-warm-text-secondary dark:text-slate-400 uppercase tracking-wider mb-3">Trending Tags</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-1 bg-warm-card dark:bg-surface-lighter text-xs text-warm-text-secondary dark:text-slate-300 rounded border border-warm-border dark:border-transparent hover:bg-warm-border dark:hover:bg-border-dark cursor-pointer transition-colors">#javascript</span>
+<span class="px-2 py-1 bg-warm-card dark:bg-surface-lighter text-xs text-warm-text-secondary dark:text-slate-300 rounded border border-warm-border dark:border-transparent hover:bg-warm-border dark:hover:bg-border-dark cursor-pointer transition-colors">#rustlang</span>
+<span class="px-2 py-1 bg-warm-card dark:bg-surface-lighter text-xs text-warm-text-secondary dark:text-slate-300 rounded border border-warm-border dark:border-transparent hover:bg-warm-border dark:hover:bg-border-dark cursor-pointer transition-colors">#ai</span>
+<span class="px-2 py-1 bg-warm-card dark:bg-surface-lighter text-xs text-warm-text-secondary dark:text-slate-300 rounded border border-warm-border dark:border-transparent hover:bg-warm-border dark:hover:bg-border-dark cursor-pointer transition-colors">#web3</span>
+</div>
+</div>
+</div>
+</aside>
+</body></html>
