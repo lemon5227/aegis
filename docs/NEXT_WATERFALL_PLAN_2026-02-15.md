@@ -36,6 +36,7 @@
 5. 后端接口契约文档与回归脚本完善。  
 6. 帖子收藏能力按专项瀑布推进：`docs/POST_FAVORITES_WATERFALL_PLAN.md`（F1-F5，索引跨设备同步、正文私有缓存不占共享区）。
 7. P2P 中继角色冻结：每个节点默认启用 relay 能力；具备公网 IP 的节点可充当 relay，内网节点在打洞失败时自动回退 relay 链路。
+8. P2P 配置产品化：新增 SQLite 持久化配置（listenPort/relayPeers/autoStart），并保持 `StartP2P` 运行时参数兼容。
 
 ### DoD
 - 后端可独立提供“订阅 -> 推送 -> 搜索 -> 混合流”完整链路。  

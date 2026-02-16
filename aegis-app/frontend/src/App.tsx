@@ -18,6 +18,7 @@ import {
   ImportIdentityFromMnemonic,
   GetProfile,
   GetTrustedAdmins,
+  GetPostIndexByID,
   GetPostBodyByID,
   GetCommentsByPost,
   PublishComment,
@@ -135,19 +136,6 @@ function App() {
         visibility: item.post.visibility || 'normal',
       }));
       setPosts(mapped);
-      
-      // 保存到 localStorage 用于 My Posts
-      const existingPosts = localStorage.getItem('my_posts');
-      let allPosts: Post[] = [];
-      if (existingPosts) {
-        try {
-          allPosts = JSON.parse(existingPosts);
-        } catch {}
-      }
-      // 合并新帖子，去重
-      const postMap = new Map();
-      [...allPosts, ...mapped].forEach(p => postMap.set(p.id, p));
-      localStorage.setItem('my_posts', JSON.stringify(Array.from(postMap.values())));
     } catch (e) {
       console.error('Failed to load recommended feed:', e);
     }
@@ -353,17 +341,37 @@ function App() {
     }
   };
 
-  const handleSearchResultClick = (type: 'sub' | 'post', id: string) => {
+  const handleSearchResultClick = async (type: 'sub' | 'post', id: string) => {
     setSearchResults(null);
     setSearchQuery('');
     if (type === 'sub') {
       setCurrentSubId(id);
       setView('feed');
     } else {
-      const post = posts.find((p) => p.id === id);
-      if (post && post.subId) {
-        setCurrentSubId(post.subId);
-        setView('feed');
+      try {
+        const index = await GetPostIndexByID(id);
+        const post: Post = {
+          id: index.id,
+          pubkey: index.pubkey,
+          title: index.title,
+          bodyPreview: index.bodyPreview || '',
+          contentCid: index.contentCid || '',
+          imageCid: index.imageCid || '',
+          thumbCid: index.thumbCid || '',
+          imageMime: index.imageMime || '',
+          imageSize: index.imageSize || 0,
+          imageWidth: index.imageWidth || 0,
+          imageHeight: index.imageHeight || 0,
+          score: index.score || 0,
+          timestamp: index.timestamp || 0,
+          zone: (index.zone || 'public') as 'private' | 'public',
+          subId: index.subId || 'general',
+          visibility: index.visibility || 'normal',
+        };
+        setCurrentSubId(post.subId || 'general');
+        await handlePostClick(post);
+      } catch (e) {
+        console.error('Failed to open post from search result:', e);
       }
     }
   };

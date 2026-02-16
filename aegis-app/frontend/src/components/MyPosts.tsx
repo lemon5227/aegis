@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Post, Profile } from '../types';
 import { PostCard } from './PostCard';
+import { GetMyPosts } from '../../wailsjs/go/main/App';
 
 interface MyPostsProps {
   currentPubkey: string;
@@ -14,17 +15,44 @@ export function MyPosts({ currentPubkey, profiles, onUpvote, onPostClick }: MyPo
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 从 localStorage 获取我发布的帖子
-    const stored = localStorage.getItem('my_posts');
-    if (stored) {
-      try {
-        const posts = JSON.parse(stored);
-        setMyPosts(posts.filter((p: Post) => p.pubkey === currentPubkey));
-      } catch (e) {
-        console.error('Failed to parse my posts:', e);
-      }
+    const hasWailsRuntime = !!(window as any)?.go?.main?.App;
+    if (!hasWailsRuntime) {
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+
+    const loadMyPosts = async () => {
+      setLoading(true);
+      try {
+        const page = await GetMyPosts(100, '');
+        const mapped: Post[] = (page.items || []).map((item: any) => ({
+          id: item.id,
+          pubkey: item.pubkey,
+          title: item.title,
+          bodyPreview: item.bodyPreview || '',
+          contentCid: item.contentCid || '',
+          imageCid: item.imageCid || '',
+          thumbCid: item.thumbCid || '',
+          imageMime: item.imageMime || '',
+          imageSize: item.imageSize || 0,
+          imageWidth: item.imageWidth || 0,
+          imageHeight: item.imageHeight || 0,
+          score: item.score || 0,
+          timestamp: item.timestamp || 0,
+          zone: (item.zone || 'public') as 'private' | 'public',
+          subId: item.subId || 'general',
+          visibility: item.visibility || 'normal',
+        }));
+        setMyPosts(mapped.filter((post) => post.pubkey === currentPubkey));
+      } catch (e) {
+        console.error('Failed to load my posts:', e);
+        setMyPosts([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadMyPosts();
   }, [currentPubkey]);
 
   if (loading) {

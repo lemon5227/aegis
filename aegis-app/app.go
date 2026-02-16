@@ -131,12 +131,11 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	if !shouldAutoStartP2P() {
+	autoStart, listenPort, bootstrapPeers := a.resolveAutoStartP2PSettings()
+	if !autoStart {
 		return
 	}
 
-	listenPort := resolveAutoStartP2PPort()
-	bootstrapPeers := resolveBootstrapPeers()
 	started := false
 	for _, candidatePort := range resolveAutoStartPortCandidates(listenPort) {
 		if !isTCPPortAvailable(candidatePort) {
@@ -296,26 +295,7 @@ func resolveAutoStartP2PPort() int {
 }
 
 func resolveBootstrapPeers() []string {
-	raw := strings.TrimSpace(os.Getenv("AEGIS_BOOTSTRAP_PEERS"))
-	if raw == "" {
-		return nil
-	}
-
-	parts := strings.Split(raw, ",")
-	peers := make([]string, 0, len(parts))
-	for _, candidate := range parts {
-		peerAddr := strings.TrimSpace(candidate)
-		if peerAddr == "" {
-			continue
-		}
-		peers = append(peers, peerAddr)
-	}
-
-	if len(peers) == 0 {
-		return nil
-	}
-
-	return peers
+	return parsePeerAddressesCSV(os.Getenv("AEGIS_BOOTSTRAP_PEERS"))
 }
 
 func resolveAutoStartPortCandidates(preferredPort int) []int {

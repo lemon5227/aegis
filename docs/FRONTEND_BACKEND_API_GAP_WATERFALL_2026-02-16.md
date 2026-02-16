@@ -107,7 +107,7 @@
 - `FAVORITE_SYNC_RESPONSE`
 
 ## 5.2 My Posts（P0）
-- `GetMyPosts(limit int, cursor string) ([]PostIndex, string, error)`
+- `GetMyPosts(limit int, cursor string) (PostIndexPage, error)`
 
 ## 5.3 Profile/Privacy（P1）
 - `UpdateProfileDetails(displayName string, avatarURL string, bio string) (ProfileDetails, error)`
@@ -125,6 +125,24 @@
 
 ## 5.6 搜索跳转辅助（P1）
 - `GetPostIndexByID(postID string) (PostIndex, error)`
+
+## 5.7 P2P 配置（P1）
+- `GetP2PConfig() (P2PConfig, error)`
+- `SaveP2PConfig(listenPort int, relayPeers []string, autoStart bool) (P2PConfig, error)`
+
+`P2PConfig` 建议字段：
+- `listenPort int`
+- `relayPeers []string`
+- `autoStart bool`
+- `updatedAt int64`
+
+说明：
+- 保留现有 `StartP2P/StopP2P/GetP2PStatus/ConnectPeer`，新接口仅负责配置持久化。
+- 启动配置优先级冻结：`StartP2P 显式参数 > SQLite 配置 > ENV > 默认值`。
+- relay 拓扑沿用既有语义：每个节点可启用 relay 能力，公网节点可承担中继角色。
+- 初始中继可通过 ENV 种子注入（示例）：
+  - `AEGIS_BOOTSTRAP_PEERS=/ip4/51.107.0.10/tcp/40100/p2p/12D3KooWLweFn4GFfEa9X1St4d78HQqYYzXaH2oy5XahKrwar6w7`
+  - `AEGIS_RELAY_PEERS=/ip4/51.107.0.10/tcp/40100/p2p/12D3KooWLweFn4GFfEa9X1St4d78HQqYYzXaH2oy5XahKrwar6w7`
 
 ---
 
@@ -165,6 +183,20 @@
 
 ### 回归门禁
 - `GetFeedIndexBySubSorted` 行为不变。
+
+---
+
+## G2.5：P2P 配置产品化（P1）
+### 范围
+`GetP2PConfig`、`SaveP2PConfig`、启动阶段读取 SQLite 配置（保留 ENV 回退）。
+
+### DoD
+- 设置页可持久化 P2P 端口与 relay 列表。
+- 启停 P2P 与配置写入解耦，且兼容现有启动参数。
+
+### 回归门禁
+- 既有 `StartP2P/StopP2P/GetP2PStatus` 行为不变。
+- 订阅/推送/搜索/FeedStream 不回归。
 
 ---
 
@@ -218,7 +250,8 @@ bio 与隐私设置 API，且与现有 `UpdateProfile/GetProfile` 保持兼容�
 ## 7. 当前状态（2026-02-16）
 - G0：Done（本文件）
 - G1：Done（收藏后端+分布式索引同步已实现）
-- G2：Pending
+- G2：Done（`GetMyPosts` + `GetPostIndexByID` 已实现并接入前端）
+- G2.5：Done（P2P 配置持久化 API + Settings 接入已完成）
 - G3：Pending
 - G4：Pending
 - G5：Pending

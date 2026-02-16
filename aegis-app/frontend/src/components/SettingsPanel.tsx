@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Profile, GovernanceAdmin, ModerationLog } from '../types';
+import { GetP2PConfig, GetP2PStatus, SaveP2PConfig, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -14,7 +16,15 @@ interface SettingsPanelProps {
   onUnbanUser: (targetPubkey: string, reason: string) => void;
 }
 
-type Tab = 'account' | 'privacy' | 'update' | 'governance';
+type Tab = 'account' | 'privacy' | 'network' | 'update' | 'governance';
+
+type P2PStatusView = {
+  started: boolean;
+  peerId: string;
+  listenAddrs: string[];
+  connectedPeers: string[];
+  topic: string;
+};
 
 export function SettingsPanel({ 
   isOpen, 
@@ -37,6 +47,55 @@ export function SettingsPanel({
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
   const [governanceTab, setGovernanceTab] = useState<'banned' | 'appeals' | 'logs'>('banned');
+  const [p2pListenPort, setP2PListenPort] = useState('40100');
+  const [p2pRelayPeersInput, setP2PRelayPeersInput] = useState('');
+  const [p2pAutoStart, setP2PAutoStart] = useState(true);
+  const [p2pStatus, setP2PStatus] = useState<P2PStatusView | null>(null);
+  const [p2pBusy, setP2PBusy] = useState(false);
+  const [p2pMessage, setP2PMessage] = useState('');
+
+  const hasWailsRuntime = () => {
+    return !!(window as any)?.go?.main?.App;
+  };
+
+  const parsePeerInput = (raw: string): string[] => {
+    return Array.from(
+      new Set(
+        raw
+          .split(/[\n,;]+/)
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+      )
+    );
+  };
+
+  const loadP2PState = async () => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const [cfg, status] = await Promise.all([GetP2PConfig(), GetP2PStatus()]);
+      setP2PListenPort(String(cfg.listenPort || 40100));
+      setP2PRelayPeersInput((cfg.relayPeers || []).join('\n'));
+      setP2PAutoStart(!!cfg.autoStart);
+      setP2PStatus(status);
+    } catch (error) {
+      console.error('Failed to load p2p settings:', error);
+      setP2PMessage('Failed to load P2P configuration.');
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || !hasWailsRuntime()) {
+      return;
+    }
+
+    void loadP2PState();
+    const unsubscribe = EventsOn('p2p:updated', () => {
+      void loadP2PState();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -54,6 +113,81 @@ export function SettingsPanel({
 
   const handleUnban = (pubkey: string) => {
     onUnbanUser(pubkey, 'Approved unban request');
+  };
+
+  const parseListenPort = (): number | null => {
+    const port = Number.parseInt(p2pListenPort, 10);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      setP2PMessage('Listen port must be between 1 and 65535.');
+      return null;
+    }
+    return port;
+  };
+
+  const handleSaveP2PConfig = async () => {
+    if (!hasWailsRuntime()) return;
+    const port = parseListenPort();
+    if (port === null) return;
+
+    setP2PBusy(true);
+    setP2PMessage('');
+    try {
+      const relayPeers = parsePeerInput(p2pRelayPeersInput);
+      const cfg = await SaveP2PConfig(port, relayPeers, p2pAutoStart);
+      setP2PListenPort(String(cfg.listenPort || port));
+      setP2PRelayPeersInput((cfg.relayPeers || []).join('\n'));
+      setP2PAutoStart(!!cfg.autoStart);
+      setP2PMessage('P2P configuration saved.');
+      await loadP2PState();
+    } catch (error) {
+      console.error('Failed to save p2p config:', error);
+      setP2PMessage('Failed to save P2P configuration.');
+    } finally {
+      setP2PBusy(false);
+    }
+  };
+
+  const handleStartP2P = async () => {
+    if (!hasWailsRuntime()) return;
+    const port = parseListenPort();
+    if (port === null) return;
+
+    setP2PBusy(true);
+    setP2PMessage('');
+    try {
+      const relayPeers = parsePeerInput(p2pRelayPeersInput);
+      await SaveP2PConfig(port, relayPeers, p2pAutoStart);
+      const status = await StartP2P(port, relayPeers);
+      setP2PStatus(status);
+      setP2PMessage('P2P started successfully.');
+    } catch (error) {
+      console.error('Failed to start p2p:', error);
+      setP2PMessage('Failed to start P2P network.');
+    } finally {
+      setP2PBusy(false);
+    }
+  };
+
+  const handleStopP2P = async () => {
+    if (!hasWailsRuntime()) return;
+
+    setP2PBusy(true);
+    setP2PMessage('');
+    try {
+      await StopP2P();
+      setP2PStatus((prev) =>
+        prev
+          ? { ...prev, started: false, connectedPeers: [] }
+          : { started: false, peerId: '', listenAddrs: [], connectedPeers: [], topic: '' }
+      );
+      setP2PMessage('P2P stopped.');
+      await loadP2PState();
+    } catch (error) {
+      console.error('Failed to stop p2p:', error);
+      setP2PMessage('Failed to stop P2P network.');
+    } finally {
+      setP2PBusy(false);
+    }
   };
 
   return (
@@ -111,6 +245,17 @@ export function SettingsPanel({
               >
                 <span className="material-icons text-[20px]">system_update</span>
                 Updates
+              </button>
+              <button 
+                onClick={() => setActiveTab('network')}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                  activeTab === 'network'
+                    ? 'bg-warm-accent/10 text-warm-accent'
+                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                }`}
+              >
+                <span className="material-icons text-[20px]">hub</span>
+                Network &amp; P2P
               </button>
               {isAdmin && (
                 <button 
@@ -369,7 +514,144 @@ export function SettingsPanel({
               </div>
             </div>
           )}
-          
+
+          {activeTab === 'network' && (
+            <div className="flex flex-col h-full">
+              <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0">
+                <h1 className="text-2xl font-bold text-warm-text-primary dark:text-white">Network &amp; P2P</h1>
+                <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1">
+                  Configure node relay peers and control P2P runtime.
+                </p>
+              </header>
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="max-w-3xl space-y-6">
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-5">
+                    <div>
+                      <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Runtime Settings</h3>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                        These settings are stored in local SQLite and used for auto-start.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium text-warm-text-primary dark:text-white mb-2">
+                          Listen Port
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={p2pListenPort}
+                          onChange={(e) => setP2PListenPort(e.target.value)}
+                          className="w-full px-4 py-2.5 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={p2pAutoStart}
+                            onChange={(e) => setP2PAutoStart(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-warm-accent"></div>
+                          <span className="ml-3 text-sm font-medium text-warm-text-primary dark:text-white">Auto-start P2P on app launch</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-warm-text-primary dark:text-white mb-2">
+                        Relay / Bootstrap Peers
+                      </label>
+                      <textarea
+                        value={p2pRelayPeersInput}
+                        onChange={(e) => setP2PRelayPeersInput(e.target.value)}
+                        rows={4}
+                        placeholder="One multiaddr per line"
+                        className="w-full px-4 py-2.5 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white font-mono text-sm focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none resize-y"
+                      />
+                      <p className="mt-2 text-xs text-warm-text-secondary dark:text-slate-400">
+                        Example: /ip4/51.107.0.10/tcp/40100/p2p/12D3KooWLweFn4GFfEa9X1St4d78HQqYYzXaH2oy5XahKrwar6w7
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        onClick={handleSaveP2PConfig}
+                        disabled={p2pBusy}
+                        className="px-4 py-2 bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Save Config
+                      </button>
+                      <button
+                        onClick={handleStartP2P}
+                        disabled={p2pBusy}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Start / Restart P2P
+                      </button>
+                      <button
+                        onClick={handleStopP2P}
+                        disabled={p2pBusy || !p2pStatus?.started}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Stop P2P
+                      </button>
+                    </div>
+
+                    {p2pMessage && (
+                      <div className="text-sm text-warm-text-secondary dark:text-slate-300 bg-warm-bg dark:bg-background-dark border border-warm-border dark:border-border-dark rounded-lg px-3 py-2">
+                        {p2pMessage}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-4">
+                    <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Current Runtime Status</h3>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase">State</p>
+                        <p className={`text-sm font-semibold ${p2pStatus?.started ? 'text-emerald-600' : 'text-slate-500 dark:text-slate-400'}`}>
+                          {p2pStatus?.started ? 'Running' : 'Stopped'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase">Connected Peers</p>
+                        <p className="text-sm font-semibold text-warm-text-primary dark:text-white">
+                          {p2pStatus?.connectedPeers?.length || 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase mb-1">Peer ID</p>
+                      <div className="bg-warm-bg dark:bg-background-dark rounded-lg p-3 font-mono text-xs text-warm-text-secondary dark:text-slate-400 break-all">
+                        {p2pStatus?.peerId || 'N/A'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase mb-2">Listen Addresses</p>
+                      <div className="space-y-1">
+                        {(p2pStatus?.listenAddrs || []).length === 0 ? (
+                          <p className="text-sm text-warm-text-secondary dark:text-slate-400">No listen addresses available.</p>
+                        ) : (
+                          (p2pStatus?.listenAddrs || []).map((addr) => (
+                            <div key={addr} className="bg-warm-bg dark:bg-background-dark rounded-lg p-2 font-mono text-xs text-warm-text-secondary dark:text-slate-400 break-all">
+                              {addr}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'governance' && isAdmin && (
             <div className="flex flex-col h-full">
               <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0 flex justify-between items-center">

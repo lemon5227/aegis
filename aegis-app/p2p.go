@@ -2140,21 +2140,7 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 }
 
 func resolveRelayPeers() []string {
-	raw := strings.TrimSpace(os.Getenv("AEGIS_RELAY_PEERS"))
-	if raw == "" {
-		return nil
-	}
-
-	parts := strings.Split(raw, ",")
-	peers := make([]string, 0, len(parts))
-	for _, candidate := range parts {
-		peerAddr := strings.TrimSpace(candidate)
-		if peerAddr == "" {
-			continue
-		}
-		peers = append(peers, peerAddr)
-	}
-	return peers
+	return parsePeerAddressesCSV(os.Getenv("AEGIS_RELAY_PEERS"))
 }
 
 func resolveP2PListenAddrs(listenPort int) []string {

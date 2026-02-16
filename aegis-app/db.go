@@ -136,6 +136,13 @@ type GovernancePolicy struct {
 	HideHistoryOnShadowBan bool `json:"hideHistoryOnShadowBan"`
 }
 
+type P2PConfig struct {
+	ListenPort int      `json:"listenPort"`
+	RelayPeers []string `json:"relayPeers"`
+	AutoStart  bool     `json:"autoStart"`
+	UpdatedAt  int64    `json:"updatedAt"`
+}
+
 type IdentityState struct {
 	Pubkey             string `json:"pubkey"`
 	State              string `json:"state"`
@@ -415,6 +422,13 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS governance_config (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS p2p_config (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			listen_port INTEGER NOT NULL,
+			relay_peers_json TEXT NOT NULL,
+			auto_start INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS identity_state (
@@ -1025,6 +1039,163 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 	}
 
 	return items, nil
+}
+
+func (a *App) GetPostIndexByID(postID string) (PostIndex, error) {
+	if a.db == nil {
+		return PostIndex{}, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return PostIndex{}, errors.New("post id is required")
+	}
+
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	var item PostIndex
+	err := a.db.QueryRow(`
+		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
+		FROM messages
+		WHERE id = ?
+		  AND (
+			(zone = 'public' AND (visibility = 'normal' OR pubkey = ?))
+			OR (zone = 'private' AND pubkey = ?)
+		  )
+		LIMIT 1;
+	`, postID, viewerPubkey, viewerPubkey).Scan(
+		&item.ID,
+		&item.Pubkey,
+		&item.Title,
+		&item.BodyPreview,
+		&item.ContentCID,
+		&item.ImageCID,
+		&item.ThumbCID,
+		&item.ImageMIME,
+		&item.ImageSize,
+		&item.ImageWidth,
+		&item.ImageHeight,
+		&item.Score,
+		&item.Timestamp,
+		&item.Zone,
+		&item.SubID,
+		&item.Visibility,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PostIndex{}, errors.New("post not found")
+	}
+	if err != nil {
+		return PostIndex{}, err
+	}
+
+	return item, nil
+}
+
+func (a *App) GetMyPosts(limit int, cursor string) (PostIndexPage, error) {
+	if a.db == nil {
+		return PostIndexPage{}, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return PostIndexPage{}, errors.New("identity pubkey is empty")
+	}
+
+	limit = normalizeMyPostsLimit(limit)
+	cursorTs, cursorPostID, err := decodeMyPostsCursor(cursor)
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+
+	args := []interface{}{pubkey}
+	query := `
+		SELECT
+			id,
+			pubkey,
+			title,
+			SUBSTR(body, 1, 140) AS body_preview,
+			content_cid,
+			image_cid,
+			thumb_cid,
+			image_mime,
+			image_size,
+			image_width,
+			image_height,
+			score,
+			timestamp,
+			zone,
+			sub_id,
+			visibility
+		FROM messages
+		WHERE pubkey = ?
+	`
+	if cursorTs > 0 && cursorPostID != "" {
+		query += `
+		  AND (timestamp < ? OR (timestamp = ? AND id < ?))
+		`
+		args = append(args, cursorTs, cursorTs, cursorPostID)
+	}
+	query += `
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ?;
+	`
+	args = append(args, limit+1)
+
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return PostIndexPage{}, err
+	}
+	defer rows.Close()
+
+	resultRows := make([]PostIndex, 0, limit+1)
+	for rows.Next() {
+		var row PostIndex
+		if err = rows.Scan(
+			&row.ID,
+			&row.Pubkey,
+			&row.Title,
+			&row.BodyPreview,
+			&row.ContentCID,
+			&row.ImageCID,
+			&row.ThumbCID,
+			&row.ImageMIME,
+			&row.ImageSize,
+			&row.ImageWidth,
+			&row.ImageHeight,
+			&row.Score,
+			&row.Timestamp,
+			&row.Zone,
+			&row.SubID,
+			&row.Visibility,
+		); err != nil {
+			return PostIndexPage{}, err
+		}
+		resultRows = append(resultRows, row)
+	}
+	if err = rows.Err(); err != nil {
+		return PostIndexPage{}, err
+	}
+
+	page := PostIndexPage{
+		Items:      make([]PostIndex, 0, min(limit, len(resultRows))),
+		NextCursor: "",
+	}
+
+	if len(resultRows) > limit {
+		cursorRow := resultRows[limit-1]
+		page.NextCursor = encodeMyPostsCursor(cursorRow.Timestamp, cursorRow.ID)
+		resultRows = resultRows[:limit]
+	}
+
+	page.Items = append(page.Items, resultRows...)
+	return page, nil
 }
 
 func (a *App) GetPostBodyByCID(contentCID string) (PostBodyBlob, error) {
@@ -4000,6 +4171,16 @@ func normalizeFavoriteLimit(limit int) int {
 	return limit
 }
 
+func normalizeMyPostsLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
 func normalizeFavoriteOperation(op string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(op))
 	if normalized == "ADD" || normalized == "REMOVE" {
@@ -4070,6 +4251,39 @@ func decodeFavoriteCursor(cursor string) (int64, string, error) {
 	}
 
 	return updatedAt, postID, nil
+}
+
+func encodeMyPostsCursor(timestamp int64, postID string) string {
+	raw := fmt.Sprintf("%d|%s", timestamp, strings.TrimSpace(postID))
+	return base64.StdEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeMyPostsCursor(cursor string) (int64, string, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return 0, "", nil
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, "", errors.New("invalid my posts cursor")
+	}
+
+	parts := strings.SplitN(string(decoded), "|", 2)
+	if len(parts) != 2 {
+		return 0, "", errors.New("invalid my posts cursor")
+	}
+
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	if err != nil || timestamp <= 0 {
+		return 0, "", errors.New("invalid my posts cursor")
+	}
+	postID := strings.TrimSpace(parts[1])
+	if postID == "" {
+		return 0, "", errors.New("invalid my posts cursor")
+	}
+
+	return timestamp, postID, nil
 }
 
 func normalizeFeedStreamLimit(limit int) int {
