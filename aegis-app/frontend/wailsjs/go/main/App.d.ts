@@ -34,6 +34,10 @@ export function GetFeedBySubSorted(arg1:string,arg2:string):Promise<Array<main.F
 
 export function GetFeedIndexBySubSorted(arg1:string,arg2:string):Promise<Array<main.PostIndex>>;
 
+export function GetFeedStream(arg1:number):Promise<main.FeedStream>;
+
+export function GetFeedStreamWithStrategy(arg1:number,arg2:string):Promise<main.FeedStream>;
+
 export function GetGovernancePolicy():Promise<main.GovernancePolicy>;
 
 export function GetIdentityState():Promise<Array<main.IdentityState>>;
@@ -63,6 +67,8 @@ export function GetReleaseMetrics():Promise<main.ReleaseMetrics>;
 export function GetStorageUsage():Promise<main.StorageUsage>;
 
 export function GetSubs():Promise<Array<main.Sub>>;
+
+export function GetSubscribedSubs():Promise<Array<main.Sub>>;
 
 export function GetTrustedAdmins():Promise<Array<main.GovernanceAdmin>>;
 
@@ -94,6 +100,10 @@ export function PublishShadowBan(arg1:string,arg2:string,arg3:string):Promise<vo
 
 export function PublishUnban(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function SearchPosts(arg1:string,arg2:string,arg3:number):Promise<Array<main.ForumMessage>>;
+
+export function SearchSubs(arg1:string,arg2:number):Promise<Array<main.Sub>>;
+
 export function SetDatabasePath(arg1:string):Promise<void>;
 
 export function SetGovernancePolicy(arg1:boolean):Promise<main.GovernancePolicy>;
@@ -104,9 +114,13 @@ export function StartP2P(arg1:number,arg2:Array<string>):Promise<main.P2PStatus>
 
 export function StopP2P():Promise<void>;
 
+export function SubscribeSub(arg1:string):Promise<main.Sub>;
+
 export function TriggerAntiEntropySyncNow():Promise<void>;
 
 export function TriggerReleaseAlertEvaluationNow():Promise<Array<main.ReleaseAlert>>;
+
+export function UnsubscribeSub(arg1:string):Promise<void>;
 
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
 

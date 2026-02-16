@@ -66,6 +66,14 @@ export function GetFeedIndexBySubSorted(arg1, arg2) {
   return window['go']['main']['App']['GetFeedIndexBySubSorted'](arg1, arg2);
 }
 
+export function GetFeedStream(arg1) {
+  return window['go']['main']['App']['GetFeedStream'](arg1);
+}
+
+export function GetFeedStreamWithStrategy(arg1, arg2) {
+  return window['go']['main']['App']['GetFeedStreamWithStrategy'](arg1, arg2);
+}
+
 export function GetGovernancePolicy() {
   return window['go']['main']['App']['GetGovernancePolicy']();
 }
@@ -124,6 +132,10 @@ export function GetStorageUsage() {
 
 export function GetSubs() {
   return window['go']['main']['App']['GetSubs']();
+}
+
+export function GetSubscribedSubs() {
+  return window['go']['main']['App']['GetSubscribedSubs']();
 }
 
 export function GetTrustedAdmins() {
@@ -186,6 +198,14 @@ export function PublishUnban(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishUnban'](arg1, arg2, arg3);
 }
 
+export function SearchPosts(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchPosts'](arg1, arg2, arg3);
+}
+
+export function SearchSubs(arg1, arg2) {
+  return window['go']['main']['App']['SearchSubs'](arg1, arg2);
+}
+
 export function SetDatabasePath(arg1) {
   return window['go']['main']['App']['SetDatabasePath'](arg1);
 }
@@ -206,12 +226,20 @@ export function StopP2P() {
   return window['go']['main']['App']['StopP2P']();
 }
 
+export function SubscribeSub(arg1) {
+  return window['go']['main']['App']['SubscribeSub'](arg1);
+}
+
 export function TriggerAntiEntropySyncNow() {
   return window['go']['main']['App']['TriggerAntiEntropySyncNow']();
 }
 
 export function TriggerReleaseAlertEvaluationNow() {
   return window['go']['main']['App']['TriggerReleaseAlertEvaluationNow']();
+}
+
+export function UnsubscribeSub(arg1) {
+  return window['go']['main']['App']['UnsubscribeSub'](arg1);
 }
 
 export function UpdateProfile(arg1, arg2) {
