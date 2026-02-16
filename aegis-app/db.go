@@ -22,9 +22,9 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xdraw "golang.org/x/image/draw"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -276,9 +276,18 @@ func (a *App) initDatabase() error {
 		databasePath = "aegis_node.db"
 	}
 
-	dsn := fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", databasePath)
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
+		return err
+	}
+
+	if _, err = db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
+		_ = db.Close()
+		return err
+	}
+
+	if _, err = db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+		_ = db.Close()
 		return err
 	}
 

@@ -12,7 +12,7 @@
 ## 2. 决策：双轨制
 
 ### 轨道 A（短期 P0）
-GitHub Actions 在 Windows 原生环境构建当前 CGO 版本（`github.com/mattn/go-sqlite3`），先保证交付稳定。
+GitHub Actions 在 Windows 原生环境构建可执行包，先保证交付稳定。
 
 ### 轨道 B（中期 P1）
 迁移到纯 Go SQLite 驱动，目标选型：`modernc.org/sqlite`（当前纯 Go 方案中主流且稳定）。
@@ -33,7 +33,7 @@ GitHub Actions 在 Windows 原生环境构建当前 CGO 版本（`github.com/mat
    - `workflow_dispatch`（手动打包）
    - `push tags: v*`（可选用于 release）
 2. 构建环境：`windows-latest`。
-3. 依赖：Go 1.23、Node 20、Wails CLI v2.11.0、Windows C toolchain（CGO）。
+3. 依赖：Go 1.24、Node 20、Wails CLI v2.11.0。
 4. 构建命令：`wails build -platform windows/amd64`。
 5. 产物：
    - `aegis-app.exe`
@@ -46,12 +46,13 @@ GitHub Actions 在 Windows 原生环境构建当前 CGO 版本（`github.com/mat
 2. 登录弹窗中“创建身份/导入助记词”可正常写入本地数据库。
 3. 不再出现“按钮点击无响应（实际后端异常未显式提示）”阻断测试。
 
-## 5. 轨道 B 计划（在 A 稳定后推进）
+## 5. 轨道 B 计划（已启动）
 
 ### B1. 最小替换
 
 1. 驱动由 `github.com/mattn/go-sqlite3` 切换到 `modernc.org/sqlite`。
 2. 仅调整数据库初始化入口（`sql.Open` driver name + DSN/PRAGMA），业务 SQL 不改。
+3. 已完成：数据库初始化改为 `sqlite` 驱动，并在启动时显式设置 `busy_timeout`、`journal_mode=WAL`、`foreign_keys=ON`。
 
 ### B2. 双实现可切换（建议）
 
@@ -71,6 +72,8 @@ GitHub Actions 在 Windows 原生环境构建当前 CGO 版本（`github.com/mat
 
 ## 7. 当前执行状态
 
-1. A1：进行中（本次提交将落地 Windows workflow）。
+1. A1：Done（Windows workflow 已落地）。
 2. A2：待测试同学验证。
-3. B1/B2/B3：待 A 稳定后推进。
+3. B1：Done（纯 Go 驱动最小替换已完成）。
+4. B2：Pending。
+5. B3：Pending。
