@@ -17,3 +17,19 @@ to this in your browser, and you can call your Go code from devtools.
 ## Building
 
 To build a redistributable, production mode package, use `wails build`.
+
+## WSL2 One-Click Setup
+
+From repository root, run:
+
+```bash
+./scripts/setup_wsl2_env.sh
+```
+
+If you also want it to auto-start the app after setup:
+
+```bash
+./scripts/setup_wsl2_env.sh --start
+```
+
+The script installs Linux dependencies, Go, Node.js (via nvm), Wails CLI, frontend npm packages, and prints the default `wails dev` command with P2P seed relay envs.
