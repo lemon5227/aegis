@@ -49,6 +49,7 @@ export function SettingsPanel({
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
+  const [accountToast, setAccountToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
   const [governanceTab, setGovernanceTab] = useState<'banned' | 'appeals' | 'logs'>('banned');
@@ -59,6 +60,7 @@ export function SettingsPanel({
   const [p2pBusy, setP2PBusy] = useState(false);
   const [p2pMessage, setP2PMessage] = useState('');
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
+  const accountToastTimerRef = useRef<number | null>(null);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
@@ -123,19 +125,43 @@ export function SettingsPanel({
     setBio(profile?.bio || '');
   }, [profile?.displayName, profile?.avatarURL, profile?.bio]);
 
+  useEffect(() => {
+    return () => {
+      if (accountToastTimerRef.current !== null) {
+        window.clearTimeout(accountToastTimerRef.current);
+      }
+    };
+  }, []);
+
   if (!isOpen) return null;
 
+  const showAccountToast = (type: 'success' | 'error', text: string) => {
+    if (accountToastTimerRef.current !== null) {
+      window.clearTimeout(accountToastTimerRef.current);
+    }
+    setAccountToast({ type, text });
+    accountToastTimerRef.current = window.setTimeout(() => {
+      setAccountToast(null);
+      accountToastTimerRef.current = null;
+    }, 2200);
+  };
+
   const handleSave = async () => {
+    const startedAt = Date.now();
     setAccountBusy(true);
     setAccountMessage('');
     try {
       await onSaveProfile(displayName, avatarURL, bio);
       await onPublishProfile(displayName, avatarURL);
-      setAccountMessage('Profile saved successfully.');
+      showAccountToast('success', 'Profile updated successfully.');
     } catch (error) {
       console.error('Failed to save profile:', error);
-      setAccountMessage('Failed to save profile.');
+      showAccountToast('error', 'Failed to save profile.');
     } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 600) {
+        await new Promise((resolve) => window.setTimeout(resolve, 600 - elapsed));
+      }
       setAccountBusy(false);
     }
   };
@@ -373,7 +399,18 @@ export function SettingsPanel({
           </div>
         </div>
         
-        <div className="flex-1 flex flex-col h-full overflow-hidden bg-warm-bg dark:bg-background-dark">
+        <div className="relative flex-1 flex flex-col h-full overflow-hidden bg-warm-bg dark:bg-background-dark">
+          {accountToast && (
+            <div
+              className={`absolute top-4 right-6 z-20 rounded-lg px-3 py-2 text-sm shadow-lg border ${
+                accountToast.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
+                  : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900'
+              }`}
+            >
+              {accountToast.text}
+            </div>
+          )}
           {activeTab === 'account' && (
             <div className="flex flex-col h-full">
               <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0">
@@ -493,17 +530,21 @@ export function SettingsPanel({
                   </div>
                 </div>
                 
-                <div className="pt-4 flex items-center justify-between gap-3">
-                  {accountMessage && (
-                    <p className="text-sm text-warm-text-secondary dark:text-slate-300">{accountMessage}</p>
-                  )}
-                  <button 
-                    onClick={handleSave}
-                    disabled={accountBusy}
-                    className="px-6 py-2.5 bg-warm-accent hover:bg-warm-accent-hover text-white font-medium rounded-lg shadow-lg shadow-warm-accent/30 transition-all transform active:scale-95"
-                  >
-                    {accountBusy ? 'Saving...' : 'Save Changes'}
-                  </button>
+                <div className="pt-4 space-y-2">
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={handleSave}
+                      disabled={accountBusy}
+                      className="min-w-[132px] px-6 py-2.5 bg-warm-accent hover:bg-warm-accent-hover text-white font-medium rounded-lg shadow-lg shadow-warm-accent/30 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {accountBusy ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                  <div className="min-h-[20px]">
+                    {accountMessage && (
+                      <p className="text-sm text-warm-text-secondary dark:text-slate-300 text-right">{accountMessage}</p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
