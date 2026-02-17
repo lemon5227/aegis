@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Profile, GovernanceAdmin, ModerationLog } from '../types';
 import { GetP2PConfig, GetP2PStatus, GetPrivacySettings, SaveP2PConfig, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
@@ -10,7 +10,7 @@ interface SettingsPanelProps {
   isAdmin: boolean;
   governanceAdmins: GovernanceAdmin[];
   moderationLogs?: ModerationLog[];
-  onSaveProfile: (displayName: string, avatarURL: string, bio: string) => void;
+  onSaveProfile: (displayName: string, avatarURL: string, bio: string) => Promise<void> | void;
   onPublishProfile: (displayName: string, avatarURL: string) => void;
   onBanUser: (targetPubkey: string, reason: string) => void;
   onUnbanUser: (targetPubkey: string, reason: string) => void;
@@ -47,6 +47,8 @@ export function SettingsPanel({
   const [privacyBusy, setPrivacyBusy] = useState(false);
   const [privacyMessage, setPrivacyMessage] = useState('');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountMessage, setAccountMessage] = useState('');
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
   const [governanceTab, setGovernanceTab] = useState<'banned' | 'appeals' | 'logs'>('banned');
@@ -56,6 +58,7 @@ export function SettingsPanel({
   const [p2pStatus, setP2PStatus] = useState<P2PStatusView | null>(null);
   const [p2pBusy, setP2PBusy] = useState(false);
   const [p2pMessage, setP2PMessage] = useState('');
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
@@ -122,9 +125,55 @@ export function SettingsPanel({
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    onSaveProfile(displayName, avatarURL, bio);
-    onPublishProfile(displayName, avatarURL);
+  const handleSave = async () => {
+    setAccountBusy(true);
+    setAccountMessage('');
+    try {
+      await onSaveProfile(displayName, avatarURL, bio);
+      await onPublishProfile(displayName, avatarURL);
+      setAccountMessage('Profile saved successfully.');
+    } catch (error) {
+      console.error('Failed to save profile:', error);
+      setAccountMessage('Failed to save profile.');
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const handleSelectAvatarFile = () => {
+    avatarFileInputRef.current?.click();
+  };
+
+  const handleAvatarFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      setAccountMessage('Please choose an image file.');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAccountMessage('Image must be smaller than 2MB.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (result) {
+        setAvatarURL(result);
+        setAccountMessage('Avatar selected. Click Save Changes to persist.');
+      }
+      event.target.value = '';
+    };
+    reader.onerror = () => {
+      setAccountMessage('Failed to read image file.');
+      event.target.value = '';
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleBan = () => {
@@ -346,24 +395,40 @@ export function SettingsPanel({
                           {displayName ? displayName.slice(0, 2).toUpperCase() : '?'}
                         </div>
                       )}
-                      <button className="absolute bottom-0 right-0 bg-warm-accent hover:bg-warm-accent-hover text-white p-2 rounded-full shadow-md transition-colors border-2 border-warm-surface dark:border-warm-bg">
-                        <span className="material-icons text-sm">edit</span>
-                      </button>
-                    </div>
+                        <button
+                          onClick={handleSelectAvatarFile}
+                          className="absolute bottom-0 right-0 bg-warm-accent hover:bg-warm-accent-hover text-white p-2 rounded-full shadow-md transition-colors border-2 border-warm-surface dark:border-warm-bg"
+                        >
+                          <span className="material-icons text-sm">edit</span>
+                        </button>
+                      </div>
                     <div className="pt-2">
                       <h3 className="text-lg font-medium text-warm-text-primary dark:text-white">Profile Photo</h3>
                       <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1 mb-3">This will be displayed on your posts and comments.</p>
                       <div className="flex gap-3">
-                        <button 
-                          onClick={() => setAvatarURL('')}
+                        <button
+                          onClick={() => {
+                            setAvatarURL('');
+                            setAccountMessage('Avatar removed. Click Save Changes to persist.');
+                          }}
                           className="px-4 py-2 text-sm font-medium text-warm-text-primary dark:text-white bg-white dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-lg hover:bg-warm-card dark:hover:bg-surface-lighter transition-colors"
                         >
                           Remove
                         </button>
-                        <button className="px-4 py-2 text-sm font-medium text-warm-accent bg-warm-accent/10 border border-transparent rounded-lg hover:bg-warm-accent/20 transition-colors">
+                        <button
+                          onClick={handleSelectAvatarFile}
+                          className="px-4 py-2 text-sm font-medium text-warm-accent bg-warm-accent/10 border border-transparent rounded-lg hover:bg-warm-accent/20 transition-colors"
+                        >
                           Upload New
                         </button>
                       </div>
+                      <input
+                        ref={avatarFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleAvatarFileChange}
+                      />
                     </div>
                   </div>
                   
@@ -428,12 +493,16 @@ export function SettingsPanel({
                   </div>
                 </div>
                 
-                <div className="pt-4 flex justify-end">
+                <div className="pt-4 flex items-center justify-between gap-3">
+                  {accountMessage && (
+                    <p className="text-sm text-warm-text-secondary dark:text-slate-300">{accountMessage}</p>
+                  )}
                   <button 
                     onClick={handleSave}
+                    disabled={accountBusy}
                     className="px-6 py-2.5 bg-warm-accent hover:bg-warm-accent-hover text-white font-medium rounded-lg shadow-lg shadow-warm-accent/30 transition-all transform active:scale-95"
                   >
-                    Save Changes
+                    {accountBusy ? 'Saving...' : 'Save Changes'}
                   </button>
                 </div>
               </div>
