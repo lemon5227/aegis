@@ -69,8 +69,10 @@
 
 | API | 说明 | 优先级 |
 |-----|------|--------|
-| `SetPrivacySettings(pubkey, showOnlineStatus, allowSearch)` | 设置隐私选项 | 低 |
-| `GetPrivacySettings(pubkey)` | 获取隐私设置 | 低 |
+| `UpdateProfileDetails(displayName, avatarURL, bio)` | 更新当前身份资料详情（含 bio） | **中（已实现）** |
+| `GetProfileDetails(pubkey)` | 获取资料详情（含 bio） | **中（已实现）** |
+| `SetPrivacySettings(showOnlineStatus, allowSearch)` | 设置当前身份隐私选项 | **中（已实现）** |
+| `GetPrivacySettings()` | 获取当前身份隐私设置 | **中（已实现）** |
 
 ### 2.4 更新检查
 
@@ -175,7 +177,7 @@
 
 2. **My Posts**：已接入后端 `GetMyPosts(limit, cursor)`，不再依赖 localStorage。
 
-3. **隐私设置**：Privacy 页面有 UI，但设置暂时不保存到后端，需要实现 `SetPrivacySettings` 和 `GetPrivacySettings` API。
+3. **Profile/隐私设置**：已接入 `UpdateProfileDetails/GetProfileDetails` 与 `SetPrivacySettings/GetPrivacySettings`，设置可持久化到 SQLite。
 
 4. **更新检查**：Updates 页面有 UI，但检查更新功能未实现，需要 `CheckForUpdates` 和 `GetVersionHistory` API。
 

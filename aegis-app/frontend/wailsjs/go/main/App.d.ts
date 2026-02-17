@@ -68,7 +68,11 @@ export function GetPostIndexByID(arg1:string):Promise<main.PostIndex>;
 
 export function GetPostMediaByID(arg1:string):Promise<main.MediaBlob>;
 
+export function GetPrivacySettings():Promise<main.PrivacySettings>;
+
 export function GetPrivateFeed():Promise<Array<main.ForumMessage>>;
+
+export function GetProfileDetails(arg1:string):Promise<main.ProfileDetails>;
 
 export function GetProfile(arg1:string):Promise<main.Profile>;
 
@@ -126,6 +130,8 @@ export function SetDatabasePath(arg1:string):Promise<void>;
 
 export function SetGovernancePolicy(arg1:boolean):Promise<main.GovernancePolicy>;
 
+export function SetPrivacySettings(arg1:boolean,arg2:boolean):Promise<main.PrivacySettings>;
+
 export function SignMessage(arg1:string,arg2:string):Promise<string>;
 
 export function StartP2P(arg1:number,arg2:Array<string>):Promise<main.P2PStatus>;
@@ -141,6 +147,8 @@ export function TriggerReleaseAlertEvaluationNow():Promise<Array<main.ReleaseAle
 export function UnsubscribeSub(arg1:string):Promise<void>;
 
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
+
+export function UpdateProfileDetails(arg1:string,arg2:string,arg3:string):Promise<main.ProfileDetails>;
 
 export function UpvoteComment(arg1:string):Promise<void>;
 

@@ -252,7 +252,7 @@ bio 与隐私设置 API，且与现有 `UpdateProfile/GetProfile` 保持兼容�
 - G1：Done（收藏后端+分布式索引同步已实现）
 - G2：Done（`GetMyPosts` + `GetPostIndexByID` 已实现并接入前端）
 - G2.5：Done（P2P 配置持久化 API + Settings 接入已完成）
-- G3：Pending
+- G3：Done（Profile Details + Privacy API 已实现并接入 Settings）
 - G4：Pending
 - G5：Pending
 - G6：In Progress（流程门禁持续执行）

@@ -28,6 +28,7 @@ export interface Profile {
   pubkey: string;
   displayName: string;
   avatarURL: string;
+  bio?: string;
   updatedAt: number;
 }
 

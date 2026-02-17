@@ -436,6 +436,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class PrivacySettings {
+	    showOnlineStatus: boolean;
+	    allowSearch: boolean;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PrivacySettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.showOnlineStatus = source["showOnlineStatus"];
+	        this.allowSearch = source["allowSearch"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
 	export class Profile {
 	    pubkey: string;
 	    displayName: string;
@@ -451,6 +467,26 @@ export namespace main {
 	        this.pubkey = source["pubkey"];
 	        this.displayName = source["displayName"];
 	        this.avatarURL = source["avatarURL"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class ProfileDetails {
+	    pubkey: string;
+	    displayName: string;
+	    avatarURL: string;
+	    bio: string;
+	    updatedAt: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ProfileDetails(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pubkey = source["pubkey"];
+	        this.displayName = source["displayName"];
+	        this.avatarURL = source["avatarURL"];
+	        this.bio = source["bio"];
 	        this.updatedAt = source["updatedAt"];
 	    }
 	}
@@ -546,4 +582,3 @@ export namespace main {
 	}
 
 }
-

@@ -16,6 +16,7 @@ import {
   LoadSavedIdentity,
   GenerateIdentity,
   ImportIdentityFromMnemonic,
+  GetProfileDetails,
   GetProfile,
   GetTrustedAdmins,
   GetPostIndexByID,
@@ -23,7 +24,7 @@ import {
   GetCommentsByPost,
   PublishComment,
   PublishCommentUpvote,
-  UpdateProfile,
+  UpdateProfileDetails,
   PublishProfileUpdate,
   PublishShadowBan,
   PublishUnban,
@@ -82,7 +83,7 @@ function App() {
       const id = await LoadSavedIdentity();
       setIdentity(id);
       if (id.publicKey) {
-        const p = await GetProfile(id.publicKey);
+        const p = await GetProfileDetails(id.publicKey);
         setProfile(p);
         const admins = await GetTrustedAdmins();
         setIsAdmin(admins.some((a: GovernanceAdmin) => a.adminPubkey === id.publicKey && a.active));
@@ -206,7 +207,7 @@ function App() {
       const id = await GenerateIdentity();
       setIdentity(id);
       if (id.publicKey) {
-        const p = await GetProfile(id.publicKey);
+        const p = await GetProfileDetails(id.publicKey);
         setProfile(p);
       }
       await loadSubs();
@@ -225,7 +226,7 @@ function App() {
       const id = await ImportIdentityFromMnemonic(mnemonic);
       setIdentity(id);
       if (id.publicKey) {
-        const p = await GetProfile(id.publicKey);
+        const p = await GetProfileDetails(id.publicKey);
         setProfile(p);
       }
       await loadSubs();
@@ -399,10 +400,10 @@ function App() {
     }
   };
 
-  const handleSaveProfile = async (displayName: string, avatarURL: string) => {
+  const handleSaveProfile = async (displayName: string, avatarURL: string, bio: string) => {
     if (!hasWailsRuntime() || !identity) return;
     try {
-      const p = await UpdateProfile(displayName, avatarURL);
+      const p = await UpdateProfileDetails(displayName, avatarURL, bio);
       setProfile(p);
     } catch (e) {
       console.error('Failed to save profile:', e);

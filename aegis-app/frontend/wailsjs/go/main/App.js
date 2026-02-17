@@ -134,8 +134,16 @@ export function GetPostMediaByID(arg1) {
   return window['go']['main']['App']['GetPostMediaByID'](arg1);
 }
 
+export function GetPrivacySettings() {
+  return window['go']['main']['App']['GetPrivacySettings']();
+}
+
 export function GetPrivateFeed() {
   return window['go']['main']['App']['GetPrivateFeed']();
+}
+
+export function GetProfileDetails(arg1) {
+  return window['go']['main']['App']['GetProfileDetails'](arg1);
 }
 
 export function GetProfile(arg1) {
@@ -250,6 +258,10 @@ export function SetGovernancePolicy(arg1) {
   return window['go']['main']['App']['SetGovernancePolicy'](arg1);
 }
 
+export function SetPrivacySettings(arg1, arg2) {
+  return window['go']['main']['App']['SetPrivacySettings'](arg1, arg2);
+}
+
 export function SignMessage(arg1, arg2) {
   return window['go']['main']['App']['SignMessage'](arg1, arg2);
 }
@@ -280,6 +292,10 @@ export function UnsubscribeSub(arg1) {
 
 export function UpdateProfile(arg1, arg2) {
   return window['go']['main']['App']['UpdateProfile'](arg1, arg2);
+}
+
+export function UpdateProfileDetails(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateProfileDetails'](arg1, arg2, arg3);
 }
 
 export function UpvoteComment(arg1) {

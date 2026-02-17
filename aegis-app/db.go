@@ -104,6 +104,14 @@ type Profile struct {
 	UpdatedAt   int64  `json:"updatedAt"`
 }
 
+type ProfileDetails struct {
+	Pubkey      string `json:"pubkey"`
+	DisplayName string `json:"displayName"`
+	AvatarURL   string `json:"avatarURL"`
+	Bio         string `json:"bio"`
+	UpdatedAt   int64  `json:"updatedAt"`
+}
+
 type Comment struct {
 	ID        string `json:"id"`
 	PostID    string `json:"postId"`
@@ -141,6 +149,12 @@ type P2PConfig struct {
 	RelayPeers []string `json:"relayPeers"`
 	AutoStart  bool     `json:"autoStart"`
 	UpdatedAt  int64    `json:"updatedAt"`
+}
+
+type PrivacySettings struct {
+	ShowOnlineStatus bool  `json:"showOnlineStatus"`
+	AllowSearch      bool  `json:"allowSearch"`
+	UpdatedAt        int64 `json:"updatedAt"`
 }
 
 type IdentityState struct {
@@ -387,6 +401,12 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			avatar_url TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS profile_details (
+			pubkey TEXT PRIMARY KEY,
+			bio TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(pubkey) REFERENCES profiles(pubkey) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS comments (
 			id TEXT PRIMARY KEY,
 			post_id TEXT NOT NULL,
@@ -431,6 +451,12 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS governance_config (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS privacy_settings (
+			pubkey TEXT PRIMARY KEY,
+			show_online_status INTEGER NOT NULL,
+			allow_search INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS p2p_config (
@@ -2079,6 +2105,47 @@ func (a *App) UpdateProfile(displayName string, avatarURL string) (Profile, erro
 	return a.upsertProfile(identity.PublicKey, displayName, avatarURL, time.Now().Unix())
 }
 
+func (a *App) UpdateProfileDetails(displayName string, avatarURL string, bio string) (ProfileDetails, error) {
+	if a.db == nil {
+		return ProfileDetails{}, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return ProfileDetails{}, err
+	}
+
+	updatedAt := time.Now().Unix()
+	profile, err := a.upsertProfile(identity.PublicKey, displayName, avatarURL, updatedAt)
+	if err != nil {
+		return ProfileDetails{}, err
+	}
+
+	bio = strings.TrimSpace(bio)
+	if len([]rune(bio)) > 160 {
+		bio = string([]rune(bio)[:160])
+	}
+
+	_, err = a.db.Exec(`
+		INSERT INTO profile_details (pubkey, bio, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(pubkey) DO UPDATE SET
+			bio = excluded.bio,
+			updated_at = excluded.updated_at;
+	`, profile.Pubkey, bio, updatedAt)
+	if err != nil {
+		return ProfileDetails{}, err
+	}
+
+	return ProfileDetails{
+		Pubkey:      profile.Pubkey,
+		DisplayName: profile.DisplayName,
+		AvatarURL:   profile.AvatarURL,
+		Bio:         bio,
+		UpdatedAt:   updatedAt,
+	}, nil
+}
+
 func (a *App) GetProfile(pubkey string) (Profile, error) {
 	if a.db == nil {
 		return Profile{}, errors.New("database not initialized")
@@ -2103,6 +2170,133 @@ func (a *App) GetProfile(pubkey string) (Profile, error) {
 	}
 
 	return profile, nil
+}
+
+func (a *App) GetProfileDetails(pubkey string) (ProfileDetails, error) {
+	if a.db == nil {
+		return ProfileDetails{}, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return ProfileDetails{}, errors.New("pubkey is required")
+	}
+
+	profile, err := a.GetProfile(pubkey)
+	if err != nil {
+		return ProfileDetails{}, err
+	}
+
+	var (
+		bio              string
+		detailsUpdatedAt int64
+	)
+	err = a.db.QueryRow(`
+		SELECT bio, updated_at
+		FROM profile_details
+		WHERE pubkey = ?;
+	`, pubkey).Scan(&bio, &detailsUpdatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ProfileDetails{}, err
+	}
+
+	updatedAt := profile.UpdatedAt
+	if detailsUpdatedAt > updatedAt {
+		updatedAt = detailsUpdatedAt
+	}
+
+	return ProfileDetails{
+		Pubkey:      profile.Pubkey,
+		DisplayName: profile.DisplayName,
+		AvatarURL:   profile.AvatarURL,
+		Bio:         bio,
+		UpdatedAt:   updatedAt,
+	}, nil
+}
+
+func (a *App) GetPrivacySettings() (PrivacySettings, error) {
+	if a.db == nil {
+		return PrivacySettings{}, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return PrivacySettings{}, err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return PrivacySettings{}, errors.New("identity pubkey is empty")
+	}
+
+	var (
+		showOnlineStatus int
+		allowSearch      int
+		updatedAt        int64
+	)
+	err = a.db.QueryRow(`
+		SELECT show_online_status, allow_search, updated_at
+		FROM privacy_settings
+		WHERE pubkey = ?;
+	`, pubkey).Scan(&showOnlineStatus, &allowSearch, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PrivacySettings{
+			ShowOnlineStatus: true,
+			AllowSearch:      true,
+			UpdatedAt:        0,
+		}, nil
+	}
+	if err != nil {
+		return PrivacySettings{}, err
+	}
+
+	return PrivacySettings{
+		ShowOnlineStatus: showOnlineStatus == 1,
+		AllowSearch:      allowSearch == 1,
+		UpdatedAt:        updatedAt,
+	}, nil
+}
+
+func (a *App) SetPrivacySettings(showOnlineStatus bool, allowSearch bool) (PrivacySettings, error) {
+	if a.db == nil {
+		return PrivacySettings{}, errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return PrivacySettings{}, err
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return PrivacySettings{}, errors.New("identity pubkey is empty")
+	}
+
+	updatedAt := time.Now().Unix()
+	showOnlineStatusInt := 0
+	if showOnlineStatus {
+		showOnlineStatusInt = 1
+	}
+	allowSearchInt := 0
+	if allowSearch {
+		allowSearchInt = 1
+	}
+
+	_, err = a.db.Exec(`
+		INSERT INTO privacy_settings (pubkey, show_online_status, allow_search, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(pubkey) DO UPDATE SET
+			show_online_status = excluded.show_online_status,
+			allow_search = excluded.allow_search,
+			updated_at = excluded.updated_at;
+	`, pubkey, showOnlineStatusInt, allowSearchInt, updatedAt)
+	if err != nil {
+		return PrivacySettings{}, err
+	}
+
+	return PrivacySettings{
+		ShowOnlineStatus: showOnlineStatus,
+		AllowSearch:      allowSearch,
+		UpdatedAt:        updatedAt,
+	}, nil
 }
 
 func (a *App) GetModerationState() ([]ModerationState, error) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Profile, GovernanceAdmin, ModerationLog } from '../types';
-import { GetP2PConfig, GetP2PStatus, SaveP2PConfig, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { GetP2PConfig, GetP2PStatus, GetPrivacySettings, SaveP2PConfig, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -10,7 +10,7 @@ interface SettingsPanelProps {
   isAdmin: boolean;
   governanceAdmins: GovernanceAdmin[];
   moderationLogs?: ModerationLog[];
-  onSaveProfile: (displayName: string, avatarURL: string) => void;
+  onSaveProfile: (displayName: string, avatarURL: string, bio: string) => void;
   onPublishProfile: (displayName: string, avatarURL: string) => void;
   onBanUser: (targetPubkey: string, reason: string) => void;
   onUnbanUser: (targetPubkey: string, reason: string) => void;
@@ -41,8 +41,11 @@ export function SettingsPanel({
   const [activeTab, setActiveTab] = useState<Tab>('account');
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
   const [avatarURL, setAvatarURL] = useState(profile?.avatarURL || '');
-  const [bio, setBio] = useState('');
+  const [bio, setBio] = useState(profile?.bio || '');
   const [publicStatus, setPublicStatus] = useState(true);
+  const [allowSearch, setAllowSearch] = useState(true);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState('');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
@@ -83,12 +86,26 @@ export function SettingsPanel({
     }
   };
 
+  const loadPrivacySettings = async () => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const settings = await GetPrivacySettings();
+      setPublicStatus(!!settings.showOnlineStatus);
+      setAllowSearch(!!settings.allowSearch);
+      setPrivacyMessage('');
+    } catch (error) {
+      console.error('Failed to load privacy settings:', error);
+      setPrivacyMessage('Failed to load privacy settings.');
+    }
+  };
+
   useEffect(() => {
     if (!isOpen || !hasWailsRuntime()) {
       return;
     }
 
     void loadP2PState();
+    void loadPrivacySettings();
     const unsubscribe = EventsOn('p2p:updated', () => {
       void loadP2PState();
     });
@@ -97,10 +114,16 @@ export function SettingsPanel({
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    setDisplayName(profile?.displayName || '');
+    setAvatarURL(profile?.avatarURL || '');
+    setBio(profile?.bio || '');
+  }, [profile?.displayName, profile?.avatarURL, profile?.bio]);
+
   if (!isOpen) return null;
 
   const handleSave = () => {
-    onSaveProfile(displayName, avatarURL);
+    onSaveProfile(displayName, avatarURL, bio);
     onPublishProfile(displayName, avatarURL);
   };
 
@@ -113,6 +136,24 @@ export function SettingsPanel({
 
   const handleUnban = (pubkey: string) => {
     onUnbanUser(pubkey, 'Approved unban request');
+  };
+
+  const handleSavePrivacySettings = async () => {
+    if (!hasWailsRuntime()) return;
+
+    setPrivacyBusy(true);
+    setPrivacyMessage('');
+    try {
+      const settings = await SetPrivacySettings(publicStatus, allowSearch);
+      setPublicStatus(!!settings.showOnlineStatus);
+      setAllowSearch(!!settings.allowSearch);
+      setPrivacyMessage('Privacy settings saved.');
+    } catch (error) {
+      console.error('Failed to save privacy settings:', error);
+      setPrivacyMessage('Failed to save privacy settings.');
+    } finally {
+      setPrivacyBusy(false);
+    }
   };
 
   const parseListenPort = (): number | null => {
@@ -442,10 +483,27 @@ export function SettingsPanel({
                           <p className="text-xs text-warm-text-secondary dark:text-slate-400">Allow your profile to appear in search results</p>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" defaultChecked className="sr-only peer" />
+                          <input
+                            type="checkbox"
+                            checked={allowSearch}
+                            onChange={(e) => setAllowSearch(e.target.checked)}
+                            className="sr-only peer"
+                          />
                           <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-warm-accent"></div>
                         </label>
                       </div>
+                    </div>
+                    <div className="pt-4 flex items-center justify-between gap-3">
+                      {privacyMessage && (
+                        <p className="text-sm text-warm-text-secondary dark:text-slate-300">{privacyMessage}</p>
+                      )}
+                      <button
+                        onClick={handleSavePrivacySettings}
+                        disabled={privacyBusy}
+                        className="ml-auto px-4 py-2 bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Save Privacy Settings
+                      </button>
                     </div>
                   </div>
                 </div>
