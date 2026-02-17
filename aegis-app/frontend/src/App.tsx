@@ -29,6 +29,7 @@ import {
   PublishShadowBan,
   PublishUnban,
   GetModerationLogs,
+  TriggerCommentSyncNow,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -43,6 +44,7 @@ import { CreateSubModal } from './components/CreateSubModal';
 import { CreatePostModal } from './components/CreatePostModal';
 import { LoginModal } from './components/LoginModal';
 import { Sub, Profile, Post, GovernanceAdmin, Identity, Comment, ModerationLog } from './types';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 type SortMode = 'hot' | 'new';
 type ViewMode = 'feed' | 'discover' | 'post-detail' | 'my-posts' | 'favorites';
@@ -85,6 +87,7 @@ function App() {
       if (id.publicKey) {
         const p = await GetProfileDetails(id.publicKey);
         setProfile(p);
+        setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
         const admins = await GetTrustedAdmins();
         setIsAdmin(admins.some((a: GovernanceAdmin) => a.adminPubkey === id.publicKey && a.active));
       }
@@ -113,6 +116,19 @@ function App() {
       console.error('Failed to load subscribed subs:', e);
     }
   }, []);
+
+  const activateIdentity = useCallback(async (id: Identity) => {
+    setIdentity(id);
+    if (id.publicKey) {
+      const p = await GetProfileDetails(id.publicKey);
+      setProfile(p);
+      setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
+      const admins = await GetTrustedAdmins();
+      setIsAdmin(admins.some((a: GovernanceAdmin) => a.adminPubkey === id.publicKey && a.active));
+    }
+    await loadSubs();
+    await loadSubscribedSubs();
+  }, [loadSubs, loadSubscribedSubs]);
 
   const loadRecommendedFeed = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -177,43 +193,45 @@ function App() {
   const loadPostDetail = useCallback(async (post: Post) => {
     if (!hasWailsRuntime()) return;
     try {
+      await TriggerCommentSyncNow(post.id);
       const body = await GetPostBodyByID(post.id);
       setPostBody(body.body || '');
       const comments = await GetCommentsByPost(post.id);
       setPostComments(comments);
       
-      const allPubkeys = [post.pubkey, ...comments.map((c: Comment) => c.pubkey)];
-      const newProfiles: Record<string, Profile> = {};
-      for (const pk of allPubkeys) {
-        if (!profiles[pk]) {
+      const uniquePubkeys = Array.from(new Set([post.pubkey, ...comments.map((c: Comment) => c.pubkey)]));
+      const resolvedProfiles = await Promise.all(
+        uniquePubkeys.map(async (pk) => {
           try {
-            const p = await GetProfile(pk);
-            newProfiles[pk] = p;
-          } catch {}
-        }
+            const profile = await GetProfile(pk);
+            return [pk, profile] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      const mergedProfiles: Record<string, Profile> = {};
+      for (const entry of resolvedProfiles) {
+        if (!entry) continue;
+        mergedProfiles[entry[0]] = entry[1];
       }
-      if (Object.keys(newProfiles).length > 0) {
-        setProfiles((prev) => ({ ...prev, ...newProfiles }));
+      if (Object.keys(mergedProfiles).length > 0) {
+        setProfiles((prev) => ({ ...prev, ...mergedProfiles }));
       }
     } catch (e) {
       console.error('Failed to load post detail:', e);
     }
-  }, [profiles]);
+  }, []);
 
-  const createIdentity = async () => {
-    if (!hasWailsRuntime()) return;
+  const createIdentity = async (): Promise<Identity | null> => {
+    if (!hasWailsRuntime()) return null;
     setLoading(true);
     try {
       const id = await GenerateIdentity();
-      setIdentity(id);
-      if (id.publicKey) {
-        const p = await GetProfileDetails(id.publicKey);
-        setProfile(p);
-      }
-      await loadSubs();
-      await loadSubscribedSubs();
+      return id;
     } catch (e) {
       console.error('Failed to create identity:', e);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -224,15 +242,10 @@ function App() {
     setLoading(true);
     try {
       const id = await ImportIdentityFromMnemonic(mnemonic);
-      setIdentity(id);
-      if (id.publicKey) {
-        const p = await GetProfileDetails(id.publicKey);
-        setProfile(p);
-      }
-      await loadSubs();
-      await loadSubscribedSubs();
+      await activateIdentity(id);
     } catch (e) {
       console.error('Failed to import identity:', e);
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -278,6 +291,17 @@ function App() {
     setView('post-detail');
     await loadPostDetail(post);
   };
+
+  const refreshCommentsForSelectedPost = useCallback(async (postId: string) => {
+    if (!hasWailsRuntime()) return;
+    if (!selectedPost || selectedPost.id !== postId) return;
+    try {
+      const comments = await GetCommentsByPost(postId);
+      setPostComments(comments);
+    } catch (e) {
+      console.error('Failed to refresh comments:', e);
+    }
+  }, [selectedPost]);
 
   const handleBackToFeed = () => {
     setSelectedPost(null);
@@ -385,6 +409,7 @@ function App() {
       setPostComments(comments);
     } catch (e) {
       console.error('Failed to post comment:', e);
+      throw e;
     }
   };
 
@@ -405,8 +430,12 @@ function App() {
     try {
       const p = await UpdateProfileDetails(displayName, avatarURL, bio);
       setProfile(p);
+      if (p.pubkey) {
+        setProfiles((prev) => ({ ...prev, [p.pubkey]: p }));
+      }
     } catch (e) {
       console.error('Failed to save profile:', e);
+      throw e;
     }
   };
 
@@ -416,6 +445,7 @@ function App() {
       await PublishProfileUpdate(identity.publicKey, displayName, avatarURL);
     } catch (e) {
       console.error('Failed to publish profile:', e);
+      throw e;
     }
   };
 
@@ -481,6 +511,29 @@ function App() {
       GetModerationLogs(100).then(setModerationLogs).catch(console.error);
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('comments:updated', (payload: { postId?: string } | undefined) => {
+      const postId = payload?.postId;
+      if (!postId) return;
+      void refreshCommentsForSelectedPost(postId);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [refreshCommentsForSelectedPost]);
+
+  useEffect(() => {
+    if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('feed:updated', () => {
+      if (!identity || view !== 'feed') return;
+      void loadPosts(currentSubId, sortMode);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [identity, view, currentSubId, sortMode, loadPosts]);
 
   const currentSub = currentSubId === 'recommended' 
     ? { id: 'recommended', title: 'Recommended Feed', description: 'Your personalized feed based on subscriptions and trending posts' }
@@ -600,6 +653,7 @@ function App() {
         isOpen={showLoginModal && !identity}
         onClose={() => setShowLoginModal(false)}
         onCreateIdentity={createIdentity}
+        onActivateIdentity={activateIdentity}
         onLoadIdentity={loadIdentity}
         onImportMnemonic={importIdentity}
       />

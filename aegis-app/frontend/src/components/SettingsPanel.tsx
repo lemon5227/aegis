@@ -50,6 +50,7 @@ export function SettingsPanel({
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
   const [accountToast, setAccountToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [avatarExternalURL, setAvatarExternalURL] = useState('');
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
   const [governanceTab, setGovernanceTab] = useState<'banned' | 'appeals' | 'logs'>('banned');
@@ -170,7 +171,83 @@ export function SettingsPanel({
     avatarFileInputRef.current?.click();
   };
 
-  const handleAvatarFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const readFileAsDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        if (!result) {
+          reject(new Error('empty file result'));
+          return;
+        }
+        resolve(result);
+      };
+      reader.onerror = () => reject(reader.error || new Error('read file failed'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const loadImageFromDataURL = (dataURL: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('load image failed'));
+      image.src = dataURL;
+    });
+  };
+
+  const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('convert canvas failed'));
+            return;
+          }
+          resolve(blob);
+        },
+        type,
+        quality
+      );
+    });
+  };
+
+  const compressAvatarFileIfNeeded = async (file: File): Promise<string> => {
+    const MAX_BYTES = 256 * 1024;
+    const MAX_DIMENSION = 512;
+
+    const originalDataURL = await readFileAsDataURL(file);
+    const image = await loadImageFromDataURL(originalDataURL);
+    const needResize = image.width > MAX_DIMENSION || image.height > MAX_DIMENSION;
+    if (!needResize && file.size <= MAX_BYTES) {
+      return originalDataURL;
+    }
+
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
+    const targetWidth = Math.max(1, Math.round(image.width * scale));
+    const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('canvas context unavailable');
+    }
+    ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    const qualityCandidates = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42, 0.36];
+    for (const quality of qualityCandidates) {
+      const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (blob.size <= MAX_BYTES) {
+        return await readFileAsDataURL(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
+      }
+    }
+
+    throw new Error('compressed image still too large');
+  };
+
+  const handleAvatarFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -180,26 +257,41 @@ export function SettingsPanel({
       event.target.value = '';
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setAccountMessage('Image must be smaller than 2MB.');
+    try {
+      const avatarDataURL = await compressAvatarFileIfNeeded(file);
+      setAvatarURL(avatarDataURL);
+      setAccountMessage('Avatar selected. Click Save Changes to persist.');
+    } catch (error) {
+      console.error('Failed to process avatar image:', error);
+      setAccountMessage('Image processing failed. Try a smaller file or use an external image URL.');
+    } finally {
       event.target.value = '';
+    }
+  };
+
+  const handleApplyAvatarExternalURL = () => {
+    const raw = avatarExternalURL.trim();
+    if (!raw) {
+      setAccountMessage('Please enter an image URL.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      if (result) {
-        setAvatarURL(result);
-        setAccountMessage('Avatar selected. Click Save Changes to persist.');
-      }
-      event.target.value = '';
-    };
-    reader.onerror = () => {
-      setAccountMessage('Failed to read image file.');
-      event.target.value = '';
-    };
-    reader.readAsDataURL(file);
+    let parsedURL: URL;
+    try {
+      parsedURL = new URL(raw);
+    } catch {
+      setAccountMessage('Invalid image URL.');
+      return;
+    }
+
+    const protocol = parsedURL.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      setAccountMessage('Only http/https image URLs are supported.');
+      return;
+    }
+
+    setAvatarURL(parsedURL.toString());
+    setAccountMessage('External avatar link set. Click Save Changes to persist.');
   };
 
   const handleBan = () => {
@@ -442,6 +534,7 @@ export function SettingsPanel({
                     <div className="pt-2">
                       <h3 className="text-lg font-medium text-warm-text-primary dark:text-white">Profile Photo</h3>
                       <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1 mb-3">This will be displayed on your posts and comments.</p>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 mb-3">Local uploads are auto-compressed for network sync. External image URL is recommended to reduce storage and payload size.</p>
                       <div className="flex gap-3">
                         <button
                           onClick={() => {
@@ -457,6 +550,22 @@ export function SettingsPanel({
                           className="px-4 py-2 text-sm font-medium text-warm-accent bg-warm-accent/10 border border-transparent rounded-lg hover:bg-warm-accent/20 transition-colors"
                         >
                           Upload New
+                        </button>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          type="url"
+                          value={avatarExternalURL}
+                          onChange={(e) => setAvatarExternalURL(e.target.value)}
+                          placeholder="https://example.com/avatar.jpg"
+                          className="flex-1 px-3 py-2 text-sm rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none"
+                        />
+                        <button
+                          onClick={handleApplyAvatarExternalURL}
+                          className="px-3 py-2 text-sm font-medium text-warm-accent bg-warm-accent/10 border border-transparent rounded-lg hover:bg-warm-accent/20 transition-colors flex items-center gap-1"
+                        >
+                          <span className="material-icons text-base">link</span>
+                          Use URL
                         </button>
                       </div>
                       <input

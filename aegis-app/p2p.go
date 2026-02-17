@@ -31,6 +31,8 @@ const (
 	messageTypeMediaFetchResponse     = "MEDIA_FETCH_RESPONSE"
 	messageTypeSyncSummaryRequest     = "SYNC_SUMMARY_REQUEST"
 	messageTypeSyncSummaryResponse    = "SYNC_SUMMARY_RESPONSE"
+	messageTypeCommentSyncRequest     = "COMMENT_SYNC_REQUEST"
+	messageTypeCommentSyncResponse    = "COMMENT_SYNC_RESPONSE"
 	messageTypeGovernanceSyncRequest  = "GOVERNANCE_SYNC_REQUEST"
 	messageTypeGovernanceSyncResponse = "GOVERNANCE_SYNC_RESPONSE"
 	messageTypeFavoriteOp             = "FAVORITE_OP"
@@ -46,6 +48,7 @@ var (
 	errMediaFetchTimeout     = errors.New("media fetch timeout")
 	errMediaFetchNotFound    = errors.New("media fetch not found")
 	errAntiEntropyNoPeers    = errors.New("anti-entropy no peers")
+	errCommentSyncNoPeers    = errors.New("comment sync no peers")
 	errGovernanceSyncNoPeers = errors.New("governance sync no peers")
 	errFavoriteSyncNoPeers   = errors.New("favorite sync no peers")
 )
@@ -74,6 +77,33 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 	if listenPort <= 0 {
 		listenPort = 40100
 	}
+	var startErr error
+	for _, candidatePort := range resolveAutoStartPortCandidates(listenPort) {
+		if !isTCPPortAvailable(candidatePort) {
+			continue
+		}
+
+		status, err := a.startP2POnPortLocked(candidatePort, bootstrapPeers)
+		if err != nil {
+			startErr = err
+			continue
+		}
+
+		if candidatePort != listenPort && a.ctx != nil {
+			runtime.LogInfof(a.ctx, "p2p start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
+		}
+
+		return status, nil
+	}
+
+	if startErr != nil {
+		return P2PStatus{}, startErr
+	}
+
+	return P2PStatus{}, fmt.Errorf("p2p start failed: no available port in range [%d,%d]", listenPort, listenPort+20)
+}
+
+func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2PStatus, error) {
 	a.refreshPeerPoliciesFromEnv()
 
 	listenAddrs := resolveP2PListenAddrs(listenPort)
@@ -156,6 +186,8 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 		}
 		_ = a.connectPeerLocked(trimmed)
 	}
+
+	a.publishLocalProfileUpdateLocked()
 
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "p2p:updated")
@@ -244,7 +276,12 @@ func (a *App) connectPeerLocked(address string) error {
 	ctx, cancel := context.WithTimeout(a.p2pCtx, 5*time.Second)
 	defer cancel()
 
-	return a.p2pHost.Connect(ctx, *info)
+	if err = a.p2pHost.Connect(ctx, *info); err != nil {
+		return err
+	}
+
+	a.publishLocalProfileUpdateLocked()
+	return nil
 }
 
 func (a *App) PublishPostStructured(pubkey string, title string, body string) error {
@@ -458,14 +495,20 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 
 	now := time.Now().Unix()
 	raw := fmt.Sprintf("%s|%s|%s", postID, parentID, body)
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
+	}
 	msg := IncomingMessage{
-		Type:      "COMMENT",
-		ID:        buildMessageID(pubkey, raw, now),
-		Pubkey:    pubkey,
-		PostID:    postID,
-		ParentID:  parentID,
-		Body:      body,
-		Timestamp: now,
+		Type:        "COMMENT",
+		ID:          buildMessageID(pubkey, raw, now),
+		Pubkey:      pubkey,
+		PostID:      postID,
+		ParentID:    parentID,
+		DisplayName: strings.TrimSpace(profile.DisplayName),
+		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
+		Body:        body,
+		Timestamp:   now,
 	}
 
 	payload, err := json.Marshal(msg)
@@ -630,6 +673,41 @@ func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL 
 	}
 
 	return topic.Publish(ctx, payload)
+}
+
+func (a *App) publishLocalProfileUpdateLocked() {
+	if a.p2pTopic == nil || a.p2pCtx == nil {
+		return
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return
+	}
+	pubkey := strings.TrimSpace(identity.PublicKey)
+	if pubkey == "" {
+		return
+	}
+
+	profile, err := a.GetProfile(pubkey)
+	if err != nil {
+		profile = Profile{Pubkey: pubkey}
+	}
+
+	msg := IncomingMessage{
+		Type:        "PROFILE_UPDATE",
+		Pubkey:      pubkey,
+		DisplayName: strings.TrimSpace(profile.DisplayName),
+		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
+		Timestamp:   time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	_ = a.p2pTopic.Publish(a.p2pCtx, payload)
 }
 
 func (a *App) PublishGovernancePolicy(hideHistoryOnShadowBan bool) error {
@@ -933,6 +1011,10 @@ func (a *App) TriggerAntiEntropySyncNow() error {
 	return a.publishSyncSummaryRequest()
 }
 
+func (a *App) TriggerCommentSyncNow(postID string) error {
+	return a.publishCommentSyncRequest(postID)
+}
+
 func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID) {
 	_ = localPeerID
 
@@ -954,6 +1036,12 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "anti-entropy initial sync failed: %v", err)
 			}
+			if err := a.publishCommentSyncRequest(""); err != nil &&
+				!errors.Is(err, errCommentSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "comment sync initial request failed: %v", err)
+			}
 			if err := a.publishGovernanceSyncRequest(); err != nil &&
 				!errors.Is(err, errGovernanceSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
@@ -973,6 +1061,12 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "anti-entropy periodic sync failed: %v", err)
+			}
+			if err := a.publishCommentSyncRequest(""); err != nil &&
+				!errors.Is(err, errCommentSyncNoPeers) &&
+				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
+				a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "comment sync periodic request failed: %v", err)
 			}
 			if err := a.publishGovernanceSyncRequest(); err != nil &&
 				!errors.Is(err, errGovernanceSyncNoPeers) &&
@@ -1092,7 +1186,6 @@ func (a *App) publishSyncSummaryRequest() error {
 	if latestErr != nil {
 		return latestErr
 	}
-
 	windowSeconds := resolveAntiEntropyWindowSeconds()
 	sinceTimestamp := int64(0)
 	if latestTimestamp > 0 {
@@ -1124,6 +1217,57 @@ func (a *App) publishSyncSummaryRequest() error {
 	})
 	if a.ctx != nil {
 		runtime.LogInfof(a.ctx, "anti_entropy.request sent request_id=%s since=%d window=%d batch=%d", request.RequestID, request.SyncSinceTimestamp, request.SyncWindowSeconds, request.SyncBatchSize)
+	}
+
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) publishCommentSyncRequest(postID string) error {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	host := a.p2pHost
+	a.p2pMu.Unlock()
+
+	if topic == nil || ctx == nil || host == nil {
+		return errors.New("p2p not started")
+	}
+	if len(host.Network().Peers()) == 0 {
+		return errCommentSyncNoPeers
+	}
+
+	latestTimestamp, err := a.getLatestPublicCommentTimestamp()
+	if err != nil {
+		return err
+	}
+
+	windowSeconds := resolveAntiEntropyWindowSeconds()
+	sinceTimestamp := int64(0)
+	if latestTimestamp > 0 {
+		sinceTimestamp = latestTimestamp - windowSeconds
+		if sinceTimestamp < 0 {
+			sinceTimestamp = 0
+		}
+	}
+
+	batchSize := resolveAntiEntropyBatchSize()
+	request := IncomingMessage{
+		Type:             messageTypeCommentSyncRequest,
+		RequestID:        buildMessageID(host.ID().String(), "comment-sync", time.Now().UnixNano()),
+		RequesterPeerID:  host.ID().String(),
+		PostID:           strings.TrimSpace(postID),
+		CommentSinceTs:   sinceTimestamp,
+		CommentBatchSize: batchSize,
+		Timestamp:        time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "comment_sync.request sent request_id=%s post_id=%s since=%d batch=%d", request.RequestID, request.PostID, request.CommentSinceTs, request.CommentBatchSize)
 	}
 
 	return topic.Publish(ctx, payload)
@@ -1314,6 +1458,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 			continue
 		case messageTypeSyncSummaryResponse:
 			a.handleSyncSummaryResponse(localPeerID.String(), incoming)
+			continue
+		case messageTypeCommentSyncRequest:
+			a.handleCommentSyncRequest(localPeerID.String(), incoming)
+			continue
+		case messageTypeCommentSyncResponse:
+			a.handleCommentSyncResponse(localPeerID.String(), incoming)
 			continue
 		case messageTypeGovernanceSyncRequest:
 			a.handleGovernanceSyncRequest(localPeerID.String(), incoming)
@@ -1639,10 +1789,6 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 		return summaries[i].Timestamp > summaries[j].Timestamp
 	})
 
-	if len(summaries) == 0 {
-		return
-	}
-
 	insertedAny := false
 	indexBudget := resolveAntiEntropyIndexInsertBudget()
 	bodyFetchBudget := resolveAntiEntropyBodyFetchBudget()
@@ -1784,8 +1930,142 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 			})
 		}
 	}
-
 	if insertedAny && a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "feed:updated")
+	}
+}
+
+func (a *App) handleCommentSyncRequest(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	requestID := strings.TrimSpace(message.RequestID)
+	if requester == "" || requestID == "" || requester == localPeerID {
+		return
+	}
+
+	batchSize := message.CommentBatchSize
+	if batchSize <= 0 || batchSize > 500 {
+		batchSize = resolveAntiEntropyBatchSize()
+	}
+
+	sinceTimestamp := message.CommentSinceTs
+	if sinceTimestamp < 0 {
+		sinceTimestamp = 0
+	}
+
+	requestPostID := strings.TrimSpace(message.PostID)
+	var comments []SyncCommentDigest
+	var err error
+	if requestPostID == "" {
+		comments, err = a.listPublicCommentDigestsSince(sinceTimestamp, batchSize)
+	} else {
+		comments, err = a.listPublicCommentDigestsByPostSince(requestPostID, sinceTimestamp, batchSize)
+	}
+	if err != nil {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "comment_sync.build failed request_id=%s err=%v", requestID, err)
+		}
+		return
+	}
+
+	response := IncomingMessage{
+		Type:             messageTypeCommentSyncResponse,
+		RequestID:        requestID,
+		RequesterPeerID:  requester,
+		ResponderPeerID:  localPeerID,
+		PostID:           requestPostID,
+		CommentSinceTs:   sinceTimestamp,
+		CommentBatchSize: batchSize,
+		CommentSummaries: comments,
+		Timestamp:        time.Now().Unix(),
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "comment_sync.response sent request_id=%s post_id=%s since=%d batch=%d comments=%d", requestID, requestPostID, sinceTimestamp, batchSize, len(comments))
+	}
+
+	_ = topic.Publish(ctx, payload)
+}
+
+func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	if requester == "" || requester != localPeerID {
+		return
+	}
+
+	if len(message.CommentSummaries) == 0 {
+		return
+	}
+
+	commentSummaries := make([]SyncCommentDigest, 0, len(message.CommentSummaries))
+	for _, item := range message.CommentSummaries {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.PostID) == "" || strings.TrimSpace(item.Pubkey) == "" || strings.TrimSpace(item.Body) == "" {
+			continue
+		}
+		commentSummaries = append(commentSummaries, item)
+	}
+
+	if len(commentSummaries) == 0 {
+		return
+	}
+
+	sort.SliceStable(commentSummaries, func(i int, j int) bool {
+		return commentSummaries[i].Timestamp > commentSummaries[j].Timestamp
+	})
+
+	inserted := 0
+	updatedProfiles := 0
+	updatedPostIDs := make(map[string]struct{})
+	for _, digest := range commentSummaries {
+		if strings.TrimSpace(digest.DisplayName) != "" || strings.TrimSpace(digest.AvatarURL) != "" {
+			if _, err := a.upsertProfile(digest.Pubkey, digest.DisplayName, digest.AvatarURL, digest.Timestamp); err == nil {
+				updatedProfiles++
+			}
+		}
+
+		if _, err := a.insertComment(Comment{
+			ID:        digest.ID,
+			PostID:    digest.PostID,
+			ParentID:  digest.ParentID,
+			Pubkey:    digest.Pubkey,
+			Body:      digest.Body,
+			Score:     digest.Score,
+			Timestamp: digest.Timestamp,
+		}); err != nil {
+			continue
+		}
+
+		inserted++
+		updatedPostIDs[strings.TrimSpace(digest.PostID)] = struct{}{}
+	}
+
+	if a.ctx != nil {
+		runtime.LogInfof(a.ctx, "comment_sync.response applied request_id=%s post_id=%s received=%d inserted=%d profiles=%d", strings.TrimSpace(message.RequestID), strings.TrimSpace(message.PostID), len(commentSummaries), inserted, updatedProfiles)
+	}
+
+	if inserted == 0 && updatedProfiles == 0 {
+		return
+	}
+
+	if a.ctx != nil {
+		for postID := range updatedPostIDs {
+			if postID == "" {
+				continue
+			}
+			runtime.EventsEmit(a.ctx, "comments:updated", map[string]string{"postId": postID})
+		}
 		runtime.EventsEmit(a.ctx, "feed:updated")
 	}
 }
@@ -2104,14 +2384,15 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	}
 
 	n.app.p2pMu.Lock()
-	defer n.app.p2pMu.Unlock()
 
 	if n.app.p2pHost == nil || n.app.p2pCtx == nil {
+		n.app.p2pMu.Unlock()
 		return
 	}
 
 	peerID := strings.TrimSpace(info.ID.String())
 	if blocked, reason := n.app.isPeerBlocked(peerID); blocked {
+		n.app.p2pMu.Unlock()
 		if n.app.ctx != nil {
 			runtime.LogWarningf(n.app.ctx, "mdns peer rejected by policy peer=%s reason=%s", peerID, reason)
 		}
@@ -2119,6 +2400,7 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	}
 
 	if n.app.p2pHost.Network().Connectedness(info.ID) != network.Connected && len(n.app.p2pHost.Network().Peers()) >= resolveMaxConnectedPeers() {
+		n.app.p2pMu.Unlock()
 		if n.app.ctx != nil {
 			runtime.LogWarningf(n.app.ctx, "mdns peer rejected by max-peer limit peer=%s limit=%d", peerID, resolveMaxConnectedPeers())
 		}
@@ -2128,10 +2410,16 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	ctx, cancel := context.WithTimeout(n.app.p2pCtx, 5*time.Second)
 	defer cancel()
 
-	if err := n.app.p2pHost.Connect(ctx, info); err != nil && n.app.ctx != nil {
-		runtime.LogWarningf(n.app.ctx, "mdns connect failed: %v", err)
+	if err := n.app.p2pHost.Connect(ctx, info); err != nil {
+		n.app.p2pMu.Unlock()
+		if n.app.ctx != nil {
+			runtime.LogWarningf(n.app.ctx, "mdns connect failed: %v", err)
+		}
 		return
 	}
+
+	n.app.publishLocalProfileUpdateLocked()
+	n.app.p2pMu.Unlock()
 
 	if n.app.ctx != nil {
 		runtime.LogInfof(n.app.ctx, "mdns connected peer: %s", info.ID.String())

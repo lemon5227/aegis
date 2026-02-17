@@ -142,12 +142,12 @@ export function GetPrivateFeed() {
   return window['go']['main']['App']['GetPrivateFeed']();
 }
 
-export function GetProfileDetails(arg1) {
-  return window['go']['main']['App']['GetProfileDetails'](arg1);
-}
-
 export function GetProfile(arg1) {
   return window['go']['main']['App']['GetProfile'](arg1);
+}
+
+export function GetProfileDetails(arg1) {
+  return window['go']['main']['App']['GetProfileDetails'](arg1);
 }
 
 export function GetReleaseAlerts() {
@@ -280,6 +280,10 @@ export function SubscribeSub(arg1) {
 
 export function TriggerAntiEntropySyncNow() {
   return window['go']['main']['App']['TriggerAntiEntropySyncNow']();
+}
+
+export function TriggerCommentSyncNow(arg1) {
+  return window['go']['main']['App']['TriggerCommentSyncNow'](arg1);
 }
 
 export function TriggerReleaseAlertEvaluationNow() {

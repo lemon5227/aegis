@@ -107,6 +107,8 @@
 说明：
 - 运行控制继续复用：`StartP2P`、`StopP2P`、`GetP2PStatus`、`ConnectPeer`。
 - 设置页通过 `p2p:updated` 事件刷新状态。
+- `bootstrap peers` 负责发现入口；`relay peers` 负责直连失败时的中继回退。
+- 在当前阶段允许 bootstrap 与 relay 使用同一公网节点地址。
 
 ---
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Post, Profile, Comment } from '../types';
 import { CommentTree } from './CommentTree';
 
@@ -10,7 +10,7 @@ interface PostDetailProps {
   currentPubkey?: string;
   onBack: () => void;
   onUpvote: (postId: string) => void;
-  onReply: (parentId: string, body: string) => void;
+  onReply: (parentId: string, body: string) => Promise<void> | void;
   onCommentUpvote: (commentId: string) => void;
 }
 
@@ -46,17 +46,53 @@ export function PostDetail({
 }: PostDetailProps) {
   const [replyContent, setReplyContent] = useState('');
   const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
   const [commentSort, setCommentSort] = useState<'best' | 'newest' | 'controversial'>('best');
+  const replyInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const authorProfile = profiles[post.pubkey];
   const authorName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const authorAvatar = authorProfile?.avatarURL;
 
-  const handleSubmitReply = () => {
+  const replyingToComment = useMemo(() => {
+    if (!replyToId) return null;
+    return comments.find((comment) => comment.id === replyToId) || null;
+  }, [comments, replyToId]);
+
+  const focusReplyInput = () => {
+    window.setTimeout(() => {
+      replyInputRef.current?.focus();
+    }, 0);
+  };
+
+  const handleSubmitReply = async () => {
     if (!replyContent.trim()) return;
-    onReply(replyToId || '', replyContent.trim());
-    setReplyContent('');
-    setReplyToId(null);
+    setReplyBusy(true);
+    setReplyMessage('');
+    try {
+      await onReply(replyToId || '', replyContent.trim());
+      setReplyContent('');
+      setReplyToId(null);
+      setReplyMessage('Comment posted.');
+    } catch (error) {
+      console.error('Failed to post comment:', error);
+      setReplyMessage('Failed to post comment. Please retry.');
+    } finally {
+      setReplyBusy(false);
+    }
+  };
+
+  const handleInsertCodeBlock = () => {
+    const addition = replyContent.trim() ? '\n\n```\n\n```' : '```\n\n```';
+    setReplyContent((prev) => `${prev}${addition}`);
+    focusReplyInput();
+  };
+
+  const handleInsertImageTemplate = () => {
+    const addition = replyContent.trim() ? '\n\n![image](https://)' : '![image](https://)';
+    setReplyContent((prev) => `${prev}${addition}`);
+    focusReplyInput();
   };
 
   return (
@@ -123,7 +159,14 @@ export function PostDetail({
             </div>
             
             <div className="flex gap-3">
-              <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warm-accent/10 hover:bg-warm-accent/20 text-warm-accent transition-colors">
+              <button
+                onClick={() => {
+                  setReplyToId(null);
+                  setReplyMessage('');
+                  focusReplyInput();
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warm-accent/10 hover:bg-warm-accent/20 text-warm-accent transition-colors"
+              >
                 <span className="material-icons text-lg">reply</span>
                 <span className="text-sm font-medium">Reply</span>
               </button>
@@ -159,27 +202,50 @@ export function PostDetail({
               ?
             </div>
             <div className="flex-1 relative">
+              {replyingToComment && (
+                <div className="mb-2 flex items-center justify-between rounded-lg bg-warm-accent/10 px-3 py-2 text-xs text-warm-text-secondary dark:text-slate-300">
+                  <span>
+                    Replying to <strong>@{(profiles[replyingToComment.pubkey]?.displayName || replyingToComment.pubkey.slice(0, 8))}</strong>
+                  </span>
+                  <button
+                    onClick={() => setReplyToId(null)}
+                    className="text-warm-accent hover:underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
               <textarea 
+                ref={replyInputRef}
                 value={replyContent}
                 onChange={(e) => setReplyContent(e.target.value)}
                 className="w-full bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-xl p-4 text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent placeholder-warm-text-secondary/40 dark:placeholder-slate-400/40 resize-none shadow-soft" 
                 placeholder="What are your thoughts?" 
                 rows={3}
               />
-              <div className="absolute bottom-3 right-3 flex items-center gap-2">
-                <button className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded">
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <button
+                  onClick={handleInsertImageTemplate}
+                  className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
+                >
                   <span className="material-icons text-lg">image</span>
                 </button>
-                <button className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded">
+                <button
+                  onClick={handleInsertCodeBlock}
+                  className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
+                >
                   <span className="material-icons text-lg">code</span>
                 </button>
                 <button 
                   onClick={handleSubmitReply}
-                  disabled={!replyContent.trim()}
+                  disabled={!replyContent.trim() || replyBusy}
                   className="bg-warm-accent hover:bg-warm-accent-hover text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md shadow-warm-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Comment
+                  {replyBusy ? 'Posting...' : 'Comment'}
                 </button>
+              </div>
+              <div className="mt-1 min-h-[18px] text-right text-xs text-warm-text-secondary dark:text-slate-400">
+                {replyMessage}
               </div>
             </div>
           </div>
@@ -187,7 +253,11 @@ export function PostDetail({
           <CommentTree
             comments={comments}
             profiles={profiles}
-            onReply={(parentId) => setReplyToId(parentId)}
+            onReply={(parentId) => {
+              setReplyToId(parentId);
+              setReplyMessage('');
+              focusReplyInput();
+            }}
             onUpvote={onCommentUpvote}
           />
         </div>

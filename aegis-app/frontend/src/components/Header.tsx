@@ -71,7 +71,7 @@ export function Header({
   };
 
   return (
-    <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-warm-bg/95 dark:bg-background-dark/80 backdrop-blur-md sticky top-0 z-10 border-b border-warm-border dark:border-border-dark shrink-0">
+    <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-warm-bg dark:bg-background-dark sticky top-0 z-50 border-b border-warm-border dark:border-border-dark shrink-0">
       <div className="flex items-center gap-3 min-w-0">
         <h1 className="text-base lg:text-lg font-bold text-warm-text-primary dark:text-white flex items-center gap-2 whitespace-nowrap">
           {currentSubId === 'recommended' ? (
@@ -201,7 +201,7 @@ export function Header({
           </button>
           
           {showUserMenu && (
-            <div className="absolute right-0 top-full mt-2 w-56 bg-warm-surface dark:bg-surface-dark rounded-xl shadow-lg border border-warm-border dark:border-border-dark overflow-hidden z-50">
+            <div className="absolute right-0 top-full mt-2 w-56 bg-warm-card dark:bg-surface-dark rounded-xl shadow-xl border border-warm-border dark:border-border-dark overflow-hidden z-[100]">
               <div className="p-3 border-b border-warm-border dark:border-border-dark">
                 <div className="flex items-center gap-3">
                   {profile?.avatarURL ? (

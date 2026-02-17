@@ -96,7 +96,8 @@ interface CommentTreeProps {
 }
 
 export function CommentTree({ comments, profiles, onReply, onUpvote }: CommentTreeProps) {
-  const rootComments = comments.filter(c => !c.parentId || c.parentId === '');
+  const commentIdSet = new Set(comments.map((c) => c.id));
+  const rootComments = comments.filter((c) => !c.parentId || c.parentId === '' || !commentIdSet.has(c.parentId));
   
   const renderComment = (comment: Comment, depth: number = 0) => {
     const children = comments.filter(c => c.parentId === comment.id);

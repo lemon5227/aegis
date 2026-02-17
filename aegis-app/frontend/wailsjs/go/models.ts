@@ -476,11 +476,11 @@ export namespace main {
 	    avatarURL: string;
 	    bio: string;
 	    updatedAt: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ProfileDetails(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pubkey = source["pubkey"];
@@ -582,3 +582,4 @@ export namespace main {
 	}
 
 }
+

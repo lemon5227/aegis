@@ -72,9 +72,9 @@ export function GetPrivacySettings():Promise<main.PrivacySettings>;
 
 export function GetPrivateFeed():Promise<Array<main.ForumMessage>>;
 
-export function GetProfileDetails(arg1:string):Promise<main.ProfileDetails>;
-
 export function GetProfile(arg1:string):Promise<main.Profile>;
+
+export function GetProfileDetails(arg1:string):Promise<main.ProfileDetails>;
 
 export function GetReleaseAlerts():Promise<Array<main.ReleaseAlert>>;
 
@@ -141,6 +141,8 @@ export function StopP2P():Promise<void>;
 export function SubscribeSub(arg1:string):Promise<main.Sub>;
 
 export function TriggerAntiEntropySyncNow():Promise<void>;
+
+export function TriggerCommentSyncNow(arg1:string):Promise<void>;
 
 export function TriggerReleaseAlertEvaluationNow():Promise<Array<main.ReleaseAlert>>;
 

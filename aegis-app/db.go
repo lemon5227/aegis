@@ -222,57 +222,72 @@ type SyncPostDigest struct {
 	SubID       string `json:"sub_id"`
 }
 
+type SyncCommentDigest struct {
+	ID          string `json:"id"`
+	PostID      string `json:"post_id"`
+	ParentID    string `json:"parent_id"`
+	Pubkey      string `json:"pubkey"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+	Body        string `json:"body"`
+	Score       int64  `json:"score"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
 type IncomingMessage struct {
-	Type                   string             `json:"type"`
-	ID                     string             `json:"id"`
-	Pubkey                 string             `json:"pubkey"`
-	VoterPubkey            string             `json:"voter_pubkey"`
-	PostID                 string             `json:"post_id"`
-	CommentID              string             `json:"comment_id"`
-	ParentID               string             `json:"parent_id"`
-	DisplayName            string             `json:"display_name"`
-	AvatarURL              string             `json:"avatar_url"`
-	Title                  string             `json:"title"`
-	Body                   string             `json:"body"`
-	ContentCID             string             `json:"content_cid"`
-	ImageCID               string             `json:"image_cid"`
-	ThumbCID               string             `json:"thumb_cid"`
-	ImageMIME              string             `json:"image_mime"`
-	ImageSize              int64              `json:"image_size"`
-	ImageWidth             int                `json:"image_width"`
-	ImageHeight            int                `json:"image_height"`
-	ImageDataBase64        string             `json:"image_data_base64,omitempty"`
-	IsThumbnail            bool               `json:"is_thumbnail,omitempty"`
-	RequestID              string             `json:"request_id"`
-	RequesterPeerID        string             `json:"requester_peer_id"`
-	ResponderPeerID        string             `json:"responder_peer_id"`
-	SyncSinceTimestamp     int64              `json:"sync_since_timestamp,omitempty"`
-	SyncWindowSeconds      int64              `json:"sync_window_seconds,omitempty"`
-	SyncBatchSize          int                `json:"sync_batch_size,omitempty"`
-	GovernanceSinceTs      int64              `json:"governance_since_ts,omitempty"`
-	GovernanceBatchSize    int                `json:"governance_batch_size,omitempty"`
-	GovernanceLogSinceTs   int64              `json:"governance_log_since_ts,omitempty"`
-	GovernanceLogLimit     int                `json:"governance_log_limit,omitempty"`
-	GovernanceStates       []ModerationState  `json:"governance_states,omitempty"`
-	GovernanceLogs         []ModerationLog    `json:"governance_logs,omitempty"`
-	FavoriteOpID           string             `json:"favorite_op_id,omitempty"`
-	FavoriteOp             string             `json:"favorite_op,omitempty"`
-	FavoriteSinceTs        int64              `json:"favorite_since_ts,omitempty"`
-	FavoriteBatchSize      int                `json:"favorite_batch_size,omitempty"`
-	FavoriteOps            []FavoriteOpRecord `json:"favorite_ops,omitempty"`
-	Found                  bool               `json:"found"`
-	SizeBytes              int64              `json:"size_bytes"`
-	Content                string             `json:"content"`
-	SubID                  string             `json:"sub_id"`
-	SubTitle               string             `json:"sub_title"`
-	SubDesc                string             `json:"sub_desc"`
-	Timestamp              int64              `json:"timestamp"`
-	Signature              string             `json:"signature"`
-	TargetPubkey           string             `json:"target_pubkey"`
-	AdminPubkey            string             `json:"admin_pubkey"`
-	Reason                 string             `json:"reason"`
-	Summaries              []SyncPostDigest   `json:"summaries,omitempty"`
-	HideHistoryOnShadowBan bool               `json:"hide_history_on_shadowban"`
+	Type                   string              `json:"type"`
+	ID                     string              `json:"id"`
+	Pubkey                 string              `json:"pubkey"`
+	VoterPubkey            string              `json:"voter_pubkey"`
+	PostID                 string              `json:"post_id"`
+	CommentID              string              `json:"comment_id"`
+	ParentID               string              `json:"parent_id"`
+	DisplayName            string              `json:"display_name"`
+	AvatarURL              string              `json:"avatar_url"`
+	Title                  string              `json:"title"`
+	Body                   string              `json:"body"`
+	ContentCID             string              `json:"content_cid"`
+	ImageCID               string              `json:"image_cid"`
+	ThumbCID               string              `json:"thumb_cid"`
+	ImageMIME              string              `json:"image_mime"`
+	ImageSize              int64               `json:"image_size"`
+	ImageWidth             int                 `json:"image_width"`
+	ImageHeight            int                 `json:"image_height"`
+	ImageDataBase64        string              `json:"image_data_base64,omitempty"`
+	IsThumbnail            bool                `json:"is_thumbnail,omitempty"`
+	RequestID              string              `json:"request_id"`
+	RequesterPeerID        string              `json:"requester_peer_id"`
+	ResponderPeerID        string              `json:"responder_peer_id"`
+	SyncSinceTimestamp     int64               `json:"sync_since_timestamp,omitempty"`
+	SyncWindowSeconds      int64               `json:"sync_window_seconds,omitempty"`
+	SyncBatchSize          int                 `json:"sync_batch_size,omitempty"`
+	CommentSinceTs         int64               `json:"comment_since_ts,omitempty"`
+	CommentBatchSize       int                 `json:"comment_batch_size,omitempty"`
+	GovernanceSinceTs      int64               `json:"governance_since_ts,omitempty"`
+	GovernanceBatchSize    int                 `json:"governance_batch_size,omitempty"`
+	GovernanceLogSinceTs   int64               `json:"governance_log_since_ts,omitempty"`
+	GovernanceLogLimit     int                 `json:"governance_log_limit,omitempty"`
+	GovernanceStates       []ModerationState   `json:"governance_states,omitempty"`
+	GovernanceLogs         []ModerationLog     `json:"governance_logs,omitempty"`
+	FavoriteOpID           string              `json:"favorite_op_id,omitempty"`
+	FavoriteOp             string              `json:"favorite_op,omitempty"`
+	FavoriteSinceTs        int64               `json:"favorite_since_ts,omitempty"`
+	FavoriteBatchSize      int                 `json:"favorite_batch_size,omitempty"`
+	FavoriteOps            []FavoriteOpRecord  `json:"favorite_ops,omitempty"`
+	Found                  bool                `json:"found"`
+	SizeBytes              int64               `json:"size_bytes"`
+	Content                string              `json:"content"`
+	SubID                  string              `json:"sub_id"`
+	SubTitle               string              `json:"sub_title"`
+	SubDesc                string              `json:"sub_desc"`
+	Timestamp              int64               `json:"timestamp"`
+	Signature              string              `json:"signature"`
+	TargetPubkey           string              `json:"target_pubkey"`
+	AdminPubkey            string              `json:"admin_pubkey"`
+	Reason                 string              `json:"reason"`
+	Summaries              []SyncPostDigest    `json:"summaries,omitempty"`
+	CommentSummaries       []SyncCommentDigest `json:"comment_summaries,omitempty"`
+	HideHistoryOnShadowBan bool                `json:"hide_history_on_shadowban"`
 }
 
 const defaultSubID = "general"
@@ -1544,6 +1559,28 @@ func (a *App) getLatestPublicPostTimestamp() (int64, error) {
 	return latest.Int64, nil
 }
 
+func (a *App) getLatestPublicCommentTimestamp() (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	var latest sql.NullInt64
+	if err := a.db.QueryRow(`
+		SELECT MAX(c.timestamp)
+		FROM comments c
+		JOIN messages m ON m.id = c.post_id
+		WHERE m.zone = 'public' AND m.visibility = 'normal';
+	`).Scan(&latest); err != nil {
+		return 0, err
+	}
+
+	if !latest.Valid {
+		return 0, nil
+	}
+
+	return latest.Int64, nil
+}
+
 func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]SyncPostDigest, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")
@@ -1584,6 +1621,120 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 			return nil, err
 		}
 		result = append(result, digest)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]SyncCommentDigest, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if sinceTimestamp > 0 {
+		rows, err = a.db.Query(`
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
+			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+			FROM comments c
+			JOIN messages m ON m.id = c.post_id
+			LEFT JOIN profiles p ON p.pubkey = c.pubkey
+			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
+			ORDER BY c.timestamp ASC
+			LIMIT ?;
+		`, sinceTimestamp, limit)
+	} else {
+		rows, err = a.db.Query(`
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
+			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+			FROM comments c
+			JOIN messages m ON m.id = c.post_id
+			LEFT JOIN profiles p ON p.pubkey = c.pubkey
+			WHERE m.zone = 'public' AND m.visibility = 'normal'
+			ORDER BY c.timestamp DESC
+			LIMIT ?;
+		`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]SyncCommentDigest, 0, limit)
+	for rows.Next() {
+		var item SyncCommentDigest
+		if err = rows.Scan(
+			&item.ID,
+			&item.PostID,
+			&item.ParentID,
+			&item.Pubkey,
+			&item.Body,
+			&item.Score,
+			&item.Timestamp,
+			&item.DisplayName,
+			&item.AvatarURL,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp int64, limit int) ([]SyncCommentDigest, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return []SyncCommentDigest{}, nil
+	}
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+
+	rows, err := a.db.Query(`
+		SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
+		       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+		FROM comments c
+		JOIN messages m ON m.id = c.post_id
+		LEFT JOIN profiles p ON p.pubkey = c.pubkey
+		WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
+		ORDER BY c.timestamp ASC
+		LIMIT ?;
+	`, postID, sinceTimestamp, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]SyncCommentDigest, 0, limit)
+	for rows.Next() {
+		var item SyncCommentDigest
+		if err = rows.Scan(
+			&item.ID,
+			&item.PostID,
+			&item.ParentID,
+			&item.Pubkey,
+			&item.Body,
+			&item.Score,
+			&item.Timestamp,
+			&item.DisplayName,
+			&item.AvatarURL,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
 	}
 
 	return result, rows.Err()
@@ -2746,6 +2897,12 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		commentBody := strings.TrimSpace(message.Body)
 		if commentBody == "" {
 			return errors.New("invalid comment payload")
+		}
+
+		if strings.TrimSpace(message.DisplayName) != "" || strings.TrimSpace(message.AvatarURL) != "" {
+			if _, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp); err != nil {
+				return err
+			}
 		}
 
 		if strings.TrimSpace(message.ID) == "" {
