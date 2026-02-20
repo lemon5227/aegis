@@ -81,6 +81,40 @@ export interface ModerationState {
   reason: string;
 }
 
+export interface AntiEntropyStats {
+  syncRequestsSent: number;
+  syncRequestsReceived: number;
+  syncResponsesReceived: number;
+  syncSummariesReceived: number;
+  indexInsertions: number;
+  blobFetchAttempts: number;
+  blobFetchSuccess: number;
+  blobFetchFailures: number;
+  lastSyncAt: number;
+  lastRemoteSummaryTs: number;
+  lastObservedSyncLagSec: number;
+}
+
+export interface EntityOpRecord {
+  opId: string;
+  entityType: string;
+  entityId: string;
+  opType: string;
+  authorPubkey: string;
+  lamport: number;
+  timestamp: number;
+  schemaVersion: number;
+  authScope: string;
+  payloadJson: string;
+}
+
+export interface TombstoneGCResult {
+  scannedPosts: number;
+  deletedPosts: number;
+  scannedComments: number;
+  deletedComments: number;
+}
+
 export interface ForumMessage {
   id: string;
   pubkey: string;

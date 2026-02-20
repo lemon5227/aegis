@@ -7,6 +7,7 @@ interface CommentItemProps {
   profiles: Record<string, Profile>;
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
+  onDownvote?: (commentId: string) => void;
   onImageClick: (src: string) => void;
   currentPubkey?: string;
   onDelete?: (commentId: string) => Promise<void> | void;
@@ -16,11 +17,11 @@ interface CommentItemProps {
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp * 1000;
-  
+
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  
+
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
@@ -58,7 +59,7 @@ function renderRichText(content: string, onImageClick: (src: string) => void) {
   });
 }
 
-export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick, currentPubkey, onDelete, depth = 0 }: CommentItemProps) {
+export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, onImageClick, currentPubkey, onDelete, depth = 0 }: CommentItemProps) {
   const profile = profiles[comment.pubkey];
   const displayName = profile?.displayName || comment.pubkey.slice(0, 8);
   const avatarUrl = profile?.avatarURL;
@@ -120,20 +121,14 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
     };
   }, [attachmentKey]);
 
-  useEffect(() => {
-    if (!deleteArmed) return;
-    const timer = window.setTimeout(() => setDeleteArmed(false), 5000);
-    return () => window.clearTimeout(timer);
-  }, [deleteArmed]);
-
   return (
     <div className={`${depth > 0 ? 'ml-5 md:ml-10 mt-2 relative pl-6 border-l-2 border-warm-border dark:border-border-dark' : 'mb-6 relative'}`}>
       <div className="flex gap-3 relative group z-10">
         <div className="flex-shrink-0">
           {avatarUrl ? (
-            <img 
-              className="w-10 h-10 rounded-full object-cover" 
-              src={avatarUrl} 
+            <img
+              className="w-10 h-10 rounded-full object-cover"
+              src={avatarUrl}
               alt={displayName}
             />
           ) : (
@@ -142,7 +137,7 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
             </div>
           )}
         </div>
-        
+
         <div className="flex-1">
           <div className="bg-warm-surface dark:bg-surface-dark border border-warm-border/40 dark:border-border-dark/40 rounded-xl p-3 md:p-4 hover:border-warm-border dark:hover:border-border-dark transition-colors shadow-sm">
             <div className="flex items-center justify-between mb-1">
@@ -179,6 +174,12 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
                 <span className="material-icons text-base">thumb_up_alt</span>
                 <span className="text-xs font-medium">{comment.score || 0}</span>
               </button>
+              <button
+                onClick={() => onDownvote?.(comment.id)}
+                className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-red-500 transition-colors"
+              >
+                <span className="material-icons text-base">thumb_down_alt</span>
+              </button>
               <button 
                 onClick={() => onReply(comment.id)}
                 className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors"
@@ -188,24 +189,56 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
               </button>
               {canDelete && onDelete && (
                 <button
-                  onClick={async () => {
-                    if (!deleteArmed) {
-                      setDeleteArmed(true);
-                      return;
-                    }
-                    await onDelete(comment.id);
-                    setDeleteArmed(false);
+                  onClick={() => {
+                    setDeleteArmed(true);
                   }}
-                  className={`flex items-center gap-1 transition-colors ${deleteArmed ? 'text-red-600' : 'text-warm-text-secondary dark:text-slate-400 hover:text-red-500'}`}
+                  className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-red-500 transition-colors"
                 >
-                  <span className="material-icons text-base">{deleteArmed ? 'warning' : 'delete'}</span>
-                  <span className="text-xs font-medium">{deleteArmed ? 'Confirm' : 'Delete'}</span>
+                  <span className="material-icons text-base">delete</span>
+                  <span className="text-xs font-medium">Delete</span>
                 </button>
               )}
             </div>
           </div>
         </div>
       </div>
+      {canDelete && onDelete && deleteArmed && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 transition-all duration-300" onClick={() => setDeleteArmed(false)}>
+          <div
+            className="w-full max-w-sm rounded-2xl border border-warm-border dark:border-border-dark bg-warm-card dark:bg-surface-dark backdrop-blur-md p-6 shadow-2xl flex flex-col items-center text-center transform scale-100 transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4">
+              <span className="material-icons text-warm-accent text-5xl">warning_amber</span>
+            </div>
+            <h4 className="text-lg font-bold text-warm-text-primary dark:text-white mb-2">Delete Comment</h4>
+            <p className="text-sm text-warm-text-secondary dark:text-slate-300 mb-6">
+              This action cannot be undone. Are you sure you want to permanently delete this comment?
+            </p>
+            <div className="flex items-center gap-3 w-full">
+              <button
+                onClick={() => setDeleteArmed(false)}
+                className="flex-1 py-2.5 rounded-xl font-bold border border-warm-border dark:border-border-dark text-warm-text-secondary dark:text-slate-300 hover:text-warm-text-primary dark:hover:text-white hover:bg-warm-bg dark:hover:bg-surface-lighter transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await onDelete(comment.id);
+                    setDeleteArmed(false);
+                  } catch (error) {
+                    console.error('Failed to delete comment:', error);
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl font-bold bg-warm-accent hover:bg-warm-accent-hover text-white shadow-lg transition-all"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -215,12 +248,13 @@ interface CommentTreeProps {
   profiles: Record<string, Profile>;
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
+  onDownvote?: (commentId: string) => void;
   currentPubkey?: string;
   onDelete?: (commentId: string) => Promise<void> | void;
   onImageClick?: (src: string) => void;
 }
 
-export function CommentTree({ comments, profiles, onReply, onUpvote, currentPubkey, onDelete, onImageClick }: CommentTreeProps) {
+export function CommentTree({ comments, profiles, onReply, onUpvote, onDownvote, currentPubkey, onDelete, onImageClick }: CommentTreeProps) {
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
 
   const handleImageClick = (src: string) => {
@@ -233,10 +267,10 @@ export function CommentTree({ comments, profiles, onReply, onUpvote, currentPubk
 
   const commentIdSet = new Set(comments.map((c) => c.id));
   const rootComments = comments.filter((c) => !c.parentId || c.parentId === '' || !commentIdSet.has(c.parentId));
-  
+
   const renderComment = (comment: Comment, depth: number = 0) => {
     const children = comments.filter(c => c.parentId === comment.id);
-    
+
     return (
       <div key={comment.id}>
         <CommentItem
@@ -244,6 +278,7 @@ export function CommentTree({ comments, profiles, onReply, onUpvote, currentPubk
           profiles={profiles}
           onReply={onReply}
           onUpvote={onUpvote}
+          onDownvote={onDownvote}
           onImageClick={handleImageClick}
           currentPubkey={currentPubkey}
           onDelete={onDelete}

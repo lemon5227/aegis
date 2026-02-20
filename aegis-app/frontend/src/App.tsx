@@ -14,6 +14,7 @@ import {
   PublishPostStructuredToSub,
   PublishPostWithImageToSub,
   PublishPostUpvote,
+  PublishPostDownvote,
   LoadSavedIdentity,
   GenerateIdentity,
   ImportIdentityFromMnemonic,
@@ -24,17 +25,19 @@ import {
   GetPostIndexByID,
   GetPostBodyByID,
   GetCommentsByPost,
-	PublishCommentWithAttachments,
+  PublishCommentWithAttachments,
   PublishCommentUpvote,
+  PublishCommentDownvote,
   UpdateProfileDetails,
   PublishProfileUpdate,
   PublishShadowBan,
   PublishUnban,
   GetModerationLogs,
   TriggerCommentSyncNow,
-	GetP2PStatus,
-	PublishDeletePost,
-	PublishDeleteComment,
+  GetP2PStatus,
+  PublishDeletePost,
+  PublishDeleteComment,
+  IsDevMode,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -53,6 +56,11 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 
 type SortMode = 'hot' | 'new';
 type ViewMode = 'feed' | 'discover' | 'post-detail' | 'my-posts' | 'favorites';
+type ConsistencyFocus = {
+  entityType: 'post' | 'comment';
+  entityId: string;
+  nonce: number;
+};
 
 function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -71,10 +79,11 @@ function App() {
   const [showCreateSubModal, setShowCreateSubModal] = useState(false);
   const [showCreatePostModal, setShowCreatePostModal] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [consistencyFocus, setConsistencyFocus] = useState<ConsistencyFocus | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<{ subs: Sub[]; posts: any[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [postBody, setPostBody] = useState<string>('');
   const [postComments, setPostComments] = useState<Comment[]>([]);
@@ -82,6 +91,12 @@ function App() {
   const [moderationStates, setModerationStates] = useState<ModerationState[]>([]);
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
+  const [isDevMode, setIsDevMode] = useState(false);
+
+  useEffect(() => {
+    if (!hasWailsRuntime()) return;
+    IsDevMode().then(setIsDevMode).catch(console.error);
+  }, []);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
@@ -223,7 +238,7 @@ function App() {
       setPostBody(body.body || '');
       const comments = await GetCommentsByPost(post.id);
       setPostComments(comments);
-      
+
       const uniquePubkeys = Array.from(new Set([post.pubkey, ...comments.map((c: Comment) => c.pubkey)]));
       const resolvedProfiles = await Promise.all(
         uniquePubkeys.map(async (pk) => {
@@ -316,15 +331,53 @@ function App() {
     }
   };
 
+  const refreshPostScoreState = useCallback(async (postId: string) => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const index = await GetPostIndexByID(postId);
+      const updated: Post = {
+        id: index.id,
+        pubkey: index.pubkey,
+        title: index.title,
+        bodyPreview: index.bodyPreview || '',
+        contentCid: index.contentCid || '',
+        imageCid: index.imageCid || '',
+        thumbCid: index.thumbCid || '',
+        imageMime: index.imageMime || '',
+        imageSize: index.imageSize || 0,
+        imageWidth: index.imageWidth || 0,
+        imageHeight: index.imageHeight || 0,
+        score: index.score || 0,
+        timestamp: index.timestamp || 0,
+        zone: (index.zone || 'public') as 'private' | 'public',
+        subId: index.subId || 'general',
+        visibility: index.visibility || 'normal',
+      };
+
+      setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, score: updated.score } : p)));
+      setSelectedPost((prev) => (prev && prev.id === postId ? { ...prev, score: updated.score } : prev));
+    } catch (error) {
+      console.error('Failed to refresh post score:', error);
+    }
+  }, []);
+
   const handleUpvote = async (postId: string) => {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishPostUpvote(identity.publicKey, postId);
-      setPosts((prev) =>
-        prev.map((p) => (p.id === postId ? { ...p, score: (p.score || 0) + 1 } : p))
-      );
+      await refreshPostScoreState(postId);
     } catch (e) {
       console.error('Failed to upvote:', e);
+    }
+  };
+
+  const handleDownvote = async (postId: string) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      await PublishPostDownvote(identity.publicKey, postId);
+      await refreshPostScoreState(postId);
+    } catch (e) {
+      console.error('Failed to downvote:', e);
     }
   };
 
@@ -447,8 +500,7 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishCommentWithAttachments(identity.publicKey, selectedPost.id, parentId, body, localImageDataURLs, externalImageURLs);
-      const comments = await GetCommentsByPost(selectedPost.id);
-      setPostComments(comments);
+      void refreshCommentsForSelectedPost(selectedPost.id);
     } catch (e) {
       console.error('Failed to post comment:', e);
       throw e;
@@ -476,11 +528,19 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishCommentUpvote(identity.publicKey, selectedPost.id, commentId);
-      setPostComments((prev) =>
-        prev.map((c) => (c.id === commentId ? { ...c, score: (c.score || 0) + 1 } : c))
-      );
+      await refreshCommentsForSelectedPost(selectedPost.id);
     } catch (e) {
       console.error('Failed to upvote comment:', e);
+    }
+  };
+
+  const handleCommentDownvote = async (commentId: string) => {
+    if (!hasWailsRuntime() || !identity || !selectedPost) return;
+    try {
+      await PublishCommentDownvote(identity.publicKey, selectedPost.id, commentId);
+      await refreshCommentsForSelectedPost(selectedPost.id);
+    } catch (e) {
+      console.error('Failed to downvote comment:', e);
     }
   };
 
@@ -532,6 +592,13 @@ function App() {
     setIdentity(null);
     setProfile(null);
     setShowLoginModal(true);
+  };
+
+  const handleViewOperationTimeline = (entityType: 'post' | 'comment', entityId: string) => {
+    const normalizedID = entityId.trim();
+    if (!normalizedID) return;
+    setConsistencyFocus({ entityType, entityId: normalizedID, nonce: Date.now() });
+    setShowSettingsPanel(true);
   };
 
   const toggleTheme = () => {
@@ -647,7 +714,7 @@ function App() {
     };
   }, [identity]);
 
-  const currentSub = currentSubId === 'recommended' 
+  const currentSub = currentSubId === 'recommended'
     ? { id: 'recommended', title: 'Recommended Feed', description: 'Your personalized feed based on subscriptions and trending posts' }
     : (subs.find((s) => s.id === currentSubId) || { id: currentSubId, title: currentSubId, description: '' });
 
@@ -666,7 +733,7 @@ function App() {
           onDiscoverClick={handleDiscoverClick}
           onCreateSub={() => setShowCreateSubModal(true)}
         />
-        
+
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <Header
             currentSubId={currentSubId}
@@ -687,7 +754,7 @@ function App() {
               setSearchResults(null);
             }}
           />
-          
+
           {view === 'feed' && (
             <Feed
               posts={posts}
@@ -698,7 +765,7 @@ function App() {
               onPostClick={handlePostClick}
             />
           )}
-          
+
           {view === 'discover' && (
             <DiscoverView
               subs={subs}
@@ -707,7 +774,7 @@ function App() {
               onToggleSubscription={handleToggleSubscription}
             />
           )}
-          
+
           {view === 'post-detail' && selectedPost && (
             <PostDetail
               post={selectedPost}
@@ -717,13 +784,17 @@ function App() {
               currentPubkey={identity?.publicKey}
               onBack={handleBackToFeed}
               onUpvote={handleUpvote}
+              onDownvote={handleDownvote}
               onReply={handleCommentReply}
               onCommentUpvote={handleCommentUpvote}
+              onCommentDownvote={handleCommentDownvote}
               onDeletePost={handleDeletePost}
               onDeleteComment={handleDeleteComment}
+              onViewOperationTimeline={handleViewOperationTimeline}
+              isDevMode={isDevMode}
             />
           )}
-          
+
           {view === 'my-posts' && identity && (
             <MyPosts
               currentPubkey={identity.publicKey}
@@ -732,7 +803,7 @@ function App() {
               onPostClick={handlePostClick}
             />
           )}
-          
+
           {view === 'favorites' && (
             <Favorites
               allPosts={posts}
@@ -742,10 +813,10 @@ function App() {
             />
           )}
         </div>
-        
+
         {view === 'feed' && (
-          <RightPanel 
-            sub={currentSub} 
+          <RightPanel
+            sub={currentSub}
             isSubscribed={isCurrentSubSubscribed}
             membersCount={membersCount}
             onlineCount={onlineCount}
@@ -766,6 +837,8 @@ function App() {
         onPublishProfile={handlePublishProfile}
         onBanUser={handleBanUser}
         onUnbanUser={handleUnbanUser}
+        consistencyFocus={consistencyFocus}
+        isDevMode={isDevMode}
       />
 
       <LoginModal

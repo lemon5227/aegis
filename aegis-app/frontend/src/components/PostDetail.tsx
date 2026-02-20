@@ -11,20 +11,24 @@ interface PostDetailProps {
   currentPubkey?: string;
   onBack: () => void;
   onUpvote: (postId: string) => void;
+  onDownvote: (postId: string) => void;
   onReply: (parentId: string, body: string, localImageDataURLs: string[], externalImageURLs: string[]) => Promise<void> | void;
   onCommentUpvote: (commentId: string) => void;
+  onCommentDownvote: (commentId: string) => void;
   onDeletePost: (postId: string) => Promise<void> | void;
   onDeleteComment: (commentId: string) => Promise<void> | void;
+  onViewOperationTimeline?: (entityType: 'post' | 'comment', entityId: string) => void;
+  isDevMode?: boolean;
 }
 
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp * 1000;
-  
+
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  
+
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
@@ -36,18 +40,22 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function PostDetail({ 
-  post, 
-  body, 
+export function PostDetail({
+  post,
+  body,
   comments,
   profiles,
   currentPubkey,
-  onBack, 
+  onBack,
   onUpvote,
+  onDownvote,
   onReply,
   onCommentUpvote,
+  onCommentDownvote,
   onDeletePost,
   onDeleteComment,
+  onViewOperationTimeline,
+  isDevMode,
 }: PostDetailProps) {
   const [replyContent, setReplyContent] = useState('');
   const [replyToId, setReplyToId] = useState<string | null>(null);
@@ -67,12 +75,6 @@ export function PostDetail({
   const authorName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const authorAvatar = authorProfile?.avatarURL;
   const canDeletePost = !!currentPubkey && currentPubkey === post.pubkey;
-
-  useEffect(() => {
-    if (!deletePostArmed) return;
-    const timer = window.setTimeout(() => setDeletePostArmed(false), 6000);
-    return () => window.clearTimeout(timer);
-  }, [deletePostArmed]);
 
   const replyingToComment = useMemo(() => {
     if (!replyToId) return null;
@@ -226,8 +228,8 @@ export function PostDetail({
         setReplyMessage('Only http/https image URLs are supported.');
         return;
       }
-        addPendingExternalImage(parsed.toString());
-        setReplyMessage('Image URL attached to this comment.');
+      addPendingExternalImage(parsed.toString());
+      setReplyMessage('Image URL attached to this comment.');
     } catch {
       setReplyMessage('Invalid image URL.');
     }
@@ -293,9 +295,9 @@ export function PostDetail({
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
                 {authorAvatar ? (
-                  <img 
-                    className="w-12 h-12 rounded-full ring-2 ring-warm-accent/20" 
-                    src={authorAvatar} 
+                  <img
+                    className="w-12 h-12 rounded-full ring-2 ring-warm-accent/20"
+                    src={authorAvatar}
                     alt={authorName}
                   />
                 ) : (
@@ -320,33 +322,20 @@ export function PostDetail({
                 </button>
                 {canDeletePost && (
                   <button
-                    onClick={async () => {
-                      if (!deletePostArmed) {
-                        setDeletePostArmed(true);
-                        setReplyMessage('Click delete again to confirm post deletion.');
-                        return;
-                      }
-                      try {
-                        await onDeletePost(post.id);
-                      } catch (error: any) {
-                        setReplyMessage(error?.message || 'Failed to delete post.');
-                      } finally {
-                        setDeletePostArmed(false);
-                      }
-                    }}
-                    className={`p-2 rounded-full transition-colors ${deletePostArmed ? 'text-red-600 bg-red-500/10' : 'text-warm-text-secondary dark:text-slate-400 hover:text-red-500 hover:bg-red-500/10'}`}
+                    onClick={() => setDeletePostArmed(true)}
+                    className="p-2 rounded-full transition-colors text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent hover:bg-warm-accent/10"
                     title="Delete post"
                   >
-                    <span className="material-icons">{deletePostArmed ? 'warning' : 'delete'}</span>
+                    <span className="material-icons">delete</span>
                   </button>
                 )}
               </div>
             </div>
-            
+
             <h1 className="text-2xl md:text-3xl font-bold text-warm-text-primary dark:text-white mb-6 leading-tight">
               {post.title}
             </h1>
-            
+
             <div className="prose max-w-none text-warm-text-secondary dark:text-slate-300 leading-relaxed space-y-4">
               {renderRichText(body || post.bodyPreview || 'No content')}
             </div>
@@ -361,10 +350,10 @@ export function PostDetail({
               </div>
             )}
           </div>
-          
+
           <div className="bg-warm-bg/40 dark:bg-background-dark/40 px-6 py-4 border-t border-warm-border/60 dark:border-border-dark/60 flex items-center justify-between">
             <div className="flex items-center gap-1 bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-lg p-1">
-              <button 
+              <button
                 onClick={() => onUpvote(post.id)}
                 className="p-1 px-2 rounded hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-accent transition-colors flex items-center gap-1"
               >
@@ -372,11 +361,14 @@ export function PostDetail({
                 <span className="text-sm font-bold">{post.score || 0}</span>
               </button>
               <div className="w-px h-4 bg-warm-border dark:bg-border-dark"></div>
-              <button className="p-1 px-2 rounded hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 hover:text-red-500 transition-colors">
+              <button
+                onClick={() => onDownvote(post.id)}
+                className="p-1 px-2 rounded hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 hover:text-red-500 transition-colors"
+              >
                 <span className="material-icons text-lg">arrow_downward</span>
               </button>
             </div>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
@@ -393,10 +385,20 @@ export function PostDetail({
                 <span className="material-icons text-lg">share</span>
                 <span className="text-sm font-medium">Share</span>
               </button>
+              {isDevMode && (
+                <button
+                  onClick={() => onViewOperationTimeline?.('post', post.id)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 transition-colors"
+                  title="View operation timeline"
+                >
+                  <span className="material-icons text-lg">timeline</span>
+                  <span className="text-sm font-medium">Timeline</span>
+                </button>
+              )}
             </div>
           </div>
         </article>
-        
+
         <div className="mt-8">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-bold text-warm-text-primary dark:text-white">
@@ -404,18 +406,23 @@ export function PostDetail({
             </h3>
             <div className="flex items-center gap-2">
               <span className="text-xs text-warm-text-secondary dark:text-slate-400 font-medium">Sort by:</span>
-              <select 
-                value={commentSort}
-                onChange={(e) => setCommentSort(e.target.value as any)}
-                className="bg-transparent border-none text-sm font-bold text-warm-text-primary dark:text-white focus:ring-0 cursor-pointer p-0 pr-6"
-              >
-                <option value="best">Best</option>
-                <option value="newest">Newest</option>
-                <option value="controversial">Controversial</option>
-              </select>
+              <div className="relative inline-block">
+                <select
+                  value={commentSort}
+                  onChange={(e) => setCommentSort(e.target.value as any)}
+                  className="appearance-none bg-warm-bg hover:bg-warm-border/30 dark:bg-surface-dark dark:hover:bg-surface-lighter border border-warm-border dark:border-border-dark text-sm font-bold text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent cursor-pointer py-1.5 pl-3 pr-8 rounded-lg outline-none transition-colors"
+                >
+                  <option value="best">Best</option>
+                  <option value="newest">Newest</option>
+                  <option value="controversial">Controversial</option>
+                </select>
+                <span className="material-icons absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-warm-text-secondary dark:text-slate-400 text-base">
+                  expand_more
+                </span>
+              </div>
             </div>
           </div>
-          
+
           <div className="flex gap-4 mb-10">
             <div className="w-10 h-10 rounded-full bg-warm-accent flex items-center justify-center text-white font-bold shrink-0">
               ?
@@ -434,12 +441,12 @@ export function PostDetail({
                   </button>
                 </div>
               )}
-              <textarea 
+              <textarea
                 ref={replyInputRef}
                 value={replyContent}
                 onChange={(e) => setReplyContent(e.target.value)}
-                className="w-full bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-xl p-4 text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent placeholder-warm-text-secondary/40 dark:placeholder-slate-400/40 resize-none shadow-soft" 
-                placeholder="What are your thoughts?" 
+                className="w-full bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-xl p-4 text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent placeholder-warm-text-secondary/40 dark:placeholder-slate-400/40 resize-none shadow-soft"
+                placeholder="What are your thoughts?"
                 rows={3}
               />
               {(pendingLocalImages.length > 0 || pendingExternalImages.length > 0) && (
@@ -510,7 +517,7 @@ export function PostDetail({
                 >
                   <span className="material-icons text-lg">code</span>
                 </button>
-                <button 
+                <button
                   onClick={handleSubmitReply}
                   disabled={(!replyContent.trim() && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) || replyBusy}
                   className="bg-warm-accent hover:bg-warm-accent-hover text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md shadow-warm-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -523,7 +530,7 @@ export function PostDetail({
               </div>
             </div>
           </div>
-          
+
           <CommentTree
             comments={comments}
             profiles={profiles}
@@ -533,6 +540,7 @@ export function PostDetail({
               focusReplyInput();
             }}
             onUpvote={onCommentUpvote}
+            onDownvote={onCommentDownvote}
             currentPubkey={currentPubkey}
             onDelete={onDeleteComment}
             onImageClick={(src) => setPreviewImageSrc(src)}
@@ -555,6 +563,43 @@ export function PostDetail({
           >
             <span className="material-icons">close</span>
           </button>
+        </div>
+      )}
+      {canDeletePost && deletePostArmed && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 transition-all duration-300" onClick={() => setDeletePostArmed(false)}>
+          <div
+            className="w-full max-w-sm rounded-2xl border border-warm-border dark:border-border-dark bg-warm-card dark:bg-surface-dark backdrop-blur-md p-6 shadow-2xl flex flex-col items-center text-center transform scale-100 transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4">
+              <span className="material-icons text-warm-accent text-5xl">warning_amber</span>
+            </div>
+            <h4 className="text-lg font-bold text-warm-text-primary dark:text-white mb-2">Delete Post</h4>
+            <p className="text-sm text-warm-text-secondary dark:text-slate-300 mb-6">
+              This action cannot be undone. Are you sure you want to permanently delete this post?
+            </p>
+            <div className="flex items-center gap-3 w-full">
+              <button
+                onClick={() => setDeletePostArmed(false)}
+                className="flex-1 py-2.5 rounded-xl font-bold border border-warm-border dark:border-border-dark text-warm-text-secondary dark:text-slate-300 hover:text-warm-text-primary dark:hover:text-white hover:bg-warm-bg dark:hover:bg-surface-lighter transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await onDeletePost(post.id);
+                    setDeletePostArmed(false);
+                  } catch (error: any) {
+                    setReplyMessage(error?.message || 'Failed to delete post.');
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl font-bold bg-warm-accent hover:bg-warm-accent-hover text-white shadow-lg transition-all"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

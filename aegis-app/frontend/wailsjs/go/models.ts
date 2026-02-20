@@ -59,6 +59,7 @@ export namespace main {
 	    postId: string;
 	    parentId: string;
 	    pubkey: string;
+	    opId?: string;
 	    body: string;
 	    attachments?: CommentAttachment[];
 	    score: number;
@@ -77,6 +78,7 @@ export namespace main {
 	        this.postId = source["postId"];
 	        this.parentId = source["parentId"];
 	        this.pubkey = source["pubkey"];
+	        this.opId = source["opId"];
 	        this.body = source["body"];
 	        this.attachments = this.convertValues(source["attachments"], CommentAttachment);
 	        this.score = source["score"];
@@ -105,9 +107,40 @@ export namespace main {
 		}
 	}
 	
+	export class EntityOpRecord {
+	    opId: string;
+	    entityType: string;
+	    entityId: string;
+	    opType: string;
+	    authorPubkey: string;
+	    lamport: number;
+	    timestamp: number;
+	    schemaVersion: number;
+	    authScope: string;
+	    payloadJson: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EntityOpRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.opId = source["opId"];
+	        this.entityType = source["entityType"];
+	        this.entityId = source["entityId"];
+	        this.opType = source["opType"];
+	        this.authorPubkey = source["authorPubkey"];
+	        this.lamport = source["lamport"];
+	        this.timestamp = source["timestamp"];
+	        this.schemaVersion = source["schemaVersion"];
+	        this.authScope = source["authScope"];
+	        this.payloadJson = source["payloadJson"];
+	    }
+	}
 	export class ForumMessage {
 	    id: string;
 	    pubkey: string;
+	    opId?: string;
 	    title: string;
 	    body: string;
 	    contentCid: string;
@@ -126,6 +159,8 @@ export namespace main {
 	    subId: string;
 	    isProtected: number;
 	    visibility: string;
+	    deletedAt?: number;
+	    deletedBy?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ForumMessage(source);
@@ -135,6 +170,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.pubkey = source["pubkey"];
+	        this.opId = source["opId"];
 	        this.title = source["title"];
 	        this.body = source["body"];
 	        this.contentCid = source["contentCid"];
@@ -153,6 +189,8 @@ export namespace main {
 	        this.subId = source["subId"];
 	        this.isProtected = source["isProtected"];
 	        this.visibility = source["visibility"];
+	        this.deletedAt = source["deletedAt"];
+	        this.deletedBy = source["deletedBy"];
 	    }
 	}
 	export class FeedStreamItem {
@@ -635,6 +673,24 @@ export namespace main {
 	        this.title = source["title"];
 	        this.description = source["description"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class TombstoneGCResult {
+	    scannedPosts: number;
+	    deletedPosts: number;
+	    scannedComments: number;
+	    deletedComments: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TombstoneGCResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.scannedPosts = source["scannedPosts"];
+	        this.deletedPosts = source["deletedPosts"];
+	        this.scannedComments = source["scannedComments"];
+	        this.deletedComments = source["deletedComments"];
 	    }
 	}
 	export class UpdateStatus {

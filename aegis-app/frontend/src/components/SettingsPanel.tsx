@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
-import { Profile, GovernanceAdmin, ModerationLog, ModerationState } from '../types';
-import { CheckForUpdates, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ResetLocalTestData, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { AntiEntropyStats, EntityOpRecord, GovernanceAdmin, ModerationLog, ModerationState, Profile, TombstoneGCResult } from '../types';
+import { CheckForUpdates, GetAntiEntropyStats, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ListEntityOps, ResetLocalTestData, RunTombstoneGC, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -15,9 +15,15 @@ interface SettingsPanelProps {
   onPublishProfile: (displayName: string, avatarURL: string) => void;
   onBanUser: (targetPubkey: string, reason: string) => void;
   onUnbanUser: (targetPubkey: string, reason: string) => void;
+  consistencyFocus?: {
+    entityType: 'post' | 'comment';
+    entityId: string;
+    nonce: number;
+  } | null;
+  isDevMode: boolean;
 }
 
-type Tab = 'account' | 'privacy' | 'network' | 'update' | 'governance';
+type Tab = 'account' | 'privacy' | 'network' | 'update' | 'consistency' | 'governance';
 
 type P2PStatusView = {
   started: boolean;
@@ -53,8 +59,8 @@ type VersionHistoryItemView = {
   url: string;
 };
 
-export function SettingsPanel({ 
-  isOpen, 
+export function SettingsPanel({
+  isOpen,
   onClose,
   profile,
   isAdmin,
@@ -64,7 +70,9 @@ export function SettingsPanel({
   onSaveProfile,
   onPublishProfile,
   onBanUser,
-  onUnbanUser
+  onUnbanUser,
+  consistencyFocus,
+  isDevMode,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('account');
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
@@ -100,11 +108,102 @@ export function SettingsPanel({
   const [versionHistory, setVersionHistory] = useState<VersionHistoryItemView[]>([]);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState('');
+  const [antiEntropyStats, setAntiEntropyStats] = useState<AntiEntropyStats | null>(null);
+  const [consistencyBusy, setConsistencyBusy] = useState(false);
+  const [consistencyMessage, setConsistencyMessage] = useState('');
+  const [entityOps, setEntityOps] = useState<EntityOpRecord[]>([]);
+  const [entityOpTypeFilter, setEntityOpTypeFilter] = useState<'post' | 'comment' | ''>('');
+  const [entityOpIDFilter, setEntityOpIDFilter] = useState('');
+  const [entityOpLimit, setEntityOpLimit] = useState('200');
+  const [gcRetentionDays, setGCRetentionDays] = useState('30');
+  const [gcStablePasses, setGCStablePasses] = useState('2');
+  const [gcBatchSize, setGCBatchSize] = useState('200');
+  const [gcResult, setGCResult] = useState<TombstoneGCResult | null>(null);
+  const [gcConfirmArmed, setGCConfirmArmed] = useState(false);
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const accountToastTimerRef = useRef<number | null>(null);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
+  };
+
+  const loadAntiEntropyState = async () => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const stats = await GetAntiEntropyStats();
+      setAntiEntropyStats(stats);
+      setConsistencyMessage('');
+    } catch (error) {
+      console.error('Failed to load anti-entropy stats:', error);
+      setConsistencyMessage('Failed to load anti-entropy stats.');
+    }
+  };
+
+  const loadEntityOps = async () => {
+    await loadEntityOpsWithFilters(entityOpTypeFilter, entityOpIDFilter, entityOpLimit);
+  };
+
+  const loadEntityOpsWithFilters = async (entityType: 'post' | 'comment' | '', entityID: string, limitValue: string) => {
+    const limit = Number.parseInt(limitValue, 10);
+    const effectiveLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 5000) : 200;
+
+    setConsistencyBusy(true);
+    try {
+      const rows = await ListEntityOps(entityType, entityID.trim(), effectiveLimit);
+      setEntityOps(Array.isArray(rows) ? rows : []);
+      setConsistencyMessage('');
+    } catch (error: any) {
+      const errMsg = String(error).toLowerCase();
+      if (errMsg.includes('dev mode') || errMsg.includes('dev-only')) {
+        setEntityOps([]);
+      } else {
+        console.error('Failed to load entity ops:', error);
+        setConsistencyMessage('Failed to load operation timeline.');
+      }
+    } finally {
+      setConsistencyBusy(false);
+    }
+  };
+
+  const handleRunTombstoneGC = async () => {
+    const retentionDays = Number.parseInt(gcRetentionDays, 10);
+    const stablePasses = Number.parseInt(gcStablePasses, 10);
+    const batchSize = Number.parseInt(gcBatchSize, 10);
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+      setConsistencyMessage('Retention days must be a positive integer.');
+      return;
+    }
+    if (!Number.isFinite(stablePasses) || stablePasses <= 0) {
+      setConsistencyMessage('Stable passes must be a positive integer.');
+      return;
+    }
+    if (!Number.isFinite(batchSize) || batchSize <= 0 || batchSize > 2000) {
+      setConsistencyMessage('Batch size must be in 1..2000.');
+      return;
+    }
+
+    if (!gcConfirmArmed) {
+      setGCConfirmArmed(true);
+      setConsistencyMessage('Click Run Tombstone GC again within 8 seconds to confirm.');
+      window.setTimeout(() => {
+        setGCConfirmArmed(false);
+      }, 8000);
+      return;
+    }
+
+    setConsistencyBusy(true);
+    try {
+      const result = await RunTombstoneGC(retentionDays, stablePasses, batchSize);
+      setGCResult(result);
+      setGCConfirmArmed(false);
+      setConsistencyMessage('Tombstone GC completed.');
+      await loadEntityOps();
+    } catch (error) {
+      console.error('Failed to run tombstone GC:', error);
+      setConsistencyMessage('Failed to run tombstone GC.');
+    } finally {
+      setConsistencyBusy(false);
+    }
   };
 
   const parsePeerInput = (raw: string): string[] => {
@@ -198,6 +297,8 @@ export function SettingsPanel({
     void loadPrivacySettings();
     void loadGovernancePolicy();
     void loadUpdateData();
+    void loadAntiEntropyState();
+    void loadEntityOps();
     const unsubscribe = EventsOn('p2p:updated', () => {
       void loadP2PState();
     });
@@ -205,6 +306,16 @@ export function SettingsPanel({
       unsubscribe();
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !consistencyFocus || !consistencyFocus.entityId.trim()) {
+      return;
+    }
+    setActiveTab('consistency');
+    setEntityOpTypeFilter(consistencyFocus.entityType);
+    setEntityOpIDFilter(consistencyFocus.entityId);
+    void loadEntityOpsWithFilters(consistencyFocus.entityType, consistencyFocus.entityId, entityOpLimit);
+  }, [isOpen, consistencyFocus?.nonce]);
 
   const formatBytes = (bytes: number): string => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -559,13 +670,13 @@ export function SettingsPanel({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="relative w-full max-w-5xl h-[85vh] bg-warm-bg dark:bg-background-dark rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row border border-warm-border dark:border-border-dark">
-        <button 
+        <button
           onClick={onClose}
           className="absolute top-4 right-4 z-50 text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white transition-colors"
         >
           <span className="material-icons">close</span>
         </button>
-        
+
         <div className="w-full md:w-64 bg-warm-sidebar dark:bg-surface-dark border-r border-warm-border dark:border-border-dark flex flex-col justify-between shrink-0">
           <div>
             <div className="p-6">
@@ -578,58 +689,65 @@ export function SettingsPanel({
               <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1 pl-10">Decentralized Forum</p>
             </div>
             <nav className="px-3 space-y-1">
-              <button 
+              <button
                 onClick={() => setActiveTab('account')}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'account'
-                    ? 'bg-warm-accent/10 text-warm-accent'
-                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
-                }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'account'
+                  ? 'bg-warm-accent/10 text-warm-accent'
+                  : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                  }`}
               >
                 <span className="material-icons text-[20px]">manage_accounts</span>
                 Account
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab('privacy')}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'privacy'
-                    ? 'bg-warm-accent/10 text-warm-accent'
-                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
-                }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'privacy'
+                  ? 'bg-warm-accent/10 text-warm-accent'
+                  : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                  }`}
               >
                 <span className="material-icons text-[20px]">security</span>
                 Privacy &amp; Keys
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab('update')}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'update'
-                    ? 'bg-warm-accent/10 text-warm-accent'
-                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
-                }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'update'
+                  ? 'bg-warm-accent/10 text-warm-accent'
+                  : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                  }`}
               >
                 <span className="material-icons text-[20px]">system_update</span>
                 Updates
               </button>
-              <button 
+              <button
                 onClick={() => setActiveTab('network')}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  activeTab === 'network'
-                    ? 'bg-warm-accent/10 text-warm-accent'
-                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
-                }`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'network'
+                  ? 'bg-warm-accent/10 text-warm-accent'
+                  : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                  }`}
               >
                 <span className="material-icons text-[20px]">hub</span>
                 Network &amp; P2P
               </button>
+              {isDevMode && (
+                <button
+                  onClick={() => setActiveTab('consistency')}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'consistency'
+                    ? 'bg-warm-accent/10 text-warm-accent'
+                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                    }`}
+                >
+                  <span className="material-icons text-[20px]">lan</span>
+                  Consistency
+                </button>
+              )}
               {isAdmin && (
-                <button 
+                <button
                   onClick={() => setActiveTab('governance')}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                    activeTab === 'governance'
-                      ? 'bg-warm-accent/10 text-warm-accent'
-                      : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
-                  }`}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${activeTab === 'governance'
+                    ? 'bg-warm-accent/10 text-warm-accent'
+                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
+                    }`}
                 >
                   <span className="material-icons text-[20px]">admin_panel_settings</span>
                   Governance
@@ -638,7 +756,7 @@ export function SettingsPanel({
             </nav>
           </div>
           <div className="p-4 border-t border-warm-border dark:border-border-dark">
-            <button 
+            <button
               onClick={onClose}
               className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
             >
@@ -647,15 +765,14 @@ export function SettingsPanel({
             </button>
           </div>
         </div>
-        
+
         <div className="relative flex-1 flex flex-col h-full overflow-hidden bg-warm-bg dark:bg-background-dark">
           {accountToast && (
             <div
-              className={`absolute top-4 right-6 z-20 rounded-lg px-3 py-2 text-sm shadow-lg border ${
-                accountToast.type === 'success'
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
-                  : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900'
-              }`}
+              className={`absolute top-4 right-6 z-20 rounded-lg px-3 py-2 text-sm shadow-lg border ${accountToast.type === 'success'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
+                : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900'
+                }`}
             >
               {accountToast.text}
             </div>
@@ -671,23 +788,23 @@ export function SettingsPanel({
                   <div className="flex items-start gap-6">
                     <div className="relative group">
                       {avatarURL ? (
-                        <img 
-                          alt="Profile avatar" 
-                          className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-warm-surface shadow-sm" 
-                          src={avatarURL} 
+                        <img
+                          alt="Profile avatar"
+                          className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-warm-surface shadow-sm"
+                          src={avatarURL}
                         />
                       ) : (
                         <div className="w-24 h-24 rounded-full bg-warm-accent flex items-center justify-center text-white text-3xl font-bold border-4 border-white dark:border-warm-surface">
                           {displayName ? displayName.slice(0, 2).toUpperCase() : '?'}
                         </div>
                       )}
-                        <button
-                          onClick={handleSelectAvatarFile}
-                          className="absolute bottom-0 right-0 bg-warm-accent hover:bg-warm-accent-hover text-white p-2 rounded-full shadow-md transition-colors border-2 border-warm-surface dark:border-warm-bg"
-                        >
-                          <span className="material-icons text-sm">edit</span>
-                        </button>
-                      </div>
+                      <button
+                        onClick={handleSelectAvatarFile}
+                        className="absolute bottom-0 right-0 bg-warm-accent hover:bg-warm-accent-hover text-white p-2 rounded-full shadow-md transition-colors border-2 border-warm-surface dark:border-warm-bg"
+                      >
+                        <span className="material-icons text-sm">edit</span>
+                      </button>
+                    </div>
                     <div className="pt-2">
                       <h3 className="text-lg font-medium text-warm-text-primary dark:text-white">Profile Photo</h3>
                       <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1 mb-3">This will be displayed on your posts and comments.</p>
@@ -734,7 +851,7 @@ export function SettingsPanel({
                       />
                     </div>
                   </div>
-                  
+
                   <div className="space-y-6">
                     <div className="grid gap-6 md:grid-cols-2">
                       <div>
@@ -763,7 +880,7 @@ export function SettingsPanel({
                         </div>
                       </div>
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-warm-text-primary dark:text-white mb-2">
                         Bio
@@ -777,28 +894,28 @@ export function SettingsPanel({
                       />
                       <p className="mt-1 text-xs text-warm-text-secondary dark:text-slate-400 text-right">{bio.length}/160 characters</p>
                     </div>
-                    
+
                     <div className="flex items-center justify-between py-4 border-t border-warm-border dark:border-border-dark">
                       <div>
                         <h4 className="text-sm font-medium text-warm-text-primary dark:text-white">Public Status</h4>
                         <p className="text-xs text-warm-text-secondary dark:text-slate-400">Allow others to see when you are online.</p>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
+                        <input
+                          type="checkbox"
                           checked={publicStatus}
                           onChange={(e) => setPublicStatus(e.target.checked)}
-                          className="sr-only peer" 
+                          className="sr-only peer"
                         />
                         <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-warm-accent"></div>
                       </label>
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="pt-4 space-y-2">
                   <div className="flex justify-end">
-                    <button 
+                    <button
                       onClick={handleSave}
                       disabled={accountBusy}
                       className="min-w-[132px] px-6 py-2.5 bg-warm-accent hover:bg-warm-accent-hover text-white font-medium rounded-lg shadow-lg shadow-warm-accent/30 transition-all transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
@@ -815,7 +932,7 @@ export function SettingsPanel({
               </div>
             </div>
           )}
-          
+
           {activeTab === 'privacy' && (
             <div className="flex flex-col h-full">
               <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0">
@@ -831,7 +948,7 @@ export function SettingsPanel({
                     </div>
                     <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-2">This is your unique identifier on the network.</p>
                   </div>
-                  
+
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">Mnemonic Phrase (Backup)</h3>
                     <div className="bg-warm-bg dark:bg-background-dark rounded-lg p-4 font-mono text-sm text-warm-text-secondary dark:text-slate-400 break-all">
@@ -839,7 +956,7 @@ export function SettingsPanel({
                     </div>
                     <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-2">Keep this secret! It's used to restore your account.</p>
                   </div>
-                  
+
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">Privacy Settings</h3>
                     <div className="space-y-4">
@@ -886,7 +1003,7 @@ export function SettingsPanel({
               </div>
             </div>
           )}
-          
+
           {activeTab === 'update' && (
             <div className="flex flex-col h-full">
               <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0">
@@ -924,7 +1041,7 @@ export function SettingsPanel({
                       </p>
                     </div>
                   </div>
-                  
+
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">What's New</h3>
                     <ul className="space-y-3 text-sm text-warm-text-secondary dark:text-slate-400">
@@ -945,7 +1062,7 @@ export function SettingsPanel({
                       )}
                     </ul>
                   </div>
-                  
+
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">Check for Updates</h3>
                     <p className="text-sm text-warm-text-secondary dark:text-slate-400 mb-4">
@@ -1039,7 +1156,7 @@ export function SettingsPanel({
                         className="w-full px-4 py-2.5 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white font-mono text-sm focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none resize-y"
                       />
                       <p className="mt-2 text-xs text-warm-text-secondary dark:text-slate-400">
-                        Example: /ip4/51.107.0.10/tcp/40100/p2p/12D3KooWLweFn4GFfEa9X1St4d78HQqYYzXaH2oy5XahKrwar6w7
+                        Example: /ip4/51.107.6.171/tcp/40100/p2p/12D3KooWAFxb45HZaK3rtSRAy6wTR7PN8nUaZrXgBNuBPJoNKqwg
                       </p>
                     </div>
 
@@ -1196,6 +1313,170 @@ export function SettingsPanel({
             </div>
           )}
 
+          {activeTab === 'consistency' && (
+            <div className="flex flex-col h-full">
+              <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0">
+                <h1 className="text-2xl font-bold text-warm-text-primary dark:text-white">Consistency</h1>
+                <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1">
+                  Lamport convergence diagnostics, operation timeline, and tombstone GC controls.
+                </p>
+              </header>
+              <div className="flex-1 overflow-y-auto p-8">
+                <div className="max-w-4xl space-y-6">
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Anti-Entropy Stats</h3>
+                      <button
+                        onClick={() => void loadAntiEntropyState()}
+                        disabled={consistencyBusy}
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-warm-border dark:border-border-dark text-warm-text-primary dark:text-white hover:bg-warm-card dark:hover:bg-surface-lighter disabled:opacity-50"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3 text-sm">
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark p-3">
+                        <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase">Sync Requests</p>
+                        <p className="mt-1 font-semibold text-warm-text-primary dark:text-white">{antiEntropyStats?.syncRequestsSent || 0} sent / {antiEntropyStats?.syncRequestsReceived || 0} recv</p>
+                      </div>
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark p-3">
+                        <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase">Blob Fetch</p>
+                        <p className="mt-1 font-semibold text-warm-text-primary dark:text-white">{antiEntropyStats?.blobFetchSuccess || 0} ok / {antiEntropyStats?.blobFetchFailures || 0} fail</p>
+                      </div>
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark p-3">
+                        <p className="text-xs text-warm-text-secondary dark:text-slate-400 uppercase">Observed Lag</p>
+                        <p className="mt-1 font-semibold text-warm-text-primary dark:text-white">{antiEntropyStats?.lastObservedSyncLagSec || 0}s</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-warm-text-secondary dark:text-slate-400">
+                      Last Sync: {formatDateTime(antiEntropyStats?.lastSyncAt || 0)} · Last Remote Summary: {formatDateTime(antiEntropyStats?.lastRemoteSummaryTs || 0)}
+                    </p>
+                  </div>
+
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-4">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Entity Type</label>
+                        <div className="relative">
+                          <select
+                            value={entityOpTypeFilter}
+                            onChange={(e) => setEntityOpTypeFilter(e.target.value as 'post' | 'comment' | '')}
+                            className="appearance-none w-full px-3 py-2 pr-8 rounded-lg border border-warm-border dark:border-border-dark bg-white hover:bg-warm-bg dark:bg-surface-dark dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white text-sm focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none transition-colors cursor-pointer shadow-soft"
+                          >
+                            <option value="">All</option>
+                            <option value="post">Post</option>
+                            <option value="comment">Comment</option>
+                          </select>
+                          <span className="material-icons absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-warm-text-secondary dark:text-slate-400 text-base">
+                            expand_more
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-[220px]">
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Entity ID</label>
+                        <input
+                          value={entityOpIDFilter}
+                          onChange={(e) => setEntityOpIDFilter(e.target.value)}
+                          placeholder="Optional exact entity id"
+                          className="w-full px-3 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Limit</label>
+                        <input
+                          value={entityOpLimit}
+                          onChange={(e) => setEntityOpLimit(e.target.value)}
+                          className="w-24 px-3 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-sm"
+                        />
+                      </div>
+                      <button
+                        onClick={() => void loadEntityOps()}
+                        disabled={consistencyBusy}
+                        className="px-4 py-2 bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                      >
+                        {consistencyBusy ? 'Loading...' : 'Load Operations'}
+                      </button>
+                    </div>
+
+                    <div className="rounded-lg border border-warm-border dark:border-border-dark overflow-hidden">
+                      <div className="max-h-72 overflow-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-warm-bg dark:bg-background-dark">
+                            <tr>
+                              <th className="text-left px-3 py-2">Lamport</th>
+                              <th className="text-left px-3 py-2">Entity</th>
+                              <th className="text-left px-3 py-2">Op</th>
+                              <th className="text-left px-3 py-2">Author</th>
+                              <th className="text-left px-3 py-2">Time</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {entityOps.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="px-3 py-4 text-center text-warm-text-secondary dark:text-slate-400">No operations found.</td>
+                              </tr>
+                            ) : (
+                              entityOps.map((item) => (
+                                <tr key={item.opId} className="border-t border-warm-border dark:border-border-dark">
+                                  <td className="px-3 py-2 font-mono">{item.lamport}</td>
+                                  <td className="px-3 py-2 font-mono">{item.entityType}:{item.entityId.slice(0, 16)}</td>
+                                  <td className="px-3 py-2">{item.opType}</td>
+                                  <td className="px-3 py-2 font-mono">{item.authorPubkey.slice(0, 12)}</td>
+                                  <td className="px-3 py-2">{formatDateTime(item.timestamp)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-4">
+                    <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Tombstone GC</h3>
+                    <p className="text-xs text-warm-text-secondary dark:text-slate-400">
+                      Safe cleanup requires both retention horizon and stable-pass checks. Use only in operator workflows.
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div>
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Retention Days</label>
+                        <input value={gcRetentionDays} onChange={(e) => setGCRetentionDays(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Stable Passes</label>
+                        <input value={gcStablePasses} onChange={(e) => setGCStablePasses(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-warm-text-secondary dark:text-slate-400 mb-1">Batch Size</label>
+                        <input value={gcBatchSize} onChange={(e) => setGCBatchSize(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-sm" />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => void handleRunTombstoneGC()}
+                        disabled={consistencyBusy}
+                        className={`px-4 py-2 text-white rounded-lg font-medium transition-colors disabled:opacity-50 ${gcConfirmArmed ? 'bg-red-700 hover:bg-red-800' : 'bg-red-600 hover:bg-red-700'}`}
+                      >
+                        {gcConfirmArmed ? 'Confirm Run Tombstone GC' : 'Run Tombstone GC'}
+                      </button>
+                      {gcResult && (
+                        <span className="text-xs text-warm-text-secondary dark:text-slate-400">
+                          scanned(post/comment): {gcResult.scannedPosts}/{gcResult.scannedComments}, deleted(post/comment): {gcResult.deletedPosts}/{gcResult.deletedComments}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {consistencyMessage && (
+                    <div className="text-sm text-warm-text-secondary dark:text-slate-300 bg-warm-bg dark:bg-background-dark border border-warm-border dark:border-border-dark rounded-lg px-3 py-2">
+                      {consistencyMessage}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'governance' && isAdmin && (
             <div className="flex flex-col h-full">
               <header className="px-8 py-6 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark shrink-0 flex justify-between items-center">
@@ -1209,7 +1490,7 @@ export function SettingsPanel({
                   <p className="text-sm text-warm-text-secondary dark:text-slate-400 mt-1">Manage community standards and user access.</p>
                 </div>
               </header>
-              
+
               <div className="px-8 pt-4 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark">
                 <div className="mb-4 rounded-xl border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark p-4">
                   <div className="flex items-start justify-between gap-4">
@@ -1246,40 +1527,37 @@ export function SettingsPanel({
                   )}
                 </div>
                 <div className="flex space-x-6">
-                  <button 
+                  <button
                     onClick={() => setGovernanceTab('banned')}
-                    className={`pb-3 text-sm font-medium transition-colors ${
-                      governanceTab === 'banned'
-                        ? 'border-b-2 border-warm-accent text-warm-accent'
-                        : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
-                    }`}
+                    className={`pb-3 text-sm font-medium transition-colors ${governanceTab === 'banned'
+                      ? 'border-b-2 border-warm-accent text-warm-accent'
+                      : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
+                      }`}
                   >
                     Banned Users
                   </button>
-                  <button 
+                  <button
                     onClick={() => setGovernanceTab('appeals')}
-                    className={`pb-3 text-sm font-medium transition-colors ${
-                      governanceTab === 'appeals'
-                        ? 'border-b-2 border-warm-accent text-warm-accent'
-                        : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
-                    }`}
+                    className={`pb-3 text-sm font-medium transition-colors ${governanceTab === 'appeals'
+                      ? 'border-b-2 border-warm-accent text-warm-accent'
+                      : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
+                      }`}
                   >
-                    Unban Requests 
+                    Unban Requests
                     <span className="ml-2 bg-warm-accent text-white text-[10px] px-1.5 py-0.5 rounded-full">{pendingAppeals.length}</span>
                   </button>
-                  <button 
+                  <button
                     onClick={() => setGovernanceTab('logs')}
-                    className={`pb-3 text-sm font-medium transition-colors ${
-                      governanceTab === 'logs'
-                        ? 'border-b-2 border-warm-accent text-warm-accent'
-                        : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
-                    }`}
+                    className={`pb-3 text-sm font-medium transition-colors ${governanceTab === 'logs'
+                      ? 'border-b-2 border-warm-accent text-warm-accent'
+                      : 'border-b-2 border-transparent text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
+                      }`}
                   >
                     Operation Log
                   </button>
                 </div>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto p-8">
                 {governanceTab === 'banned' && (
                   <div className="space-y-6">
@@ -1300,7 +1578,7 @@ export function SettingsPanel({
                           placeholder="Reason"
                           className="flex-1 px-4 py-2 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none"
                         />
-                        <button 
+                        <button
                           onClick={handleBan}
                           disabled={!banTarget.trim() || !banReason.trim()}
                           className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1309,7 +1587,7 @@ export function SettingsPanel({
                         </button>
                       </div>
                     </div>
-                    
+
                     <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark overflow-hidden">
                       <div className="p-4 border-b border-warm-border dark:border-border-dark">
                         <h3 className="font-semibold text-warm-text-primary dark:text-white">Banned Users</h3>
@@ -1342,7 +1620,7 @@ export function SettingsPanel({
                     </div>
                   </div>
                 )}
-                
+
                 {governanceTab === 'appeals' && (
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark overflow-hidden">
                     <div className="p-4 border-b border-warm-border dark:border-border-dark flex justify-between items-center">
@@ -1376,7 +1654,7 @@ export function SettingsPanel({
                     )}
                   </div>
                 )}
-                
+
                 {governanceTab === 'logs' && (
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark overflow-hidden">
                     <div className="p-4 border-b border-warm-border dark:border-border-dark">

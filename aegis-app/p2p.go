@@ -194,13 +194,8 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 	go a.runReleaseAlertWorker(ctx)
 
 	knownBootstraps := a.getKnownPeerBootstrapAddresses(knownPeerBootstrapLimit)
-	for _, address := range mergePeerAddressLists(bootstrapPeers, knownBootstraps) {
-		trimmed := strings.TrimSpace(address)
-		if trimmed == "" {
-			continue
-		}
-		_ = a.connectPeerLocked(trimmed)
-	}
+	bootstrapTargets := mergePeerAddressLists(bootstrapPeers, knownBootstraps)
+	a.connectBootstrapPeersAsync(bootstrapTargets)
 
 	a.publishLocalProfileUpdateLocked()
 
@@ -301,8 +296,161 @@ func (a *App) connectPeerLocked(address string) error {
 	return nil
 }
 
+func (a *App) connectBootstrapPeersAsync(addresses []string) {
+	filtered := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, raw := range addresses {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		filtered = append(filtered, trimmed)
+	}
+
+	if len(filtered) == 0 {
+		return
+	}
+
+	go func(targets []string) {
+		for _, addr := range targets {
+			if err := a.ConnectPeer(addr); err != nil && a.ctx != nil {
+				runtime.LogDebugf(a.ctx, "bootstrap connect skipped addr=%s err=%v", addr, err)
+			}
+		}
+	}(append([]string(nil), filtered...))
+}
+
 func (a *App) PublishPostStructured(pubkey string, title string, body string) error {
 	return a.PublishPostStructuredToSub(pubkey, title, body, defaultSubID)
+}
+
+func (a *App) publishPayloadAsync(topic *pubsub.Topic, payload []byte, label string) {
+	if topic == nil || len(payload) == 0 {
+		return
+	}
+
+	a.p2pMu.Lock()
+	baseCtx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if baseCtx == nil {
+		return
+	}
+
+	go func(ctx context.Context, t *pubsub.Topic, data []byte, kind string) {
+		publishCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if err := t.Publish(publishCtx, data); err != nil {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "async publish failed (%s): %v", kind, err)
+			}
+		}
+	}(baseCtx, topic, append([]byte(nil), payload...), label)
+}
+
+func resolveVoteBroadcastDebounce() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_VOTE_BROADCAST_DEBOUNCE_MS"))
+	if raw == "" {
+		return 600 * time.Millisecond
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil {
+		return 600 * time.Millisecond
+	}
+	if ms < 100 {
+		ms = 100
+	}
+	if ms > 3000 {
+		ms = 3000
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, commentID string) {
+	voterPubkey = strings.TrimSpace(voterPubkey)
+	postID = strings.TrimSpace(postID)
+	commentID = strings.TrimSpace(commentID)
+	if voterPubkey == "" || postID == "" {
+		return
+	}
+
+	key := fmt.Sprintf("%s|%s|%s", voterPubkey, postID, commentID)
+	a.voteBroadcastMu.Lock()
+	seq := a.voteBroadcastSeq[key] + 1
+	a.voteBroadcastSeq[key] = seq
+	a.voteBroadcastMu.Unlock()
+
+	go func(expected int64, voteKey string, pubkey string, pid string, cid string) {
+		time.Sleep(resolveVoteBroadcastDebounce())
+
+		a.voteBroadcastMu.Lock()
+		current := a.voteBroadcastSeq[voteKey]
+		if current != expected {
+			a.voteBroadcastMu.Unlock()
+			return
+		}
+		delete(a.voteBroadcastSeq, voteKey)
+		a.voteBroadcastMu.Unlock()
+
+		a.p2pMu.Lock()
+		topic := a.p2pTopic
+		a.p2pMu.Unlock()
+		if topic == nil {
+			return
+		}
+
+		now := time.Now().Unix()
+		if cid == "" {
+			state, err := a.getPostVoteState(pubkey, pid)
+			if err != nil {
+				if a.ctx != nil {
+					runtime.LogWarningf(a.ctx, "vote state read failed (post): %v", err)
+				}
+				return
+			}
+			msg := IncomingMessage{
+				Type:        "POST_VOTE_SET",
+				OpID:        generateOperationID(pid, pubkey, time.Now().UnixNano()),
+				Pubkey:      pubkey,
+				VoterPubkey: pubkey,
+				PostID:      pid,
+				VoteState:   state,
+				Timestamp:   now,
+			}
+			payload, err := json.Marshal(msg)
+			if err != nil {
+				return
+			}
+			a.publishPayloadAsync(topic, payload, "POST_VOTE_SET")
+			return
+		}
+
+		state, err := a.getCommentVoteState(pubkey, cid)
+		if err != nil {
+			if a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "vote state read failed (comment): %v", err)
+			}
+			return
+		}
+		msg := IncomingMessage{
+			Type:        "COMMENT_VOTE_SET",
+			OpID:        generateOperationID(cid, pubkey, time.Now().UnixNano()),
+			Pubkey:      pubkey,
+			VoterPubkey: pubkey,
+			PostID:      pid,
+			CommentID:   cid,
+			VoteState:   state,
+			Timestamp:   now,
+		}
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			return
+		}
+		a.publishPayloadAsync(topic, payload, "COMMENT_VOTE_SET")
+	}(seq, key, voterPubkey, postID, commentID)
 }
 
 func (a *App) PublishPostStructuredToSub(pubkey string, title string, body string, subID string) error {
@@ -330,12 +478,7 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
 
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
@@ -348,19 +491,23 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 	}
 
 	msg := IncomingMessage{
-		Type:        "POST",
-		ID:          localPost.ID,
-		Pubkey:      pubkey,
-		DisplayName: strings.TrimSpace(profile.DisplayName),
-		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
-		Title:       title,
-		Body:        body,
-		ContentCID:  localPost.ContentCID,
-		Content:     "",
-		SubID:       normalizeSubID(subID),
-		Timestamp:   localPost.Timestamp,
-		Lamport:     localPost.Lamport,
-		Signature:   "",
+		Type:          "POST",
+		OpType:        postOpTypeCreate,
+		OpID:          localPost.OpID,
+		SchemaVersion: lamportSchemaV2,
+		AuthScope:     authScopeUser,
+		ID:            localPost.ID,
+		Pubkey:        pubkey,
+		DisplayName:   strings.TrimSpace(profile.DisplayName),
+		AvatarURL:     strings.TrimSpace(profile.AvatarURL),
+		Title:         title,
+		Body:          body,
+		ContentCID:    localPost.ContentCID,
+		Content:       "",
+		SubID:         normalizeSubID(subID),
+		Timestamp:     localPost.Timestamp,
+		Lamport:       localPost.Lamport,
+		Signature:     "",
 	}
 
 	payload, err := json.Marshal(msg)
@@ -368,7 +515,8 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.publishPayloadAsync(topic, payload, "POST")
+	return nil
 }
 
 func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string, imageBase64 string, imageMIME string, subID string) error {
@@ -396,12 +544,7 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
 
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
@@ -414,25 +557,29 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 	}
 
 	msg := IncomingMessage{
-		Type:        "POST",
-		ID:          localPost.ID,
-		Pubkey:      pubkey,
-		DisplayName: strings.TrimSpace(profile.DisplayName),
-		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
-		Title:       title,
-		Body:        body,
-		ContentCID:  localPost.ContentCID,
-		ImageCID:    localPost.ImageCID,
-		ThumbCID:    localPost.ThumbCID,
-		ImageMIME:   localPost.ImageMIME,
-		ImageSize:   localPost.ImageSize,
-		ImageWidth:  localPost.ImageWidth,
-		ImageHeight: localPost.ImageHeight,
-		Content:     "",
-		SubID:       normalizeSubID(subID),
-		Timestamp:   localPost.Timestamp,
-		Lamport:     localPost.Lamport,
-		Signature:   "",
+		Type:          "POST",
+		OpType:        postOpTypeCreate,
+		OpID:          localPost.OpID,
+		SchemaVersion: lamportSchemaV2,
+		AuthScope:     authScopeUser,
+		ID:            localPost.ID,
+		Pubkey:        pubkey,
+		DisplayName:   strings.TrimSpace(profile.DisplayName),
+		AvatarURL:     strings.TrimSpace(profile.AvatarURL),
+		Title:         title,
+		Body:          body,
+		ContentCID:    localPost.ContentCID,
+		ImageCID:      localPost.ImageCID,
+		ThumbCID:      localPost.ThumbCID,
+		ImageMIME:     localPost.ImageMIME,
+		ImageSize:     localPost.ImageSize,
+		ImageWidth:    localPost.ImageWidth,
+		ImageHeight:   localPost.ImageHeight,
+		Content:       "",
+		SubID:         normalizeSubID(subID),
+		Timestamp:     localPost.Timestamp,
+		Lamport:       localPost.Lamport,
+		Signature:     "",
 	}
 
 	payload, err := json.Marshal(msg)
@@ -440,7 +587,8 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.publishPayloadAsync(topic, payload, "POST_WITH_IMAGE")
+	return nil
 }
 
 func (a *App) PublishShadowBan(targetPubkey string, adminPubkey string, reason string) error {
@@ -502,15 +650,6 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 		return err
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
@@ -521,6 +660,10 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 	}
 	msg := IncomingMessage{
 		Type:               "COMMENT",
+		OpType:             postOpTypeCreate,
+		OpID:               localComment.OpID,
+		SchemaVersion:      lamportSchemaV2,
+		AuthScope:          authScopeUser,
 		ID:                 localComment.ID,
 		Pubkey:             pubkey,
 		PostID:             postID,
@@ -538,7 +681,11 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	a.p2pMu.Unlock()
+	a.publishPayloadAsync(topic, payload, "COMMENT")
+	return nil
 }
 
 func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parentID string, body string, localImageDataURLs []string, externalImageURLs []string) error {
@@ -595,14 +742,6 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 		return err
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
@@ -614,6 +753,10 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 
 	msg := IncomingMessage{
 		Type:               "COMMENT",
+		OpType:             postOpTypeCreate,
+		OpID:               localComment.OpID,
+		SchemaVersion:      lamportSchemaV2,
+		AuthScope:          authScopeUser,
 		ID:                 localComment.ID,
 		Pubkey:             pubkey,
 		PostID:             postID,
@@ -631,7 +774,11 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	a.p2pMu.Unlock()
+	a.publishPayloadAsync(topic, payload, "COMMENT_WITH_ATTACHMENTS")
+	return nil
 }
 
 func (a *App) PublishDeletePost(pubkey string, postID string) error {
@@ -646,30 +793,36 @@ func (a *App) PublishDeletePost(pubkey string, postID string) error {
 	if err != nil {
 		return err
 	}
-	if err = a.deleteLocalPostAsAuthor(pubkey, postID, now, lamport); err != nil {
+	deleteOpID := generateOperationID(postID, pubkey, lamport)
+	if err = a.deleteLocalPostAsAuthor(pubkey, postID, now, lamport, deleteOpID); err != nil {
 		return err
 	}
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-	if topic == nil || ctx == nil {
+	if topic == nil {
 		return nil
 	}
 
 	msg := IncomingMessage{
-		Type:      "POST_DELETE",
-		Pubkey:    pubkey,
-		PostID:    postID,
-		Timestamp: now,
-		Lamport:   lamport,
+		Type:             "POST_DELETE",
+		OpType:           postOpTypeDelete,
+		OpID:             deleteOpID,
+		SchemaVersion:    lamportSchemaV2,
+		AuthScope:        authScopeUser,
+		Pubkey:           pubkey,
+		PostID:           postID,
+		Timestamp:        now,
+		Lamport:          lamport,
+		DeletedAtLamport: lamport,
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return topic.Publish(ctx, payload)
+	a.publishPayloadAsync(topic, payload, "POST_DELETE")
+	return nil
 }
 
 func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
@@ -684,32 +837,38 @@ func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
 	if err != nil {
 		return err
 	}
-	postID, err := a.deleteLocalCommentAsAuthor(pubkey, commentID, now, lamport)
+	deleteOpID := generateOperationID(commentID, pubkey, lamport)
+	postID, err := a.deleteLocalCommentAsAuthor(pubkey, commentID, now, lamport, deleteOpID)
 	if err != nil {
 		return err
 	}
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-	if topic == nil || ctx == nil {
+	if topic == nil {
 		return nil
 	}
 
 	msg := IncomingMessage{
-		Type:      "COMMENT_DELETE",
-		Pubkey:    pubkey,
-		CommentID: commentID,
-		PostID:    postID,
-		Timestamp: now,
-		Lamport:   lamport,
+		Type:             "COMMENT_DELETE",
+		OpType:           postOpTypeDelete,
+		OpID:             deleteOpID,
+		SchemaVersion:    lamportSchemaV2,
+		AuthScope:        authScopeUser,
+		Pubkey:           pubkey,
+		CommentID:        commentID,
+		PostID:           postID,
+		Timestamp:        now,
+		Lamport:          lamport,
+		DeletedAtLamport: lamport,
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return topic.Publish(ctx, payload)
+	a.publishPayloadAsync(topic, payload, "COMMENT_DELETE")
+	return nil
 }
 
 func (a *App) PublishPostUpvote(pubkey string, postID string) error {
@@ -719,17 +878,9 @@ func (a *App) PublishPostUpvote(pubkey string, postID string) error {
 		return errors.New("pubkey and post id are required")
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	msg := IncomingMessage{
 		Type:        "POST_UPVOTE",
+		OpID:        generateOperationID(postID, pubkey, time.Now().UnixNano()),
 		Pubkey:      pubkey,
 		VoterPubkey: pubkey,
 		PostID:      postID,
@@ -745,7 +896,37 @@ func (a *App) PublishPostUpvote(pubkey string, postID string) error {
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.scheduleVoteStateBroadcast(pubkey, postID, "")
+	return nil
+}
+
+func (a *App) PublishPostDownvote(pubkey string, postID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+
+	msg := IncomingMessage{
+		Type:        "POST_DOWNVOTE",
+		OpID:        generateOperationID(postID, pubkey, time.Now().UnixNano()),
+		Pubkey:      pubkey,
+		VoterPubkey: pubkey,
+		PostID:      postID,
+		Timestamp:   time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	a.scheduleVoteStateBroadcast(pubkey, postID, "")
+	return nil
 }
 
 func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID string) error {
@@ -756,17 +937,9 @@ func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID strin
 		return errors.New("pubkey, post id and comment id are required")
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	msg := IncomingMessage{
 		Type:        "COMMENT_UPVOTE",
+		OpID:        generateOperationID(commentID, pubkey, time.Now().UnixNano()),
 		Pubkey:      pubkey,
 		VoterPubkey: pubkey,
 		PostID:      postID,
@@ -783,7 +956,39 @@ func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID strin
 		return err
 	}
 
-	return topic.Publish(ctx, payload)
+	a.scheduleVoteStateBroadcast(pubkey, postID, commentID)
+	return nil
+}
+
+func (a *App) PublishCommentDownvote(pubkey string, postID string, commentID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || postID == "" || commentID == "" {
+		return errors.New("pubkey, post id and comment id are required")
+	}
+
+	msg := IncomingMessage{
+		Type:        "COMMENT_DOWNVOTE",
+		OpID:        generateOperationID(commentID, pubkey, time.Now().UnixNano()),
+		Pubkey:      pubkey,
+		VoterPubkey: pubkey,
+		PostID:      postID,
+		CommentID:   commentID,
+		Timestamp:   time.Now().Unix(),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if err = a.ProcessIncomingMessage(payload); err != nil {
+		return err
+	}
+
+	a.scheduleVoteStateBroadcast(pubkey, postID, commentID)
+	return nil
 }
 
 func (a *App) publishFavoriteOperation(record FavoriteOpRecord) error {
@@ -818,14 +1023,9 @@ func (a *App) publishFavoriteOperation(record FavoriteOpRecord) error {
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return nil
-	}
-
-	return topic.Publish(ctx, payload)
+	a.publishPayloadAsync(topic, payload, "FAVORITE_OP")
+	return nil
 }
 
 func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL string) error {
@@ -2168,6 +2368,8 @@ func (a *App) handleSyncSummaryRequest(localPeerID string, message IncomingMessa
 
 	response := IncomingMessage{
 		Type:               messageTypeSyncSummaryResponse,
+		SchemaVersion:      lamportSchemaV2,
+		AuthScope:          authScopeUser,
 		RequestID:          requestID,
 		RequesterPeerID:    requester,
 		ResponderPeerID:    localPeerID,
@@ -2207,14 +2409,19 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 
 	summaries := make([]SyncPostDigest, 0, len(message.Summaries))
 	for _, item := range message.Summaries {
-		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.ContentCID) == "" {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Pubkey) == "" {
+			continue
+		}
+		if !item.Deleted && strings.TrimSpace(item.ContentCID) == "" {
 			continue
 		}
 		summaries = append(summaries, item)
 	}
 
 	sort.SliceStable(summaries, func(i int, j int) bool {
-		return summaries[i].Timestamp > summaries[j].Timestamp
+		left := LamportVersion{Lamport: summaries[i].Lamport, Author: summaries[i].Pubkey, OpID: summaries[i].OpID}
+		right := LamportVersion{Lamport: summaries[j].Lamport, Author: summaries[j].Pubkey, OpID: summaries[j].OpID}
+		return compareLamportVersion(left, right) > 0
 	})
 
 	insertedAny := false
@@ -2233,8 +2440,14 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 	}
 
 	for _, digest := range summaries {
-		allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
-		if allowErr != nil || !allowed {
+		allowed := true
+		if !(digest.Deleted || normalizeOperationType(digest.OpType, postOpTypeCreate) == postOpTypeDelete) {
+			allowResult, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
+			if allowErr != nil || !allowResult {
+				continue
+			}
+		}
+		if !allowed {
 			continue
 		}
 
@@ -2254,7 +2467,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 			indexBudget--
 		}
 
-		if bodyFetchBudget > 0 {
+		if !digest.Deleted && bodyFetchBudget > 0 {
 			hasBlob, blobErr := a.hasContentBlobLocal(digest.ContentCID)
 			if blobErr == nil && !hasBlob {
 				cid := strings.TrimSpace(digest.ContentCID)
@@ -2406,6 +2619,8 @@ func (a *App) handleCommentSyncRequest(localPeerID string, message IncomingMessa
 
 	response := IncomingMessage{
 		Type:             messageTypeCommentSyncResponse,
+		SchemaVersion:    lamportSchemaV2,
+		AuthScope:        authScopeUser,
 		RequestID:        requestID,
 		RequesterPeerID:  requester,
 		ResponderPeerID:  localPeerID,
@@ -2448,7 +2663,10 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 
 	commentSummaries := make([]SyncCommentDigest, 0, len(message.CommentSummaries))
 	for _, item := range message.CommentSummaries {
-		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.PostID) == "" || strings.TrimSpace(item.Pubkey) == "" || strings.TrimSpace(item.Body) == "" {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.PostID) == "" || strings.TrimSpace(item.Pubkey) == "" {
+			continue
+		}
+		if !item.Deleted && strings.TrimSpace(item.Body) == "" && len(item.Attachments) == 0 {
 			continue
 		}
 		commentSummaries = append(commentSummaries, item)
@@ -2459,7 +2677,9 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 	}
 
 	sort.SliceStable(commentSummaries, func(i int, j int) bool {
-		return commentSummaries[i].Timestamp > commentSummaries[j].Timestamp
+		left := LamportVersion{Lamport: commentSummaries[i].Lamport, Author: commentSummaries[i].Pubkey, OpID: commentSummaries[i].OpID}
+		right := LamportVersion{Lamport: commentSummaries[j].Lamport, Author: commentSummaries[j].Pubkey, OpID: commentSummaries[j].OpID}
+		return compareLamportVersion(left, right) > 0
 	})
 
 	inserted := 0
@@ -2470,9 +2690,11 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 		viewerPubkey = strings.TrimSpace(identity.PublicKey)
 	}
 	for _, digest := range commentSummaries {
-		allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
-		if allowErr != nil || !allowed {
-			continue
+		if !(digest.Deleted || normalizeOperationType(digest.OpType, postOpTypeCreate) == postOpTypeDelete) {
+			allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
+			if allowErr != nil || !allowed {
+				continue
+			}
 		}
 
 		if strings.TrimSpace(digest.DisplayName) != "" || strings.TrimSpace(digest.AvatarURL) != "" {
@@ -2481,18 +2703,29 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 			}
 		}
 
-		if _, err := a.insertComment(Comment{
-			ID:          digest.ID,
-			PostID:      digest.PostID,
-			ParentID:    digest.ParentID,
-			Pubkey:      digest.Pubkey,
-			Body:        digest.Body,
-			Attachments: digest.Attachments,
-			Score:       digest.Score,
-			Timestamp:   digest.Timestamp,
-			Lamport:     digest.Lamport,
-		}); err != nil {
-			continue
+		if digest.Deleted || normalizeOperationType(digest.OpType, postOpTypeCreate) == postOpTypeDelete {
+			deleteLamport := digest.Lamport
+			if digest.DeletedAtLamport > deleteLamport {
+				deleteLamport = digest.DeletedAtLamport
+			}
+			if err := a.upsertCommentTombstone(digest.ID, digest.PostID, digest.Pubkey, digest.Timestamp, deleteLamport, digest.OpID); err != nil {
+				continue
+			}
+		} else {
+			if _, err := a.insertComment(Comment{
+				ID:          digest.ID,
+				PostID:      digest.PostID,
+				ParentID:    digest.ParentID,
+				Pubkey:      digest.Pubkey,
+				OpID:        digest.OpID,
+				Body:        digest.Body,
+				Attachments: digest.Attachments,
+				Score:       digest.Score,
+				Timestamp:   digest.Timestamp,
+				Lamport:     digest.Lamport,
+			}); err != nil {
+				continue
+			}
 		}
 
 		inserted++

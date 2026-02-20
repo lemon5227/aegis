@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 	"image/png"
 	"math"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +39,7 @@ const (
 type ForumMessage struct {
 	ID          string `json:"id"`
 	Pubkey      string `json:"pubkey"`
+	OpID        string `json:"opId,omitempty"`
 	Title       string `json:"title"`
 	Body        string `json:"body"`
 	ContentCID  string `json:"contentCid"`
@@ -55,6 +58,8 @@ type ForumMessage struct {
 	SubID       string `json:"subId"`
 	IsProtected int    `json:"isProtected"`
 	Visibility  string `json:"visibility"`
+	DeletedAt   int64  `json:"deletedAt,omitempty"`
+	DeletedBy   string `json:"deletedBy,omitempty"`
 }
 
 type PostIndex struct {
@@ -119,6 +124,7 @@ type Comment struct {
 	PostID      string              `json:"postId"`
 	ParentID    string              `json:"parentId"`
 	Pubkey      string              `json:"pubkey"`
+	OpID        string              `json:"opId,omitempty"`
 	Body        string              `json:"body"`
 	Attachments []CommentAttachment `json:"attachments,omitempty"`
 	Score       int64               `json:"score"`
@@ -218,6 +224,26 @@ type FavoriteOpRecord struct {
 	Signature string `json:"signature"`
 }
 
+type EntityOpRecord struct {
+	OpID          string `json:"opId"`
+	EntityType    string `json:"entityType"`
+	EntityID      string `json:"entityId"`
+	OpType        string `json:"opType"`
+	AuthorPubkey  string `json:"authorPubkey"`
+	Lamport       int64  `json:"lamport"`
+	Timestamp     int64  `json:"timestamp"`
+	SchemaVersion int    `json:"schemaVersion"`
+	AuthScope     string `json:"authScope"`
+	PayloadJSON   string `json:"payloadJson"`
+}
+
+type TombstoneGCResult struct {
+	ScannedPosts    int `json:"scannedPosts"`
+	DeletedPosts    int `json:"deletedPosts"`
+	ScannedComments int `json:"scannedComments"`
+	DeletedComments int `json:"deletedComments"`
+}
+
 type GovernanceAdmin struct {
 	AdminPubkey string `json:"adminPubkey"`
 	Role        string `json:"role"`
@@ -225,40 +251,53 @@ type GovernanceAdmin struct {
 }
 
 type SyncPostDigest struct {
-	ID          string `json:"id"`
-	Pubkey      string `json:"pubkey"`
-	Title       string `json:"title"`
-	ContentCID  string `json:"content_cid"`
-	ImageCID    string `json:"image_cid"`
-	ThumbCID    string `json:"thumb_cid"`
-	ImageMIME   string `json:"image_mime"`
-	ImageSize   int64  `json:"image_size"`
-	ImageWidth  int    `json:"image_width"`
-	ImageHeight int    `json:"image_height"`
-	Timestamp   int64  `json:"timestamp"`
-	Lamport     int64  `json:"lamport"`
-	SubID       string `json:"sub_id"`
+	ID               string `json:"id"`
+	Pubkey           string `json:"pubkey"`
+	OpID             string `json:"op_id,omitempty"`
+	OpType           string `json:"op_type,omitempty"`
+	Deleted          bool   `json:"deleted,omitempty"`
+	DeletedAtLamport int64  `json:"deleted_at_lamport,omitempty"`
+	Title            string `json:"title"`
+	ContentCID       string `json:"content_cid"`
+	ImageCID         string `json:"image_cid"`
+	ThumbCID         string `json:"thumb_cid"`
+	ImageMIME        string `json:"image_mime"`
+	ImageSize        int64  `json:"image_size"`
+	ImageWidth       int    `json:"image_width"`
+	ImageHeight      int    `json:"image_height"`
+	Timestamp        int64  `json:"timestamp"`
+	Lamport          int64  `json:"lamport"`
+	SubID            string `json:"sub_id"`
 }
 
 type SyncCommentDigest struct {
-	ID          string              `json:"id"`
-	PostID      string              `json:"post_id"`
-	ParentID    string              `json:"parent_id"`
-	Pubkey      string              `json:"pubkey"`
-	DisplayName string              `json:"display_name"`
-	AvatarURL   string              `json:"avatar_url"`
-	Body        string              `json:"body"`
-	Attachments []CommentAttachment `json:"attachments,omitempty"`
-	Score       int64               `json:"score"`
-	Timestamp   int64               `json:"timestamp"`
-	Lamport     int64               `json:"lamport"`
+	ID               string              `json:"id"`
+	PostID           string              `json:"post_id"`
+	ParentID         string              `json:"parent_id"`
+	Pubkey           string              `json:"pubkey"`
+	OpID             string              `json:"op_id,omitempty"`
+	OpType           string              `json:"op_type,omitempty"`
+	Deleted          bool                `json:"deleted,omitempty"`
+	DeletedAtLamport int64               `json:"deleted_at_lamport,omitempty"`
+	DisplayName      string              `json:"display_name"`
+	AvatarURL        string              `json:"avatar_url"`
+	Body             string              `json:"body"`
+	Attachments      []CommentAttachment `json:"attachments,omitempty"`
+	Score            int64               `json:"score"`
+	Timestamp        int64               `json:"timestamp"`
+	Lamport          int64               `json:"lamport"`
 }
 
 type IncomingMessage struct {
 	Type                   string              `json:"type"`
+	OpType                 string              `json:"op_type,omitempty"`
+	OpID                   string              `json:"op_id,omitempty"`
+	SchemaVersion          int                 `json:"schema_version,omitempty"`
+	AuthScope              string              `json:"auth_scope,omitempty"`
 	ID                     string              `json:"id"`
 	Pubkey                 string              `json:"pubkey"`
 	VoterPubkey            string              `json:"voter_pubkey"`
+	VoteState              string              `json:"vote_state,omitempty"`
 	PostID                 string              `json:"post_id"`
 	CommentID              string              `json:"comment_id"`
 	ParentID               string              `json:"parent_id"`
@@ -303,6 +342,7 @@ type IncomingMessage struct {
 	SubDesc                string              `json:"sub_desc"`
 	Timestamp              int64               `json:"timestamp"`
 	Lamport                int64               `json:"lamport,omitempty"`
+	DeletedAtLamport       int64               `json:"deleted_at_lamport,omitempty"`
 	Signature              string              `json:"signature"`
 	TargetPubkey           string              `json:"target_pubkey"`
 	AdminPubkey            string              `json:"admin_pubkey"`
@@ -321,6 +361,461 @@ type KnownPeerExchange struct {
 	RelayCapable    bool     `json:"relay_capable"`
 	PublicReachable bool     `json:"public_reachable"`
 	LastSeen        int64    `json:"last_seen"`
+}
+
+type LamportVersion struct {
+	Lamport int64
+	Author  string
+	OpID    string
+}
+
+const (
+	postOpTypeCreate    = "CREATE"
+	postOpTypeUpdate    = "UPDATE"
+	postOpTypeDelete    = "DELETE"
+	lamportSchemaV2     = 2
+	authScopeUser       = "user"
+	entityTypePost      = "post"
+	entityTypeComment   = "comment"
+	voteStateNone       = "NONE"
+	voteStateUp         = "UP"
+	voteStateDown       = "DOWN"
+	defaultOpNonceBytes = 8
+)
+
+func compareLamportVersion(left LamportVersion, right LamportVersion) int {
+	if left.Lamport > right.Lamport {
+		return 1
+	}
+	if left.Lamport < right.Lamport {
+		return -1
+	}
+
+	left.Author = strings.TrimSpace(left.Author)
+	right.Author = strings.TrimSpace(right.Author)
+	if left.Author > right.Author {
+		return 1
+	}
+	if left.Author < right.Author {
+		return -1
+	}
+
+	left.OpID = strings.TrimSpace(left.OpID)
+	right.OpID = strings.TrimSpace(right.OpID)
+	if left.OpID > right.OpID {
+		return 1
+	}
+	if left.OpID < right.OpID {
+		return -1
+	}
+
+	return 0
+}
+
+func normalizeOperationType(opType string, fallback string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(opType))
+	switch normalized {
+	case postOpTypeCreate, postOpTypeUpdate, postOpTypeDelete:
+		return normalized
+	}
+
+	fallback = strings.ToUpper(strings.TrimSpace(fallback))
+	switch fallback {
+	case postOpTypeCreate, postOpTypeUpdate, postOpTypeDelete:
+		return fallback
+	default:
+		return postOpTypeCreate
+	}
+}
+
+func normalizeVoteState(state string) string {
+	state = strings.ToUpper(strings.TrimSpace(state))
+	switch state {
+	case voteStateUp, voteStateDown, voteStateNone:
+		return state
+	default:
+		return voteStateNone
+	}
+}
+
+func generateOperationID(entityID string, author string, lamport int64) string {
+	entityID = strings.TrimSpace(entityID)
+	author = strings.TrimSpace(author)
+	if lamport < 0 {
+		lamport = 0
+	}
+
+	nonce := make([]byte, defaultOpNonceBytes)
+	if _, err := rand.Read(nonce); err != nil {
+		nonceSeed := fmt.Sprintf("%s|%s|%d|%d", entityID, author, lamport, time.Now().UnixNano())
+		hash := sha256.Sum256([]byte(nonceSeed))
+		nonce = hash[:defaultOpNonceBytes]
+	}
+
+	return fmt.Sprintf("%s:%s:%d:%s", entityID, author, lamport, hex.EncodeToString(nonce))
+}
+
+func fallbackOperationID(entityID string, author string, lamport int64, opType string) string {
+	if lamport < 0 {
+		lamport = 0
+	}
+	return fmt.Sprintf("%s:%s:%d:%s", strings.TrimSpace(entityID), strings.TrimSpace(author), lamport, strings.ToLower(strings.TrimSpace(opType)))
+}
+
+func resolveOperationID(opID string, entityID string, author string, lamport int64, opType string) string {
+	opID = strings.TrimSpace(opID)
+	if opID != "" {
+		return opID
+	}
+	return fallbackOperationID(entityID, author, lamport, opType)
+}
+
+func resolveCurrentVersion(lamport int64, author string, opID string, entityID string) LamportVersion {
+	author = strings.TrimSpace(author)
+	if author == "" {
+		author = strings.TrimSpace(entityID)
+	}
+	opID = strings.TrimSpace(opID)
+	if opID == "" {
+		opID = strings.TrimSpace(entityID)
+	}
+	return LamportVersion{Lamport: lamport, Author: author, OpID: opID}
+}
+
+func normalizeAuthScope(scope string) string {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" {
+		return authScopeUser
+	}
+	return scope
+}
+
+func isDevModeEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("AEGIS_DEV_MODE")))
+	switch value {
+	case "1", "true", "yes", "on", "dev":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) IsDevMode() bool {
+	return isDevModeEnabled()
+}
+
+func marshalOperationPayload(payload any) string {
+	if payload == nil {
+		return "{}"
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil || len(encoded) == 0 {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func (a *App) appendEntityOperationTx(tx *sql.Tx, entityType string, entityID string, opType string, opID string, authorPubkey string, lamport int64, timestamp int64, schemaVersion int, authScope string, payload any) error {
+	if tx == nil {
+		return errors.New("nil transaction")
+	}
+	entityType = strings.TrimSpace(entityType)
+	entityID = strings.TrimSpace(entityID)
+	opType = normalizeOperationType(opType, postOpTypeCreate)
+	opID = strings.TrimSpace(opID)
+	authorPubkey = strings.TrimSpace(authorPubkey)
+	if entityType == "" || entityID == "" || opID == "" || authorPubkey == "" {
+		return errors.New("invalid entity operation")
+	}
+	if lamport < 0 {
+		lamport = 0
+	}
+	if timestamp <= 0 {
+		timestamp = time.Now().Unix()
+	}
+	if schemaVersion <= 0 {
+		schemaVersion = lamportSchemaV2
+	}
+
+	_, err := tx.Exec(`
+		INSERT INTO entity_ops (
+			op_id, entity_type, entity_id, op_type, author_pubkey, lamport, timestamp, schema_version, auth_scope, payload_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(op_id) DO NOTHING;
+	`, opID, entityType, entityID, opType, authorPubkey, lamport, timestamp, schemaVersion, normalizeAuthScope(authScope), marshalOperationPayload(payload))
+	return err
+}
+
+func (a *App) appendEntityOperation(entityType string, entityID string, opType string, opID string, authorPubkey string, lamport int64, timestamp int64, schemaVersion int, authScope string, payload any) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+	entityType = strings.TrimSpace(entityType)
+	entityID = strings.TrimSpace(entityID)
+	opType = normalizeOperationType(opType, postOpTypeCreate)
+	opID = strings.TrimSpace(opID)
+	authorPubkey = strings.TrimSpace(authorPubkey)
+	if entityType == "" || entityID == "" || opID == "" || authorPubkey == "" {
+		return errors.New("invalid entity operation")
+	}
+	if lamport < 0 {
+		lamport = 0
+	}
+	if timestamp <= 0 {
+		timestamp = time.Now().Unix()
+	}
+	if schemaVersion <= 0 {
+		schemaVersion = lamportSchemaV2
+	}
+
+	_, err := a.db.Exec(`
+		INSERT INTO entity_ops (
+			op_id, entity_type, entity_id, op_type, author_pubkey, lamport, timestamp, schema_version, auth_scope, payload_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(op_id) DO NOTHING;
+	`, opID, entityType, entityID, opType, authorPubkey, lamport, timestamp, schemaVersion, normalizeAuthScope(authScope), marshalOperationPayload(payload))
+	return err
+}
+
+func (a *App) ListEntityOps(entityType string, entityID string, limit int) ([]EntityOpRecord, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+	if !isDevModeEnabled() {
+		return nil, errors.New("timeline is available in dev mode only")
+	}
+
+	entityType = strings.TrimSpace(entityType)
+	entityID = strings.TrimSpace(entityID)
+	if limit <= 0 || limit > 5000 {
+		limit = 200
+	}
+
+	query := `
+		SELECT op_id, entity_type, entity_id, op_type, author_pubkey, lamport, timestamp, schema_version, auth_scope, payload_json
+		FROM entity_ops
+	`
+	args := make([]any, 0, 3)
+	if entityType != "" || entityID != "" {
+		conditions := make([]string, 0, 2)
+		if entityType != "" {
+			conditions = append(conditions, "entity_type = ?")
+			args = append(args, entityType)
+		}
+		if entityID != "" {
+			conditions = append(conditions, "entity_id = ?")
+			args = append(args, entityID)
+		}
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY lamport DESC, author_pubkey DESC, op_id DESC LIMIT ?;"
+	args = append(args, limit)
+
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]EntityOpRecord, 0, limit)
+	for rows.Next() {
+		var item EntityOpRecord
+		if err = rows.Scan(
+			&item.OpID,
+			&item.EntityType,
+			&item.EntityID,
+			&item.OpType,
+			&item.AuthorPubkey,
+			&item.Lamport,
+			&item.Timestamp,
+			&item.SchemaVersion,
+			&item.AuthScope,
+			&item.PayloadJSON,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) RunTombstoneGC(retentionDays int, requiredStablePasses int, batchSize int) (TombstoneGCResult, error) {
+	if a.db == nil {
+		return TombstoneGCResult{}, errors.New("database not initialized")
+	}
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
+	if requiredStablePasses <= 0 {
+		requiredStablePasses = 2
+	}
+	if batchSize <= 0 || batchSize > 2000 {
+		batchSize = 200
+	}
+
+	now := time.Now().Unix()
+	cutoff := now - int64(retentionDays)*24*3600
+
+	a.dbMu.Lock()
+	defer a.dbMu.Unlock()
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return TombstoneGCResult{}, err
+	}
+
+	result := TombstoneGCResult{}
+
+	processCandidate := func(entityType string, entityID string, deletedAtLamport int64) (bool, error) {
+		var markLamport int64
+		var stablePasses int
+		err := tx.QueryRow(`
+			SELECT deleted_at_lamport, stable_passes
+			FROM tombstone_gc_marks
+			WHERE entity_type = ? AND entity_id = ?;
+		`, entityType, entityID).Scan(&markLamport, &stablePasses)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+
+		if errors.Is(err, sql.ErrNoRows) || markLamport != deletedAtLamport {
+			_, err = tx.Exec(`
+				INSERT INTO tombstone_gc_marks (entity_type, entity_id, deleted_at_lamport, stable_passes, first_seen_at, last_seen_at)
+				VALUES (?, ?, ?, 1, ?, ?)
+				ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+					deleted_at_lamport = excluded.deleted_at_lamport,
+					stable_passes = 1,
+					first_seen_at = excluded.first_seen_at,
+					last_seen_at = excluded.last_seen_at;
+			`, entityType, entityID, deletedAtLamport, now, now)
+			if err != nil {
+				return false, err
+			}
+			return false, nil
+		}
+
+		stablePasses++
+		_, err = tx.Exec(`
+			UPDATE tombstone_gc_marks
+			SET stable_passes = ?, last_seen_at = ?
+			WHERE entity_type = ? AND entity_id = ?;
+		`, stablePasses, now, entityType, entityID)
+		if err != nil {
+			return false, err
+		}
+
+		return stablePasses >= requiredStablePasses, nil
+	}
+
+	postRows, err := tx.Query(`
+		SELECT id, deleted_at_lamport
+		FROM messages
+		WHERE visibility = 'deleted' AND deleted_at_ts > 0 AND deleted_at_ts <= ?
+		ORDER BY deleted_at_ts ASC
+		LIMIT ?;
+	`, cutoff, batchSize)
+	if err != nil {
+		_ = tx.Rollback()
+		return TombstoneGCResult{}, err
+	}
+	for postRows.Next() {
+		var postID string
+		var deletedAtLamport int64
+		if err = postRows.Scan(&postID, &deletedAtLamport); err != nil {
+			postRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		result.ScannedPosts++
+		ready, decideErr := processCandidate(entityTypePost, strings.TrimSpace(postID), deletedAtLamport)
+		if decideErr != nil {
+			postRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, decideErr
+		}
+		if !ready {
+			continue
+		}
+		if _, err = tx.Exec(`DELETE FROM messages WHERE id = ? AND visibility = 'deleted';`, postID); err != nil {
+			postRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		if _, err = tx.Exec(`DELETE FROM tombstone_gc_marks WHERE entity_type = ? AND entity_id = ?;`, entityTypePost, postID); err != nil {
+			postRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		result.DeletedPosts++
+	}
+	if err = postRows.Err(); err != nil {
+		postRows.Close()
+		_ = tx.Rollback()
+		return TombstoneGCResult{}, err
+	}
+	postRows.Close()
+
+	commentRows, err := tx.Query(`
+		SELECT id, deleted_at_lamport
+		FROM comments
+		WHERE deleted_at > 0 AND deleted_at <= ?
+		ORDER BY deleted_at ASC
+		LIMIT ?;
+	`, cutoff, batchSize)
+	if err != nil {
+		_ = tx.Rollback()
+		return TombstoneGCResult{}, err
+	}
+	for commentRows.Next() {
+		var commentID string
+		var deletedAtLamport int64
+		if err = commentRows.Scan(&commentID, &deletedAtLamport); err != nil {
+			commentRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		result.ScannedComments++
+		ready, decideErr := processCandidate(entityTypeComment, strings.TrimSpace(commentID), deletedAtLamport)
+		if decideErr != nil {
+			commentRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, decideErr
+		}
+		if !ready {
+			continue
+		}
+		if _, err = tx.Exec(`DELETE FROM comment_media_refs WHERE comment_id = ?;`, commentID); err != nil {
+			commentRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		if _, err = tx.Exec(`DELETE FROM comments WHERE id = ? AND deleted_at > 0;`, commentID); err != nil {
+			commentRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		if _, err = tx.Exec(`DELETE FROM tombstone_gc_marks WHERE entity_type = ? AND entity_id = ?;`, entityTypeComment, commentID); err != nil {
+			commentRows.Close()
+			_ = tx.Rollback()
+			return TombstoneGCResult{}, err
+		}
+		result.DeletedComments++
+	}
+	if err = commentRows.Err(); err != nil {
+		commentRows.Close()
+		_ = tx.Rollback()
+		return TombstoneGCResult{}, err
+	}
+	commentRows.Close()
+
+	if err = tx.Commit(); err != nil {
+		return TombstoneGCResult{}, err
+	}
+
+	return result, nil
 }
 
 const defaultSubID = "general"
@@ -372,6 +867,8 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS messages (
 			id TEXT PRIMARY KEY,
 			pubkey TEXT NOT NULL,
+			current_author_pubkey TEXT NOT NULL DEFAULT '',
+			current_op_id TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			body TEXT NOT NULL DEFAULT '',
 			content_cid TEXT NOT NULL DEFAULT '',
@@ -389,7 +886,10 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			zone TEXT NOT NULL CHECK (zone IN ('private', 'public')),
 			sub_id TEXT NOT NULL DEFAULT 'general',
 			is_protected INTEGER NOT NULL DEFAULT 0,
-			visibility TEXT NOT NULL DEFAULT 'normal'
+			visibility TEXT NOT NULL DEFAULT 'normal',
+			deleted_at_lamport INTEGER NOT NULL DEFAULT 0,
+			deleted_at_ts INTEGER NOT NULL DEFAULT 0,
+			deleted_by TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_zone_timestamp ON messages(zone, timestamp);`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_pubkey_timestamp ON messages(pubkey, timestamp);`,
@@ -461,15 +961,41 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			post_id TEXT NOT NULL,
 			parent_id TEXT NOT NULL DEFAULT '',
 			pubkey TEXT NOT NULL,
+			current_author_pubkey TEXT NOT NULL DEFAULT '',
+			current_op_id TEXT NOT NULL DEFAULT '',
 			body TEXT NOT NULL,
 			attachments_json TEXT NOT NULL DEFAULT '[]',
 			score INTEGER NOT NULL DEFAULT 0,
 			timestamp INTEGER NOT NULL,
 			lamport INTEGER NOT NULL DEFAULT 0,
+			deleted_at_lamport INTEGER NOT NULL DEFAULT 0,
 			deleted_at INTEGER NOT NULL DEFAULT 0,
 			deleted_by TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_post_timestamp ON comments(post_id, timestamp);`,
+		`CREATE TABLE IF NOT EXISTS entity_ops (
+			op_id TEXT PRIMARY KEY,
+			entity_type TEXT NOT NULL,
+			entity_id TEXT NOT NULL,
+			op_type TEXT NOT NULL,
+			author_pubkey TEXT NOT NULL,
+			lamport INTEGER NOT NULL,
+			timestamp INTEGER NOT NULL,
+			schema_version INTEGER NOT NULL DEFAULT 1,
+			auth_scope TEXT NOT NULL DEFAULT 'user',
+			payload_json TEXT NOT NULL DEFAULT '{}'
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_entity_ops_entity_lamport ON entity_ops(entity_type, entity_id, lamport DESC, op_id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_entity_ops_timestamp ON entity_ops(timestamp DESC);`,
+		`CREATE TABLE IF NOT EXISTS tombstone_gc_marks (
+			entity_type TEXT NOT NULL,
+			entity_id TEXT NOT NULL,
+			deleted_at_lamport INTEGER NOT NULL,
+			stable_passes INTEGER NOT NULL DEFAULT 0,
+			first_seen_at INTEGER NOT NULL,
+			last_seen_at INTEGER NOT NULL,
+			PRIMARY KEY (entity_type, entity_id)
+		);`,
 		`CREATE TABLE IF NOT EXISTS comment_media_refs (
 			comment_id TEXT NOT NULL,
 			content_cid TEXT NOT NULL,
@@ -490,6 +1016,24 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			PRIMARY KEY (comment_id, voter_pubkey)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_comment_votes_comment ON comment_votes(comment_id);`,
+		`CREATE TABLE IF NOT EXISTS post_downvotes (
+			post_id TEXT NOT NULL,
+			voter_pubkey TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			PRIMARY KEY (post_id, voter_pubkey)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_post_downvotes_post ON post_downvotes(post_id);`,
+		`CREATE TABLE IF NOT EXISTS comment_downvotes (
+			comment_id TEXT NOT NULL,
+			voter_pubkey TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			PRIMARY KEY (comment_id, voter_pubkey)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_comment_downvotes_comment ON comment_downvotes(comment_id);`,
+		`CREATE TABLE IF NOT EXISTS vote_ops (
+			op_id TEXT PRIMARY KEY,
+			created_at INTEGER NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS moderation (
 			target_pubkey TEXT PRIMARY KEY,
 			action TEXT NOT NULL,
@@ -661,6 +1205,32 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		}
 	}
 
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN current_author_pubkey TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN current_op_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN deleted_at_lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN deleted_at_ts INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN deleted_by TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
 	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN score INTEGER NOT NULL DEFAULT 0;`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
@@ -680,6 +1250,21 @@ func (a *App) ensureSchema(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN current_author_pubkey TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN current_op_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN deleted_at_lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
@@ -735,7 +1320,25 @@ func (a *App) ensureSchema(db *sql.DB) error {
 	if _, err := db.Exec(`UPDATE messages SET lamport = timestamp WHERE lamport = 0;`); err != nil {
 		return err
 	}
+	if _, err := db.Exec(`UPDATE messages SET current_author_pubkey = pubkey WHERE COALESCE(TRIM(current_author_pubkey), '') = '';`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE messages SET current_op_id = id WHERE COALESCE(TRIM(current_op_id), '') = '';`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE messages SET deleted_at_lamport = lamport, deleted_at_ts = timestamp, deleted_by = pubkey WHERE visibility = 'deleted' AND deleted_at_lamport = 0;`); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`UPDATE comments SET lamport = timestamp WHERE lamport = 0;`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE comments SET current_author_pubkey = pubkey WHERE COALESCE(TRIM(current_author_pubkey), '') = '';`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE comments SET current_op_id = id WHERE COALESCE(TRIM(current_op_id), '') = '';`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE comments SET deleted_at_lamport = lamport WHERE deleted_at > 0 AND deleted_at_lamport = 0;`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE moderation SET lamport = timestamp WHERE lamport = 0;`); err != nil {
@@ -882,7 +1485,7 @@ func (a *App) GetFeed() ([]ForumMessage, error) {
 	rows, err := a.db.Query(`
 		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR pubkey = ?)
+		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
 		ORDER BY timestamp DESC
 		LIMIT 200;
 	`, viewerPubkey)
@@ -946,7 +1549,7 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 		query := fmt.Sprintf(`
 			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 			FROM messages
-			WHERE zone = 'public' AND (visibility = 'normal' OR pubkey = ?) AND sub_id = ?
+			WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
 			ORDER BY %s
 			LIMIT 200;
 		`, orderBy)
@@ -986,7 +1589,7 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	query := `
 		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR pubkey = ?) AND sub_id = ?
+		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
 		ORDER BY timestamp DESC
 		LIMIT 500;
 	`
@@ -1186,7 +1789,7 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 	query := `
 		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
 		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR pubkey = ?) AND sub_id = ?
+		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
 		ORDER BY timestamp DESC
 		LIMIT 500;
 	`
@@ -1267,7 +1870,7 @@ func (a *App) GetPostIndexByID(postID string) (PostIndex, error) {
 		FROM messages
 		WHERE id = ?
 		  AND (
-			(zone = 'public' AND (visibility = 'normal' OR pubkey = ?))
+			(zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')))
 			OR (zone = 'private' AND pubkey = ?)
 		  )
 		LIMIT 1;
@@ -1339,7 +1942,7 @@ func (a *App) GetMyPosts(limit int, cursor string) (PostIndexPage, error) {
 			sub_id,
 			visibility
 		FROM messages
-		WHERE pubkey = ?
+		WHERE pubkey = ? AND visibility != 'deleted'
 	`
 	if cursorTs > 0 && cursorPostID != "" {
 		query += `
@@ -1800,9 +2403,9 @@ func (a *App) listRecentPublicPostDigests(limit int) ([]SyncPostDigest, error) {
 	}
 
 	rows, err := a.db.Query(`
-		SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
+		SELECT id, pubkey, current_op_id, visibility, deleted_at_lamport, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, lamport, sub_id
 		FROM messages
-		WHERE zone = 'public' AND visibility = 'normal' AND content_cid != ''
+		WHERE zone = 'public' AND (visibility = 'normal' OR visibility = 'deleted')
 		ORDER BY timestamp DESC
 		LIMIT ?;
 	`, limit)
@@ -1814,8 +2417,15 @@ func (a *App) listRecentPublicPostDigests(limit int) ([]SyncPostDigest, error) {
 	result := make([]SyncPostDigest, 0, limit)
 	for rows.Next() {
 		var digest SyncPostDigest
-		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.SubID); err != nil {
+		var visibility string
+		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.OpID, &visibility, &digest.DeletedAtLamport, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID); err != nil {
 			return nil, err
+		}
+		digest.Deleted = strings.EqualFold(strings.TrimSpace(visibility), "deleted")
+		if digest.Deleted {
+			digest.OpType = postOpTypeDelete
+		} else {
+			digest.OpType = postOpTypeCreate
 		}
 		result = append(result, digest)
 	}
@@ -1885,20 +2495,20 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 	if sinceTimestamp > 0 {
 		if policy.HideHistoryOnShadowBan {
 			rows, err = a.db.Query(`
-				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				SELECT m.id, m.pubkey, m.current_op_id, m.visibility, m.deleted_at_lamport, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
 				FROM messages m
 				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != '' AND m.timestamp >= ?
+				WHERE m.zone = 'public' AND m.timestamp >= ?
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY m.timestamp ASC
 				LIMIT ?;
 			`, sinceTimestamp, limit)
 		} else {
 			rows, err = a.db.Query(`
-				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				SELECT m.id, m.pubkey, m.current_op_id, m.visibility, m.deleted_at_lamport, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
 				FROM messages m
 				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != '' AND m.timestamp >= ?
+				WHERE m.zone = 'public' AND m.timestamp >= ?
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -1912,20 +2522,20 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 	} else {
 		if policy.HideHistoryOnShadowBan {
 			rows, err = a.db.Query(`
-				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				SELECT m.id, m.pubkey, m.current_op_id, m.visibility, m.deleted_at_lamport, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
 				FROM messages m
 				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != ''
+				WHERE m.zone = 'public'
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY m.timestamp DESC
 				LIMIT ?;
 			`, limit)
 		} else {
 			rows, err = a.db.Query(`
-				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				SELECT m.id, m.pubkey, m.current_op_id, m.visibility, m.deleted_at_lamport, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
 				FROM messages m
 				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != ''
+				WHERE m.zone = 'public'
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -1945,8 +2555,16 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 	result := make([]SyncPostDigest, 0, limit)
 	for rows.Next() {
 		var digest SyncPostDigest
-		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID); err != nil {
+		var visibility string
+		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.OpID, &visibility, &digest.DeletedAtLamport, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID); err != nil {
 			return nil, err
+		}
+		digest.Deleted = strings.EqualFold(strings.TrimSpace(visibility), "deleted")
+		if digest.Deleted {
+			digest.OpType = postOpTypeDelete
+			digest.ContentCID = ""
+		} else {
+			digest.OpType = postOpTypeCreate
 		}
 		result = append(result, digest)
 	}
@@ -1975,26 +2593,26 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 	if sinceTimestamp > 0 {
 		if policy.HideHistoryOnShadowBan {
 			rows, err = a.db.Query(`
-				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 				FROM comments c
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.timestamp >= ?
+				WHERE m.zone = 'public' AND c.timestamp >= ?
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY c.timestamp ASC
 				LIMIT ?;
 			`, sinceTimestamp, limit)
 		} else {
 			rows, err = a.db.Query(`
-				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 				FROM comments c
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.timestamp >= ?
+				WHERE m.zone = 'public' AND c.timestamp >= ?
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2008,26 +2626,26 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 	} else {
 		if policy.HideHistoryOnShadowBan {
 			rows, err = a.db.Query(`
-				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 				FROM comments c
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0
+				WHERE m.zone = 'public'
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY c.timestamp DESC
 				LIMIT ?;
 			`, limit)
 		} else {
 			rows, err = a.db.Query(`
-				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 				FROM comments c
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0
+				WHERE m.zone = 'public'
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2048,20 +2666,34 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 	for rows.Next() {
 		var item SyncCommentDigest
 		var attachmentsJSON string
+		var deletedAtLamport int64
+		var deletedAt int64
 		if err = rows.Scan(
 			&item.ID,
 			&item.PostID,
 			&item.ParentID,
 			&item.Pubkey,
+			&item.OpID,
 			&item.Body,
 			&attachmentsJSON,
 			&item.Score,
 			&item.Timestamp,
 			&item.Lamport,
+			&deletedAtLamport,
+			&deletedAt,
 			&item.DisplayName,
 			&item.AvatarURL,
 		); err != nil {
 			return nil, err
+		}
+		item.Deleted = deletedAt > 0
+		item.DeletedAtLamport = deletedAtLamport
+		if item.Deleted {
+			item.OpType = postOpTypeDelete
+			item.Body = ""
+			attachmentsJSON = "[]"
+		} else {
+			item.OpType = postOpTypeCreate
 		}
 		item.Attachments = decodeCommentAttachmentsJSON(attachmentsJSON)
 		result = append(result, item)
@@ -2092,26 +2724,26 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 	var rows *sql.Rows
 	if policy.HideHistoryOnShadowBan {
 		rows, err = a.db.Query(`
-			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 			FROM comments c
 			JOIN messages m ON m.id = c.post_id
 			LEFT JOIN profiles p ON p.pubkey = c.pubkey
 			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.post_id = ? AND c.timestamp >= ?
+			WHERE m.zone = 'public' AND c.post_id = ? AND c.timestamp >= ?
 			  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 			ORDER BY c.timestamp ASC
 			LIMIT ?;
 		`, postID, sinceTimestamp, limit)
 	} else {
 		rows, err = a.db.Query(`
-			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.current_op_id, c.body, c.attachments_json, c.score, c.timestamp, c.lamport, c.deleted_at_lamport, c.deleted_at,
 			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
 			FROM comments c
 			JOIN messages m ON m.id = c.post_id
 			LEFT JOIN profiles p ON p.pubkey = c.pubkey
 			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.post_id = ? AND c.timestamp >= ?
+			WHERE m.zone = 'public' AND c.post_id = ? AND c.timestamp >= ?
 			  AND (
 				mo.action IS NULL
 				OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2131,20 +2763,34 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 	for rows.Next() {
 		var item SyncCommentDigest
 		var attachmentsJSON string
+		var deletedAtLamport int64
+		var deletedAt int64
 		if err = rows.Scan(
 			&item.ID,
 			&item.PostID,
 			&item.ParentID,
 			&item.Pubkey,
+			&item.OpID,
 			&item.Body,
 			&attachmentsJSON,
 			&item.Score,
 			&item.Timestamp,
 			&item.Lamport,
+			&deletedAtLamport,
+			&deletedAt,
 			&item.DisplayName,
 			&item.AvatarURL,
 		); err != nil {
 			return nil, err
+		}
+		item.Deleted = deletedAt > 0
+		item.DeletedAtLamport = deletedAtLamport
+		if item.Deleted {
+			item.OpType = postOpTypeDelete
+			item.Body = ""
+			attachmentsJSON = "[]"
+		} else {
+			item.OpType = postOpTypeCreate
 		}
 		item.Attachments = decodeCommentAttachmentsJSON(attachmentsJSON)
 		result = append(result, item)
@@ -2232,6 +2878,8 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 
 	digest.ID = strings.TrimSpace(digest.ID)
 	digest.Pubkey = strings.TrimSpace(digest.Pubkey)
+	digest.OpType = normalizeOperationType(digest.OpType, postOpTypeCreate)
+	digest.OpID = resolveOperationID(digest.OpID, digest.ID, digest.Pubkey, digest.Lamport, digest.OpType)
 	digest.Title = strings.TrimSpace(digest.Title)
 	digest.ContentCID = strings.TrimSpace(digest.ContentCID)
 	digest.ImageCID = strings.TrimSpace(digest.ImageCID)
@@ -2244,74 +2892,149 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 	if digest.Lamport <= 0 {
 		digest.Lamport = digest.Timestamp
 	}
+	if digest.DeletedAtLamport > digest.Lamport {
+		digest.Lamport = digest.DeletedAtLamport
+	}
+	digest.OpID = resolveOperationID(digest.OpID, digest.ID, digest.Pubkey, digest.Lamport, digest.OpType)
 
-	if digest.ID == "" || digest.Pubkey == "" || digest.ContentCID == "" {
+	if digest.ID == "" || digest.Pubkey == "" {
 		return false, errors.New("invalid sync digest")
 	}
-	var existingVisibility string
-	if err := a.db.QueryRow(`SELECT visibility FROM messages WHERE id = ?;`, digest.ID).Scan(&existingVisibility); err == nil {
-		if strings.EqualFold(strings.TrimSpace(existingVisibility), "deleted") {
-			return false, nil
-		}
-	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if !digest.Deleted && digest.ContentCID == "" {
+		return false, errors.New("invalid sync digest")
+	}
+
+	var (
+		existingPubkey       string
+		existingLamport      int64
+		existingAuthorPubkey string
+		existingOpID         string
+		existingDeletedL     int64
+	)
+	err := a.db.QueryRow(`
+		SELECT pubkey, lamport, current_author_pubkey, current_op_id, deleted_at_lamport
+		FROM messages
+		WHERE id = ?;
+	`, digest.ID).Scan(&existingPubkey, &existingLamport, &existingAuthorPubkey, &existingOpID, &existingDeletedL)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
+	existingRow := err == nil
+	if err == nil {
+		existingPubkey = strings.TrimSpace(existingPubkey)
+		if existingPubkey != "" && existingPubkey != digest.Pubkey {
+			return false, errors.New("unauthorized post operation")
+		}
+		if strings.TrimSpace(existingAuthorPubkey) == "" {
+			existingAuthorPubkey = existingPubkey
+		}
+		if strings.TrimSpace(existingOpID) == "" {
+			existingOpID = digest.ID
+		}
+
+		incomingVersion := LamportVersion{Lamport: digest.Lamport, Author: digest.Pubkey, OpID: digest.OpID}
+		currentVersion := LamportVersion{Lamport: existingLamport, Author: existingAuthorPubkey, OpID: existingOpID}
+		if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+			return false, nil
+		}
+		if existingDeletedL > 0 {
+			tombstoneVersion := LamportVersion{Lamport: existingDeletedL, Author: existingAuthorPubkey, OpID: existingOpID}
+			if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+				return false, nil
+			}
+		}
+	}
+
 	if digest.Title == "" {
 		digest.Title = "Untitled"
 	}
 
+	if digest.Deleted || digest.OpType == postOpTypeDelete {
+		if digest.DeletedAtLamport <= 0 {
+			digest.DeletedAtLamport = digest.Lamport
+		}
+		result, execErr := a.db.Exec(`
+			INSERT INTO messages (
+				id, pubkey, current_author_pubkey, current_op_id, title, body, content_cid, image_cid, thumb_cid, image_mime,
+				image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected,
+				visibility, deleted_at_lamport, deleted_at_ts, deleted_by
+			)
+			VALUES (?, ?, ?, ?, '[deleted]', '', '', '', '', '', 0, 0, 0, '', 0, ?, ?, 0, 'public', ?, 0, 'deleted', ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				pubkey = excluded.pubkey,
+				current_author_pubkey = excluded.current_author_pubkey,
+				current_op_id = excluded.current_op_id,
+				title = '[deleted]',
+				body = '',
+				content = '',
+				content_cid = '',
+				image_cid = '',
+				thumb_cid = '',
+				image_mime = '',
+				image_size = 0,
+				image_width = 0,
+				image_height = 0,
+				timestamp = excluded.timestamp,
+				lamport = excluded.lamport,
+				sub_id = excluded.sub_id,
+				visibility = 'deleted',
+				deleted_at_lamport = excluded.deleted_at_lamport,
+				deleted_at_ts = excluded.deleted_at_ts,
+				deleted_by = excluded.deleted_by;
+		`, digest.ID, digest.Pubkey, digest.Pubkey, digest.OpID, digest.Timestamp, digest.Lamport, digest.SubID, digest.DeletedAtLamport, digest.Timestamp, digest.Pubkey)
+		if execErr != nil {
+			return false, execErr
+		}
+		affected, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return false, rowsErr
+		}
+		if affected > 0 {
+			if logErr := a.appendEntityOperation(
+				entityTypePost,
+				digest.ID,
+				postOpTypeDelete,
+				digest.OpID,
+				digest.Pubkey,
+				digest.Lamport,
+				digest.Timestamp,
+				lamportSchemaV2,
+				authScopeUser,
+				map[string]any{"deletedAtLamport": digest.DeletedAtLamport, "source": "digest"},
+			); logErr != nil {
+				return false, logErr
+			}
+		}
+		return affected > 0, nil
+	}
+
 	result, err := a.db.Exec(`
 		INSERT INTO messages (
-			id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected, visibility
+			id, pubkey, current_author_pubkey, current_op_id, title, body, content_cid, image_cid, thumb_cid, image_mime,
+			image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected,
+			visibility, deleted_at_lamport, deleted_at_ts, deleted_by
 		)
-		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, 0, 'public', ?, 0, 'normal')
+		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, 0, 'public', ?, 0, 'normal', 0, 0, '')
 		ON CONFLICT(id) DO UPDATE SET
-			content_cid = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.content_cid
-				WHEN COALESCE(messages.content_cid, '') = '' THEN excluded.content_cid
-				ELSE messages.content_cid
-			END,
-			image_cid = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.image_cid
-				WHEN COALESCE(messages.image_cid, '') = '' THEN excluded.image_cid
-				ELSE messages.image_cid
-			END,
-			thumb_cid = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.thumb_cid
-				WHEN COALESCE(messages.thumb_cid, '') = '' THEN excluded.thumb_cid
-				ELSE messages.thumb_cid
-			END,
-			image_mime = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.image_mime
-				WHEN COALESCE(messages.image_mime, '') = '' THEN excluded.image_mime
-				ELSE messages.image_mime
-			END,
-			image_size = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.image_size
-				WHEN COALESCE(messages.image_size, 0) = 0 THEN excluded.image_size
-				ELSE messages.image_size
-			END,
-			image_width = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.image_width
-				WHEN COALESCE(messages.image_width, 0) = 0 THEN excluded.image_width
-				ELSE messages.image_width
-			END,
-			image_height = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.image_height
-				WHEN COALESCE(messages.image_height, 0) = 0 THEN excluded.image_height
-				ELSE messages.image_height
-			END,
-			lamport = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.lamport
-				WHEN COALESCE(messages.lamport, 0) = 0 THEN excluded.lamport
-				ELSE messages.lamport
-			END,
-			sub_id = CASE
-				WHEN messages.visibility = 'deleted' THEN messages.sub_id
-				WHEN COALESCE(messages.sub_id, '') = '' THEN excluded.sub_id
-				ELSE messages.sub_id
-			END;
-	`, digest.ID, digest.Pubkey, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.Lamport, digest.SubID)
+			pubkey = excluded.pubkey,
+			current_author_pubkey = excluded.current_author_pubkey,
+			current_op_id = excluded.current_op_id,
+			title = excluded.title,
+			content_cid = excluded.content_cid,
+			image_cid = excluded.image_cid,
+			thumb_cid = excluded.thumb_cid,
+			image_mime = excluded.image_mime,
+			image_size = excluded.image_size,
+			image_width = excluded.image_width,
+			image_height = excluded.image_height,
+			timestamp = excluded.timestamp,
+			lamport = excluded.lamport,
+			sub_id = excluded.sub_id,
+			visibility = 'normal',
+			deleted_at_lamport = 0,
+			deleted_at_ts = 0,
+			deleted_by = '';
+	`, digest.ID, digest.Pubkey, digest.Pubkey, digest.OpID, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.Lamport, digest.SubID)
 	if err != nil {
 		return false, err
 	}
@@ -2319,6 +3042,30 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, err
+	}
+	if affected > 0 {
+		opType := normalizeOperationType(digest.OpType, postOpTypeCreate)
+		if opType != postOpTypeDelete {
+			if existingRow {
+				opType = postOpTypeUpdate
+			} else {
+				opType = postOpTypeCreate
+			}
+		}
+		if logErr := a.appendEntityOperation(
+			entityTypePost,
+			digest.ID,
+			opType,
+			digest.OpID,
+			digest.Pubkey,
+			digest.Lamport,
+			digest.Timestamp,
+			lamportSchemaV2,
+			authScopeUser,
+			map[string]any{"subId": digest.SubID, "source": "digest"},
+		); logErr != nil {
+			return false, logErr
+		}
 	}
 
 	return affected > 0, nil
@@ -3363,8 +4110,13 @@ func (a *App) ResetLocalTestData() error {
 		`DELETE FROM comments;`,
 		`DELETE FROM comment_votes;`,
 		`DELETE FROM post_votes;`,
+		`DELETE FROM comment_downvotes;`,
+		`DELETE FROM post_downvotes;`,
+		`DELETE FROM vote_ops;`,
 		`DELETE FROM post_favorite_ops;`,
 		`DELETE FROM post_favorites_state;`,
+		`DELETE FROM entity_ops;`,
+		`DELETE FROM tombstone_gc_marks;`,
 		`DELETE FROM messages;`,
 		`DELETE FROM content_blobs;`,
 		`DELETE FROM media_blobs;`,
@@ -3528,6 +4280,9 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		_, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp)
 		return err
 	case "POST_DELETE":
+		if scope := strings.TrimSpace(strings.ToLower(message.AuthScope)); scope != "" && scope != authScopeUser {
+			return errors.New("invalid post delete auth scope")
+		}
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid post delete payload")
 		}
@@ -3538,8 +4293,33 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if err != nil {
 			return err
 		}
-		return a.deleteLocalPostAsAuthor(message.Pubkey, message.PostID, message.Timestamp, lamport)
+		deleteLamport := lamport
+		if message.DeletedAtLamport > deleteLamport {
+			deleteLamport = message.DeletedAtLamport
+		}
+		err = a.deleteLocalPostAsAuthor(message.Pubkey, message.PostID, message.Timestamp, deleteLamport, message.OpID)
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "post not found") {
+			_, upsertErr := a.upsertPublicPostIndexFromDigest(SyncPostDigest{
+				ID:               strings.TrimSpace(message.PostID),
+				Pubkey:           strings.TrimSpace(message.Pubkey),
+				OpID:             resolveOperationID(message.OpID, message.PostID, message.Pubkey, deleteLamport, postOpTypeDelete),
+				OpType:           postOpTypeDelete,
+				Deleted:          true,
+				Timestamp:        message.Timestamp,
+				Lamport:          deleteLamport,
+				DeletedAtLamport: deleteLamport,
+				SubID:            defaultSubID,
+			})
+			return upsertErr
+		}
+		return err
 	case "COMMENT_DELETE":
+		if scope := strings.TrimSpace(strings.ToLower(message.AuthScope)); scope != "" && scope != authScopeUser {
+			return errors.New("invalid comment delete auth scope")
+		}
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.CommentID) == "" {
 			return errors.New("invalid comment delete payload")
 		}
@@ -3550,7 +4330,17 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if err != nil {
 			return err
 		}
-		_, err = a.deleteLocalCommentAsAuthor(message.Pubkey, message.CommentID, message.Timestamp, lamport)
+		deleteLamport := lamport
+		if message.DeletedAtLamport > deleteLamport {
+			deleteLamport = message.DeletedAtLamport
+		}
+		_, err = a.deleteLocalCommentAsAuthor(message.Pubkey, message.CommentID, message.Timestamp, deleteLamport, message.OpID)
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "comment not found") {
+			return a.upsertCommentTombstone(message.CommentID, strings.TrimSpace(message.PostID), message.Pubkey, message.Timestamp, deleteLamport, message.OpID)
+		}
 		return err
 	case "POST_UPVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
@@ -3561,7 +4351,26 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid post upvote payload")
 		}
 
-		return a.applyPostUpvote(voterPubkey, message.PostID)
+		return a.applyPostUpvote(voterPubkey, message.PostID, message.OpID)
+	case "POST_DOWNVOTE":
+		voterPubkey := strings.TrimSpace(message.VoterPubkey)
+		if voterPubkey == "" {
+			voterPubkey = strings.TrimSpace(message.Pubkey)
+		}
+		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
+			return errors.New("invalid post downvote payload")
+		}
+
+		return a.applyPostDownvote(voterPubkey, message.PostID, message.OpID)
+	case "POST_VOTE_SET":
+		voterPubkey := strings.TrimSpace(message.VoterPubkey)
+		if voterPubkey == "" {
+			voterPubkey = strings.TrimSpace(message.Pubkey)
+		}
+		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
+			return errors.New("invalid post vote set payload")
+		}
+		return a.applyPostVoteState(voterPubkey, message.PostID, message.VoteState, message.OpID)
 	case "COMMENT_UPVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -3571,7 +4380,26 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid comment upvote payload")
 		}
 
-		return a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID)
+		return a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID, message.OpID)
+	case "COMMENT_DOWNVOTE":
+		voterPubkey := strings.TrimSpace(message.VoterPubkey)
+		if voterPubkey == "" {
+			voterPubkey = strings.TrimSpace(message.Pubkey)
+		}
+		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
+			return errors.New("invalid comment downvote payload")
+		}
+
+		return a.applyCommentDownvote(voterPubkey, message.CommentID, message.PostID, message.OpID)
+	case "COMMENT_VOTE_SET":
+		voterPubkey := strings.TrimSpace(message.VoterPubkey)
+		if voterPubkey == "" {
+			voterPubkey = strings.TrimSpace(message.Pubkey)
+		}
+		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
+			return errors.New("invalid comment vote set payload")
+		}
+		return a.applyCommentVoteState(voterPubkey, message.CommentID, message.PostID, message.VoteState, message.OpID)
 	case messageTypeFavoriteOp:
 		localIdentity, err := a.getLocalIdentity()
 		if err != nil {
@@ -3606,6 +4434,9 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 		return nil
 	case "COMMENT":
+		if scope := strings.TrimSpace(strings.ToLower(message.AuthScope)); scope != "" && scope != authScopeUser {
+			return errors.New("invalid comment auth scope")
+		}
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid comment payload")
 		}
@@ -3656,6 +4487,7 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			PostID:      strings.TrimSpace(message.PostID),
 			ParentID:    strings.TrimSpace(message.ParentID),
 			Pubkey:      message.Pubkey,
+			OpID:        resolveOperationID(message.OpID, message.ID, message.Pubkey, message.Lamport, normalizeOperationType(message.OpType, postOpTypeCreate)),
 			Body:        commentBody,
 			Attachments: attachments,
 			Timestamp:   message.Timestamp,
@@ -3695,6 +4527,9 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 		return a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason)
 	case "POST":
+		if scope := strings.TrimSpace(strings.ToLower(message.AuthScope)); scope != "" && scope != authScopeUser {
+			return errors.New("invalid post auth scope")
+		}
 		if strings.TrimSpace(message.Pubkey) == "" {
 			return errors.New("invalid post payload")
 		}
@@ -3744,6 +4579,7 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		insertedMessage, err := a.insertMessage(ForumMessage{
 			ID:          message.ID,
 			Pubkey:      message.Pubkey,
+			OpID:        resolveOperationID(message.OpID, message.ID, message.Pubkey, message.Lamport, normalizeOperationType(message.OpType, postOpTypeCreate)),
 			Title:       title,
 			Body:        body,
 			ContentCID:  strings.TrimSpace(message.ContentCID),
@@ -3810,11 +4646,13 @@ func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, paren
 		return Comment{}, err
 	}
 	raw := fmt.Sprintf("%s|%s|%s|%s|%d", postID, parentID, body, attachmentsJSON, lamport)
+	commentID := buildMessageID(pubkey, raw, now)
 	comment := Comment{
-		ID:          buildMessageID(pubkey, raw, now),
+		ID:          commentID,
 		PostID:      postID,
 		ParentID:    parentID,
 		Pubkey:      pubkey,
+		OpID:        generateOperationID(commentID, pubkey, lamport),
 		Body:        body,
 		Attachments: attachments,
 		Score:       0,
@@ -3825,7 +4663,7 @@ func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, paren
 	return a.insertComment(comment)
 }
 
-func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt int64, lamport int64) error {
+func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt int64, lamport int64, opID string) error {
 	if a.db == nil {
 		return errors.New("database not initialized")
 	}
@@ -3840,9 +4678,20 @@ func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt in
 	if lamport <= 0 {
 		lamport = deletedAt
 	}
+	opID = resolveOperationID(opID, postID, pubkey, lamport, postOpTypeDelete)
 
-	var author string
-	err := a.db.QueryRow(`SELECT pubkey FROM messages WHERE id = ?;`, postID).Scan(&author)
+	var (
+		author           string
+		currentLamport   int64
+		currentAuthorKey string
+		currentOpID      string
+		deletedLamport   int64
+	)
+	err := a.db.QueryRow(`
+		SELECT pubkey, lamport, current_author_pubkey, current_op_id, deleted_at_lamport
+		FROM messages
+		WHERE id = ?;
+	`, postID).Scan(&author, &currentLamport, &currentAuthorKey, &currentOpID, &deletedLamport)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("post not found")
 	}
@@ -3851,6 +4700,24 @@ func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt in
 	}
 	if strings.TrimSpace(author) != pubkey {
 		return errors.New("only post author can delete this post")
+	}
+	if strings.TrimSpace(currentAuthorKey) == "" {
+		currentAuthorKey = author
+	}
+	if strings.TrimSpace(currentOpID) == "" {
+		currentOpID = postID
+	}
+
+	incomingVersion := LamportVersion{Lamport: lamport, Author: pubkey, OpID: opID}
+	currentVersion := LamportVersion{Lamport: currentLamport, Author: currentAuthorKey, OpID: currentOpID}
+	if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+		return nil
+	}
+	if deletedLamport > 0 {
+		tombstoneVersion := LamportVersion{Lamport: deletedLamport, Author: currentAuthorKey, OpID: currentOpID}
+		if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+			return nil
+		}
 	}
 
 	_, err = a.db.Exec(`
@@ -3866,14 +4733,33 @@ func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt in
 		    image_size = 0,
 		    image_width = 0,
 		    image_height = 0,
-		    timestamp = CASE WHEN timestamp > ? THEN timestamp ELSE ? END,
-		    lamport = CASE WHEN lamport > ? THEN lamport ELSE ? END
+		    timestamp = ?,
+		    lamport = ?,
+		    current_author_pubkey = ?,
+		    current_op_id = ?,
+		    deleted_at_lamport = ?,
+		    deleted_at_ts = ?,
+		    deleted_by = ?
 		WHERE id = ?;
-	`, deletedAt, deletedAt, lamport, lamport, postID)
-	return err
+	`, deletedAt, lamport, pubkey, opID, lamport, deletedAt, pubkey, postID)
+	if err != nil {
+		return err
+	}
+	return a.appendEntityOperation(
+		entityTypePost,
+		postID,
+		postOpTypeDelete,
+		opID,
+		pubkey,
+		lamport,
+		deletedAt,
+		lamportSchemaV2,
+		authScopeUser,
+		map[string]any{"deletedAtLamport": lamport},
+	)
 }
 
-func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, deletedAt int64, lamport int64) (string, error) {
+func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, deletedAt int64, lamport int64, opID string) (string, error) {
 	if a.db == nil {
 		return "", errors.New("database not initialized")
 	}
@@ -3888,12 +4774,21 @@ func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, delete
 	if lamport <= 0 {
 		lamport = deletedAt
 	}
+	opID = resolveOperationID(opID, commentID, pubkey, lamport, postOpTypeDelete)
 
 	var (
-		author string
-		postID string
+		author           string
+		postID           string
+		currentLamport   int64
+		currentAuthorKey string
+		currentOpID      string
+		deletedLamport   int64
 	)
-	err := a.db.QueryRow(`SELECT pubkey, post_id FROM comments WHERE id = ?;`, commentID).Scan(&author, &postID)
+	err := a.db.QueryRow(`
+		SELECT pubkey, post_id, lamport, current_author_pubkey, current_op_id, deleted_at_lamport
+		FROM comments
+		WHERE id = ?;
+	`, commentID).Scan(&author, &postID, &currentLamport, &currentAuthorKey, &currentOpID, &deletedLamport)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errors.New("comment not found")
 	}
@@ -3903,18 +4798,53 @@ func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, delete
 	if strings.TrimSpace(author) != pubkey {
 		return "", errors.New("only comment author can delete this comment")
 	}
+	if strings.TrimSpace(currentAuthorKey) == "" {
+		currentAuthorKey = author
+	}
+	if strings.TrimSpace(currentOpID) == "" {
+		currentOpID = commentID
+	}
+
+	incomingVersion := LamportVersion{Lamport: lamport, Author: pubkey, OpID: opID}
+	currentVersion := LamportVersion{Lamport: currentLamport, Author: currentAuthorKey, OpID: currentOpID}
+	if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+		return strings.TrimSpace(postID), nil
+	}
+	if deletedLamport > 0 {
+		tombstoneVersion := LamportVersion{Lamport: deletedLamport, Author: currentAuthorKey, OpID: currentOpID}
+		if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+			return strings.TrimSpace(postID), nil
+		}
+	}
 
 	_, err = a.db.Exec(`
 		UPDATE comments
 		SET body = '',
 		    attachments_json = '[]',
-		    deleted_at = CASE WHEN deleted_at > ? THEN deleted_at ELSE ? END,
-		    deleted_by = CASE WHEN deleted_at > 0 AND deleted_by != '' THEN deleted_by ELSE ? END,
-		    timestamp = CASE WHEN timestamp > ? THEN timestamp ELSE ? END,
-		    lamport = CASE WHEN lamport > ? THEN lamport ELSE ? END
+		    deleted_at_lamport = ?,
+		    deleted_at = ?,
+		    deleted_by = ?,
+		    timestamp = ?,
+		    lamport = ?,
+		    current_author_pubkey = ?,
+		    current_op_id = ?
 		WHERE id = ?;
-	`, deletedAt, deletedAt, pubkey, deletedAt, deletedAt, lamport, lamport, commentID)
+	`, lamport, deletedAt, pubkey, deletedAt, lamport, pubkey, opID, commentID)
 	if err != nil {
+		return "", err
+	}
+	if err = a.appendEntityOperation(
+		entityTypeComment,
+		commentID,
+		postOpTypeDelete,
+		opID,
+		pubkey,
+		lamport,
+		deletedAt,
+		lamportSchemaV2,
+		authScopeUser,
+		map[string]any{"postId": strings.TrimSpace(postID), "deletedAtLamport": lamport},
+	); err != nil {
 		return "", err
 	}
 
@@ -3931,7 +4861,20 @@ func (a *App) UpvotePost(postID string) error {
 		return err
 	}
 
-	return a.applyPostUpvote(identity.PublicKey, postID)
+	return a.applyPostUpvote(identity.PublicKey, postID, generateOperationID(postID, identity.PublicKey, time.Now().UnixNano()))
+}
+
+func (a *App) DownvotePost(postID string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+
+	return a.applyPostDownvote(identity.PublicKey, postID, generateOperationID(postID, identity.PublicKey, time.Now().UnixNano()))
 }
 
 func (a *App) UpvoteComment(commentID string) error {
@@ -3944,7 +4887,20 @@ func (a *App) UpvoteComment(commentID string) error {
 		return err
 	}
 
-	return a.applyCommentUpvote(identity.PublicKey, commentID, "")
+	return a.applyCommentUpvote(identity.PublicKey, commentID, "", generateOperationID(commentID, identity.PublicKey, time.Now().UnixNano()))
+}
+
+func (a *App) DownvoteComment(commentID string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+
+	return a.applyCommentDownvote(identity.PublicKey, commentID, "", generateOperationID(commentID, identity.PublicKey, time.Now().UnixNano()))
 }
 
 func (a *App) AddFavorite(postID string) error {
@@ -4306,9 +5262,11 @@ func (a *App) AddLocalPostStructuredToSub(pubkey string, title string, body stri
 		return ForumMessage{}, err
 	}
 	messageIDSeed := fmt.Sprintf("%s|%s|%d", title, body, lamport)
+	messageID := buildMessageID(pubkey, messageIDSeed, now)
 	message := ForumMessage{
-		ID:          buildMessageID(pubkey, messageIDSeed, now),
+		ID:          messageID,
 		Pubkey:      pubkey,
+		OpID:        generateOperationID(messageID, pubkey, lamport),
 		Title:       title,
 		Body:        body,
 		ContentCID:  buildContentCID(body),
@@ -4661,6 +5619,11 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	if message.Zone != "private" && message.Zone != "public" {
 		return ForumMessage{}, errors.New("invalid message zone")
 	}
+	message.ID = strings.TrimSpace(message.ID)
+	message.Pubkey = strings.TrimSpace(message.Pubkey)
+	if message.ID == "" || message.Pubkey == "" {
+		return ForumMessage{}, errors.New("invalid message")
+	}
 
 	if message.SizeBytes <= 0 {
 		message.SizeBytes = int64(len([]byte(message.Body)))
@@ -4671,14 +5634,7 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	if message.Lamport <= 0 {
 		message.Lamport = message.Timestamp
 	}
-	var existingVisibility string
-	if err := a.db.QueryRow(`SELECT visibility FROM messages WHERE id = ?;`, message.ID).Scan(&existingVisibility); err == nil {
-		if strings.EqualFold(strings.TrimSpace(existingVisibility), "deleted") {
-			return message, nil
-		}
-	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return ForumMessage{}, err
-	}
+	message.OpID = resolveOperationID(message.OpID, message.ID, message.Pubkey, message.Lamport, postOpTypeCreate)
 
 	message.Title = strings.TrimSpace(message.Title)
 	message.Body = strings.TrimSpace(message.Body)
@@ -4695,10 +5651,62 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	message.SizeBytes = int64(len([]byte(message.Body)))
 
 	message.SubID = normalizeSubID(message.SubID)
+	if strings.TrimSpace(message.Visibility) == "" {
+		message.Visibility = "normal"
+	}
 
 	quota := publicQuotaBytes
 	if message.Zone == "private" {
 		quota = privateQuotaBytes
+	}
+
+	var (
+		existingPubkey       string
+		existingLamport      int64
+		existingAuthorPubkey string
+		existingOpID         string
+		existingDeletedL     int64
+		existingVisibility   string
+	)
+	err := a.db.QueryRow(`
+		SELECT pubkey, lamport, current_author_pubkey, current_op_id, deleted_at_lamport, visibility
+		FROM messages
+		WHERE id = ?;
+	`, message.ID).Scan(&existingPubkey, &existingLamport, &existingAuthorPubkey, &existingOpID, &existingDeletedL, &existingVisibility)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ForumMessage{}, err
+	}
+	appliedOpType := postOpTypeCreate
+	if err == nil {
+		appliedOpType = postOpTypeUpdate
+		existingPubkey = strings.TrimSpace(existingPubkey)
+		if existingPubkey != "" && existingPubkey != message.Pubkey {
+			return ForumMessage{}, errors.New("only post author can mutate this post")
+		}
+
+		if strings.TrimSpace(existingAuthorPubkey) == "" {
+			existingAuthorPubkey = existingPubkey
+		}
+		if strings.TrimSpace(existingOpID) == "" {
+			existingOpID = message.ID
+		}
+
+		incomingVersion := LamportVersion{Lamport: message.Lamport, Author: message.Pubkey, OpID: message.OpID}
+		currentVersion := LamportVersion{Lamport: existingLamport, Author: existingAuthorPubkey, OpID: existingOpID}
+		if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+			return message, nil
+		}
+
+		if existingDeletedL > 0 {
+			tombstoneVersion := LamportVersion{Lamport: existingDeletedL, Author: existingAuthorPubkey, OpID: existingOpID}
+			if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+				return message, nil
+			}
+		}
+
+		if strings.EqualFold(strings.TrimSpace(existingVisibility), "deleted") && existingDeletedL >= message.Lamport {
+			return message, nil
+		}
 	}
 
 	a.dbMu.Lock()
@@ -4727,10 +5735,40 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	}
 
 	_, err = tx.Exec(
-		`INSERT OR REPLACE INTO messages (id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected, visibility)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+		`INSERT INTO messages (
+			id, pubkey, current_author_pubkey, current_op_id, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size,
+			image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected, visibility,
+			deleted_at_lamport, deleted_at_ts, deleted_by
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '')
+		ON CONFLICT(id) DO UPDATE SET
+			pubkey = excluded.pubkey,
+			current_author_pubkey = excluded.current_author_pubkey,
+			current_op_id = excluded.current_op_id,
+			title = excluded.title,
+			body = excluded.body,
+			content_cid = excluded.content_cid,
+			image_cid = excluded.image_cid,
+			thumb_cid = excluded.thumb_cid,
+			image_mime = excluded.image_mime,
+			image_size = excluded.image_size,
+			image_width = excluded.image_width,
+			image_height = excluded.image_height,
+			content = excluded.content,
+			timestamp = excluded.timestamp,
+			lamport = excluded.lamport,
+			size_bytes = excluded.size_bytes,
+			zone = excluded.zone,
+			sub_id = excluded.sub_id,
+			is_protected = excluded.is_protected,
+			visibility = 'normal',
+			deleted_at_lamport = 0,
+			deleted_at_ts = 0,
+			deleted_by = '';`,
 		message.ID,
 		message.Pubkey,
+		message.Pubkey,
+		message.OpID,
 		message.Title,
 		message.Body,
 		message.ContentCID,
@@ -4751,6 +5789,22 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 		message.Visibility,
 	)
 	if err != nil {
+		_ = tx.Rollback()
+		return ForumMessage{}, err
+	}
+	if err = a.appendEntityOperationTx(
+		tx,
+		entityTypePost,
+		message.ID,
+		appliedOpType,
+		message.OpID,
+		message.Pubkey,
+		message.Lamport,
+		message.Timestamp,
+		lamportSchemaV2,
+		authScopeUser,
+		map[string]any{"subId": message.SubID, "zone": message.Zone, "visibility": message.Visibility},
+	); err != nil {
 		_ = tx.Rollback()
 		return ForumMessage{}, err
 	}
@@ -4785,10 +5839,54 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	if comment.Lamport <= 0 {
 		comment.Lamport = comment.Timestamp
 	}
+	comment.OpID = resolveOperationID(comment.OpID, comment.ID, comment.Pubkey, comment.Lamport, postOpTypeCreate)
 	comment.DeletedBy = strings.TrimSpace(comment.DeletedBy)
 	if comment.DeletedAt < 0 {
 		comment.DeletedAt = 0
 	}
+
+	var (
+		existingPubkey       string
+		existingLamport      int64
+		existingAuthorPubkey string
+		existingOpID         string
+		existingDeletedL     int64
+	)
+	err := a.db.QueryRow(`
+		SELECT pubkey, lamport, current_author_pubkey, current_op_id, deleted_at_lamport
+		FROM comments
+		WHERE id = ?;
+	`, comment.ID).Scan(&existingPubkey, &existingLamport, &existingAuthorPubkey, &existingOpID, &existingDeletedL)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Comment{}, err
+	}
+	appliedOpType := postOpTypeCreate
+	if err == nil {
+		appliedOpType = postOpTypeUpdate
+		existingPubkey = strings.TrimSpace(existingPubkey)
+		if existingPubkey != "" && existingPubkey != comment.Pubkey {
+			return Comment{}, errors.New("only comment author can mutate this comment")
+		}
+		if strings.TrimSpace(existingAuthorPubkey) == "" {
+			existingAuthorPubkey = existingPubkey
+		}
+		if strings.TrimSpace(existingOpID) == "" {
+			existingOpID = comment.ID
+		}
+
+		incomingVersion := LamportVersion{Lamport: comment.Lamport, Author: comment.Pubkey, OpID: comment.OpID}
+		currentVersion := LamportVersion{Lamport: existingLamport, Author: existingAuthorPubkey, OpID: existingOpID}
+		if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+			return comment, nil
+		}
+		if existingDeletedL > 0 {
+			tombstoneVersion := LamportVersion{Lamport: existingDeletedL, Author: existingAuthorPubkey, OpID: existingOpID}
+			if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+				return comment, nil
+			}
+		}
+	}
+
 	comment.Attachments = normalizeCommentAttachments(comment.Attachments)
 	attachmentsJSON, err := encodeCommentAttachmentsJSON(comment.Attachments)
 	if err != nil {
@@ -4802,20 +5900,26 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO comments (id, post_id, parent_id, pubkey, body, attachments_json, score, timestamp, lamport, deleted_at, deleted_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO comments (
+			id, post_id, parent_id, pubkey, current_author_pubkey, current_op_id,
+			body, attachments_json, score, timestamp, lamport, deleted_at_lamport, deleted_at, deleted_by
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			post_id = comments.post_id,
-			parent_id = comments.parent_id,
-			pubkey = comments.pubkey,
-			body = CASE WHEN comments.deleted_at > 0 THEN comments.body ELSE excluded.body END,
-			attachments_json = CASE WHEN comments.deleted_at > 0 THEN comments.attachments_json ELSE excluded.attachments_json END,
-			score = CASE WHEN comments.deleted_at > 0 THEN comments.score ELSE excluded.score END,
-			timestamp = CASE WHEN comments.deleted_at > 0 THEN comments.timestamp ELSE excluded.timestamp END,
-			lamport = CASE WHEN comments.deleted_at > 0 THEN comments.lamport ELSE excluded.lamport END,
-			deleted_at = CASE WHEN comments.deleted_at > 0 THEN comments.deleted_at ELSE excluded.deleted_at END,
-			deleted_by = CASE WHEN comments.deleted_at > 0 THEN comments.deleted_by ELSE excluded.deleted_by END;
-	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Body, attachmentsJSON, comment.Score, comment.Timestamp, comment.Lamport, comment.DeletedAt, comment.DeletedBy)
+			post_id = excluded.post_id,
+			parent_id = excluded.parent_id,
+			pubkey = excluded.pubkey,
+			current_author_pubkey = excluded.current_author_pubkey,
+			current_op_id = excluded.current_op_id,
+			body = excluded.body,
+			attachments_json = excluded.attachments_json,
+			score = excluded.score,
+			timestamp = excluded.timestamp,
+			lamport = excluded.lamport,
+			deleted_at_lamport = 0,
+			deleted_at = 0,
+			deleted_by = '';
+	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Pubkey, comment.OpID, comment.Body, attachmentsJSON, comment.Score, comment.Timestamp, comment.Lamport, comment.DeletedAt, comment.DeletedBy)
 	if err != nil {
 		_ = tx.Rollback()
 		return Comment{}, err
@@ -4835,6 +5939,22 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 			return Comment{}, err
 		}
 	}
+	if err = a.appendEntityOperationTx(
+		tx,
+		entityTypeComment,
+		comment.ID,
+		appliedOpType,
+		comment.OpID,
+		comment.Pubkey,
+		comment.Lamport,
+		comment.Timestamp,
+		lamportSchemaV2,
+		authScopeUser,
+		map[string]any{"postId": comment.PostID, "deleted": false},
+	); err != nil {
+		_ = tx.Rollback()
+		return Comment{}, err
+	}
 
 	if err = tx.Commit(); err != nil {
 		return Comment{}, err
@@ -4843,73 +5963,327 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	return comment, nil
 }
 
-func (a *App) applyPostUpvote(voterPubkey string, postID string) error {
+func (a *App) upsertCommentTombstone(commentID string, postID string, pubkey string, deletedAt int64, lamport int64, opID string) error {
 	if a.db == nil {
 		return errors.New("database not initialized")
 	}
 
+	commentID = strings.TrimSpace(commentID)
+	postID = strings.TrimSpace(postID)
+	pubkey = strings.TrimSpace(pubkey)
+	if commentID == "" || postID == "" || pubkey == "" {
+		return errors.New("invalid comment tombstone")
+	}
+	if deletedAt <= 0 {
+		deletedAt = time.Now().Unix()
+	}
+	if lamport <= 0 {
+		lamport = deletedAt
+	}
+	opID = resolveOperationID(opID, commentID, pubkey, lamport, postOpTypeDelete)
+
+	var (
+		existingPubkey       string
+		existingLamport      int64
+		existingAuthorPubkey string
+		existingOpID         string
+		existingDeletedL     int64
+	)
+	err := a.db.QueryRow(`
+		SELECT pubkey, lamport, current_author_pubkey, current_op_id, deleted_at_lamport
+		FROM comments
+		WHERE id = ?;
+	`, commentID).Scan(&existingPubkey, &existingLamport, &existingAuthorPubkey, &existingOpID, &existingDeletedL)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		existingPubkey = strings.TrimSpace(existingPubkey)
+		if existingPubkey != "" && existingPubkey != pubkey {
+			return errors.New("unauthorized comment operation")
+		}
+		if strings.TrimSpace(existingAuthorPubkey) == "" {
+			existingAuthorPubkey = existingPubkey
+		}
+		if strings.TrimSpace(existingOpID) == "" {
+			existingOpID = commentID
+		}
+		incomingVersion := LamportVersion{Lamport: lamport, Author: pubkey, OpID: opID}
+		currentVersion := LamportVersion{Lamport: existingLamport, Author: existingAuthorPubkey, OpID: existingOpID}
+		if compareLamportVersion(incomingVersion, currentVersion) <= 0 {
+			return nil
+		}
+		if existingDeletedL > 0 {
+			tombstoneVersion := LamportVersion{Lamport: existingDeletedL, Author: existingAuthorPubkey, OpID: existingOpID}
+			if compareLamportVersion(incomingVersion, tombstoneVersion) <= 0 {
+				return nil
+			}
+		}
+	}
+
+	result, err := a.db.Exec(`
+		INSERT INTO comments (
+			id, post_id, parent_id, pubkey, current_author_pubkey, current_op_id,
+			body, attachments_json, score, timestamp, lamport, deleted_at_lamport, deleted_at, deleted_by
+		)
+		VALUES (?, ?, '', ?, ?, ?, '', '[]', 0, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			post_id = excluded.post_id,
+			pubkey = excluded.pubkey,
+			current_author_pubkey = excluded.current_author_pubkey,
+			current_op_id = excluded.current_op_id,
+			body = '',
+			attachments_json = '[]',
+			timestamp = excluded.timestamp,
+			lamport = excluded.lamport,
+			deleted_at_lamport = excluded.deleted_at_lamport,
+			deleted_at = excluded.deleted_at,
+			deleted_by = excluded.deleted_by;
+	`, commentID, postID, pubkey, pubkey, opID, deletedAt, lamport, lamport, deletedAt, pubkey)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nil
+	}
+	return a.appendEntityOperation(
+		entityTypeComment,
+		commentID,
+		postOpTypeDelete,
+		opID,
+		pubkey,
+		lamport,
+		deletedAt,
+		lamportSchemaV2,
+		authScopeUser,
+		map[string]any{"postId": postID, "deletedAtLamport": lamport, "source": "digest_or_delete"},
+	)
+}
+
+func (a *App) applyPostUpvote(voterPubkey string, postID string, opID string) error {
+	current, err := a.getPostVoteState(voterPubkey, postID)
+	if err != nil {
+		return err
+	}
+	target := voteStateUp
+	if current == voteStateUp {
+		target = voteStateNone
+	}
+	return a.applyPostVoteState(voterPubkey, postID, target, opID)
+}
+
+func (a *App) applyPostDownvote(voterPubkey string, postID string, opID string) error {
+	current, err := a.getPostVoteState(voterPubkey, postID)
+	if err != nil {
+		return err
+	}
+	target := voteStateDown
+	if current == voteStateDown {
+		target = voteStateNone
+	}
+	return a.applyPostVoteState(voterPubkey, postID, target, opID)
+}
+
+func (a *App) applyCommentUpvote(voterPubkey string, commentID string, postID string, opID string) error {
+	current, err := a.getCommentVoteState(voterPubkey, commentID)
+	if err != nil {
+		return err
+	}
+	target := voteStateUp
+	if current == voteStateUp {
+		target = voteStateNone
+	}
+	return a.applyCommentVoteState(voterPubkey, commentID, postID, target, opID)
+}
+
+func (a *App) applyCommentDownvote(voterPubkey string, commentID string, postID string, opID string) error {
+	current, err := a.getCommentVoteState(voterPubkey, commentID)
+	if err != nil {
+		return err
+	}
+	target := voteStateDown
+	if current == voteStateDown {
+		target = voteStateNone
+	}
+	return a.applyCommentVoteState(voterPubkey, commentID, postID, target, opID)
+}
+
+func (a *App) currentPostVoteStateTx(tx *sql.Tx, voterPubkey string, postID string) (string, error) {
+	var exists int
+	err := tx.QueryRow(`SELECT 1 FROM post_votes WHERE post_id = ? AND voter_pubkey = ? LIMIT 1;`, postID, voterPubkey).Scan(&exists)
+	if err == nil {
+		return voteStateUp, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return voteStateNone, err
+	}
+	err = tx.QueryRow(`SELECT 1 FROM post_downvotes WHERE post_id = ? AND voter_pubkey = ? LIMIT 1;`, postID, voterPubkey).Scan(&exists)
+	if err == nil {
+		return voteStateDown, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return voteStateNone, err
+	}
+	return voteStateNone, nil
+}
+
+func (a *App) getPostVoteState(voterPubkey string, postID string) (string, error) {
 	voterPubkey = strings.TrimSpace(voterPubkey)
 	postID = strings.TrimSpace(postID)
 	if voterPubkey == "" || postID == "" {
+		return voteStateNone, errors.New("voter pubkey and post id are required")
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return voteStateNone, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	state, err := a.currentPostVoteStateTx(tx, voterPubkey, postID)
+	if err != nil {
+		return voteStateNone, err
+	}
+	if err = tx.Commit(); err != nil {
+		return voteStateNone, err
+	}
+	return state, nil
+}
+
+func (a *App) currentCommentVoteStateTx(tx *sql.Tx, voterPubkey string, commentID string) (string, error) {
+	var exists int
+	err := tx.QueryRow(`SELECT 1 FROM comment_votes WHERE comment_id = ? AND voter_pubkey = ? LIMIT 1;`, commentID, voterPubkey).Scan(&exists)
+	if err == nil {
+		return voteStateUp, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return voteStateNone, err
+	}
+	err = tx.QueryRow(`SELECT 1 FROM comment_downvotes WHERE comment_id = ? AND voter_pubkey = ? LIMIT 1;`, commentID, voterPubkey).Scan(&exists)
+	if err == nil {
+		return voteStateDown, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return voteStateNone, err
+	}
+	return voteStateNone, nil
+}
+
+func (a *App) getCommentVoteState(voterPubkey string, commentID string) (string, error) {
+	voterPubkey = strings.TrimSpace(voterPubkey)
+	commentID = strings.TrimSpace(commentID)
+	if voterPubkey == "" || commentID == "" {
+		return voteStateNone, errors.New("voter pubkey and comment id are required")
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return voteStateNone, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	state, err := a.currentCommentVoteStateTx(tx, voterPubkey, commentID)
+	if err != nil {
+		return voteStateNone, err
+	}
+	if err = tx.Commit(); err != nil {
+		return voteStateNone, err
+	}
+	return state, nil
+}
+
+func voteDelta(before string, after string) int64 {
+	value := func(state string) int64 {
+		switch normalizeVoteState(state) {
+		case voteStateUp:
+			return 1
+		case voteStateDown:
+			return -1
+		default:
+			return 0
+		}
+	}
+	return value(after) - value(before)
+}
+
+func (a *App) applyPostVoteState(voterPubkey string, postID string, targetState string, opID string) error {
+	targetState = normalizeVoteState(targetState)
+	voterPubkey = strings.TrimSpace(voterPubkey)
+	postID = strings.TrimSpace(postID)
+	opID = strings.TrimSpace(opID)
+	if voterPubkey == "" || postID == "" {
 		return errors.New("voter pubkey and post id are required")
 	}
-
 	tx, err := a.db.Begin()
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.Exec(`
-		INSERT INTO post_votes (post_id, voter_pubkey, timestamp)
-		VALUES (?, ?, ?)
-		ON CONFLICT(post_id, voter_pubkey) DO NOTHING;
-	`, postID, voterPubkey, time.Now().Unix())
-	if err != nil {
-		_ = tx.Rollback()
-		return err
+	if opID != "" {
+		result, err := tx.Exec(`INSERT INTO vote_ops (op_id, created_at) VALUES (?, ?) ON CONFLICT(op_id) DO NOTHING;`, opID, time.Now().Unix())
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return tx.Commit()
+		}
 	}
 
-	inserted, err := result.RowsAffected()
+	current, err := a.currentPostVoteStateTx(tx, voterPubkey, postID)
 	if err != nil {
-		_ = tx.Rollback()
 		return err
 	}
-
-	if inserted == 0 {
+	if current == targetState {
 		return tx.Commit()
 	}
-
-	result, err = tx.Exec(`UPDATE messages SET score = score + 1 WHERE id = ?;`, postID)
-	if err != nil {
-		_ = tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM post_votes WHERE post_id = ? AND voter_pubkey = ?;`, postID, voterPubkey); err != nil {
 		return err
 	}
-
-	updated, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM post_downvotes WHERE post_id = ? AND voter_pubkey = ?;`, postID, voterPubkey); err != nil {
 		return err
 	}
-	if updated == 0 {
-		_ = tx.Rollback()
-		return errors.New("post not found")
+	switch targetState {
+	case voteStateUp:
+		if _, err = tx.Exec(`INSERT INTO post_votes (post_id, voter_pubkey, timestamp) VALUES (?, ?, ?);`, postID, voterPubkey, time.Now().Unix()); err != nil {
+			return err
+		}
+	case voteStateDown:
+		if _, err = tx.Exec(`INSERT INTO post_downvotes (post_id, voter_pubkey, timestamp) VALUES (?, ?, ?);`, postID, voterPubkey, time.Now().Unix()); err != nil {
+			return err
+		}
 	}
-
+	delta := voteDelta(current, targetState)
+	if delta != 0 {
+		result, err := tx.Exec(`UPDATE messages SET score = score + ? WHERE id = ?;`, delta, postID)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return errors.New("post not found")
+		}
+	}
 	return tx.Commit()
 }
 
-func (a *App) applyCommentUpvote(voterPubkey string, commentID string, postID string) error {
-	if a.db == nil {
-		return errors.New("database not initialized")
-	}
-
+func (a *App) applyCommentVoteState(voterPubkey string, commentID string, postID string, targetState string, opID string) error {
+	targetState = normalizeVoteState(targetState)
 	voterPubkey = strings.TrimSpace(voterPubkey)
 	commentID = strings.TrimSpace(commentID)
 	postID = strings.TrimSpace(postID)
+	opID = strings.TrimSpace(opID)
 	if voterPubkey == "" || commentID == "" {
 		return errors.New("voter pubkey and comment id are required")
 	}
-
 	if postID == "" {
 		if err := a.db.QueryRow(`SELECT post_id FROM comments WHERE id = ?;`, commentID).Scan(&postID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -4918,48 +6292,63 @@ func (a *App) applyCommentUpvote(voterPubkey string, commentID string, postID st
 			return err
 		}
 	}
-
 	tx, err := a.db.Begin()
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	result, err := tx.Exec(`
-		INSERT INTO comment_votes (comment_id, voter_pubkey, timestamp)
-		VALUES (?, ?, ?)
-		ON CONFLICT(comment_id, voter_pubkey) DO NOTHING;
-	`, commentID, voterPubkey, time.Now().Unix())
-	if err != nil {
-		_ = tx.Rollback()
-		return err
+	if opID != "" {
+		result, err := tx.Exec(`INSERT INTO vote_ops (op_id, created_at) VALUES (?, ?) ON CONFLICT(op_id) DO NOTHING;`, opID, time.Now().Unix())
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return tx.Commit()
+		}
 	}
 
-	inserted, err := result.RowsAffected()
+	current, err := a.currentCommentVoteStateTx(tx, voterPubkey, commentID)
 	if err != nil {
-		_ = tx.Rollback()
 		return err
 	}
-
-	if inserted == 0 {
+	if current == targetState {
 		return tx.Commit()
 	}
-
-	result, err = tx.Exec(`UPDATE comments SET score = score + 1 WHERE id = ? AND post_id = ?;`, commentID, postID)
-	if err != nil {
-		_ = tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM comment_votes WHERE comment_id = ? AND voter_pubkey = ?;`, commentID, voterPubkey); err != nil {
 		return err
 	}
-
-	updated, err := result.RowsAffected()
-	if err != nil {
-		_ = tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM comment_downvotes WHERE comment_id = ? AND voter_pubkey = ?;`, commentID, voterPubkey); err != nil {
 		return err
 	}
-	if updated == 0 {
-		_ = tx.Rollback()
-		return errors.New("comment not found")
+	switch targetState {
+	case voteStateUp:
+		if _, err = tx.Exec(`INSERT INTO comment_votes (comment_id, voter_pubkey, timestamp) VALUES (?, ?, ?);`, commentID, voterPubkey, time.Now().Unix()); err != nil {
+			return err
+		}
+	case voteStateDown:
+		if _, err = tx.Exec(`INSERT INTO comment_downvotes (comment_id, voter_pubkey, timestamp) VALUES (?, ?, ?);`, commentID, voterPubkey, time.Now().Unix()); err != nil {
+			return err
+		}
 	}
-
+	delta := voteDelta(current, targetState)
+	if delta != 0 {
+		result, err := tx.Exec(`UPDATE comments SET score = score + ? WHERE id = ? AND post_id = ?;`, delta, commentID, postID)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return errors.New("comment not found")
+		}
+	}
 	return tx.Commit()
 }
 
@@ -5515,25 +6904,17 @@ func (a *App) shouldAcceptPublicContent(authorPubkey string, contentLamport int6
 	}
 
 	if moderationLamport > 0 && contentLamport > 0 {
-		if contentLamport < moderationLamport {
-			return true, nil
+		contentVersion := LamportVersion{
+			Lamport: contentLamport,
+			Author:  authorPubkey,
+			OpID:    contentID,
 		}
-		if contentLamport > moderationLamport {
-			return false, nil
+		moderationVersion := LamportVersion{
+			Lamport: moderationLamport,
+			Author:  moderationAdmin,
+			OpID:    fmt.Sprintf("moderation|%s|%d|%s", authorPubkey, moderationTimestamp, action),
 		}
-
-		if contentTimestamp < moderationTimestamp {
-			return true, nil
-		}
-		if contentTimestamp > moderationTimestamp {
-			return false, nil
-		}
-
-		if contentID == "" {
-			return false, nil
-		}
-		moderationKey := fmt.Sprintf("%s|%d|%s", moderationAdmin, moderationTimestamp, action)
-		return strings.Compare(contentID, moderationKey) < 0, nil
+		return compareLamportVersion(contentVersion, moderationVersion) < 0, nil
 	}
 
 	return contentTimestamp < moderationTimestamp, nil
@@ -5924,7 +7305,7 @@ func (a *App) queryPostsBySubSet(viewerPubkey string, subIDs []string, limit int
 		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 		FROM messages
 		WHERE zone = 'public'
-		  AND (visibility = 'normal' OR pubkey = ?)
+		  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
 		  AND sub_id IN (%s)
 		ORDER BY timestamp DESC
 		LIMIT ?;
@@ -5943,7 +7324,7 @@ func (a *App) queryRecommendedPosts(viewerPubkey string, subscribedSubIDs []stri
 			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 			FROM messages
 			WHERE zone = 'public'
-			  AND (visibility = 'normal' OR pubkey = ?)
+			  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
 			ORDER BY score DESC, timestamp DESC
 			LIMIT ?;
 		`, viewerPubkey, limit)
@@ -5961,7 +7342,7 @@ func (a *App) queryRecommendedPosts(viewerPubkey string, subscribedSubIDs []stri
 		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 		FROM messages
 		WHERE zone = 'public'
-		  AND (visibility = 'normal' OR pubkey = ?)
+		  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
 		  AND sub_id NOT IN (%s)
 		ORDER BY score DESC, timestamp DESC
 		LIMIT ?;

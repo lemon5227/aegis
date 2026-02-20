@@ -26,6 +26,10 @@ export function ConnectPeer(arg1:string):Promise<void>;
 
 export function CreateSub(arg1:string,arg2:string,arg3:string):Promise<main.Sub>;
 
+export function DownvoteComment(arg1:string):Promise<void>;
+
+export function DownvotePost(arg1:string):Promise<void>;
+
 export function GenerateIdentity():Promise<main.Identity>;
 
 export function GetAntiEntropyStats():Promise<main.AntiEntropyStats>;
@@ -96,13 +100,19 @@ export function GetVersionHistory(arg1:number):Promise<Array<main.VersionHistory
 
 export function ImportIdentityFromMnemonic(arg1:string):Promise<main.Identity>;
 
+export function IsDevMode():Promise<boolean>;
+
 export function IsFavorited(arg1:string):Promise<boolean>;
+
+export function ListEntityOps(arg1:string,arg2:string,arg3:number):Promise<Array<main.EntityOpRecord>>;
 
 export function LoadSavedIdentity():Promise<main.Identity>;
 
 export function ProcessIncomingMessage(arg1:Array<number>):Promise<void>;
 
 export function PublishComment(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function PublishCommentDownvote(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function PublishCommentUpvote(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -115,6 +125,8 @@ export function PublishDeleteComment(arg1:string,arg2:string):Promise<void>;
 export function PublishDeletePost(arg1:string,arg2:string):Promise<void>;
 
 export function PublishGovernancePolicy(arg1:boolean):Promise<void>;
+
+export function PublishPostDownvote(arg1:string,arg2:string):Promise<void>;
 
 export function PublishPostStructured(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -133,6 +145,8 @@ export function PublishUnban(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function RemoveFavorite(arg1:string):Promise<void>;
 
 export function ResetLocalTestData():Promise<void>;
+
+export function RunTombstoneGC(arg1:number,arg2:number,arg3:number):Promise<main.TombstoneGCResult>;
 
 export function SaveP2PConfig(arg1:number,arg2:Array<string>,arg3:boolean):Promise<main.P2PConfig>;
 

@@ -61,6 +61,8 @@ type App struct {
 	releaseAlertMu     sync.Mutex
 	releaseAlertState  map[string]int64
 	releaseAlertActive map[string]ReleaseAlert
+	voteBroadcastMu    sync.Mutex
+	voteBroadcastSeq   map[string]int64
 }
 
 type AntiEntropyStats struct {
@@ -98,6 +100,7 @@ func NewApp() *App {
 		peerGreylist:        make(map[string]int64),
 		releaseAlertState:   make(map[string]int64),
 		releaseAlertActive:  make(map[string]ReleaseAlert),
+		voteBroadcastSeq:    make(map[string]int64),
 	}
 }
 

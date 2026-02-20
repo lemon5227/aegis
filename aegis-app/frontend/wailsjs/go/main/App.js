@@ -50,6 +50,14 @@ export function CreateSub(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateSub'](arg1, arg2, arg3);
 }
 
+export function DownvoteComment(arg1) {
+  return window['go']['main']['App']['DownvoteComment'](arg1);
+}
+
+export function DownvotePost(arg1) {
+  return window['go']['main']['App']['DownvotePost'](arg1);
+}
+
 export function GenerateIdentity() {
   return window['go']['main']['App']['GenerateIdentity']();
 }
@@ -190,8 +198,16 @@ export function ImportIdentityFromMnemonic(arg1) {
   return window['go']['main']['App']['ImportIdentityFromMnemonic'](arg1);
 }
 
+export function IsDevMode() {
+  return window['go']['main']['App']['IsDevMode']();
+}
+
 export function IsFavorited(arg1) {
   return window['go']['main']['App']['IsFavorited'](arg1);
+}
+
+export function ListEntityOps(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListEntityOps'](arg1, arg2, arg3);
 }
 
 export function LoadSavedIdentity() {
@@ -204,6 +220,10 @@ export function ProcessIncomingMessage(arg1) {
 
 export function PublishComment(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PublishComment'](arg1, arg2, arg3, arg4);
+}
+
+export function PublishCommentDownvote(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PublishCommentDownvote'](arg1, arg2, arg3);
 }
 
 export function PublishCommentUpvote(arg1, arg2, arg3) {
@@ -228,6 +248,10 @@ export function PublishDeletePost(arg1, arg2) {
 
 export function PublishGovernancePolicy(arg1) {
   return window['go']['main']['App']['PublishGovernancePolicy'](arg1);
+}
+
+export function PublishPostDownvote(arg1, arg2) {
+  return window['go']['main']['App']['PublishPostDownvote'](arg1, arg2);
 }
 
 export function PublishPostStructured(arg1, arg2, arg3) {
@@ -264,6 +288,10 @@ export function RemoveFavorite(arg1) {
 
 export function ResetLocalTestData() {
   return window['go']['main']['App']['ResetLocalTestData']();
+}
+
+export function RunTombstoneGC(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RunTombstoneGC'](arg1, arg2, arg3);
 }
 
 export function SaveP2PConfig(arg1, arg2, arg3) {
