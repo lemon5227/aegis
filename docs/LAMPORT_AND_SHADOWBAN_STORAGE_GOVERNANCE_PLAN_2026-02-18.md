@@ -232,6 +232,16 @@ DoD：
 
 ## 11. 当前状态
 
-- A1：In Progress（已接入统一判定函数，入站 `POST/COMMENT`、评论读取与反熵摘要/评论同步应用治理策略）。
-- A2/A3/A4：Pending。
-- 实施原则：每阶段完成后独立验证并推送，避免跨阶段混改。
+- A1：Done（治理判定入口统一，入站/查询/反熵链路复用统一函数）。
+- A2：Done（`messages/comments/moderation/moderation_logs` 已写入 Lamport，逻辑时钟表与出入站推进已接入）。
+- A3：Done（治理判定已切换 Lamport 优先，timestamp 为兼容回退，含稳定 tie-break）。
+- A4：Done（ban 内容不进入共享摘要，不作为回源副本，配额统计区分共享/私有责任）。
+
+### 11.1 已完成补充
+1. 评论媒体已纳入 A4 存储治理判定（comment attachment -> media serve policy）。
+2. `hideHistoryOnShadowBan=true/false` 两种策略均已接入 Lamport-first 过滤路径。
+3. 回源侧对策略拒绝统一返回 not found/policy blocked 语义。
+
+### 11.2 剩余收口
+1. 三节点长时回归矩阵补齐并归档（乱序传播 + 首次回源延迟场景）。
+2. 文档化保留：将验证结果同步到 release/runbook 文档。

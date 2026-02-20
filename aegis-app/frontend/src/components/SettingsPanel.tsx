@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Profile, GovernanceAdmin, ModerationLog, ModerationState } from '../types';
-import { GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { CheckForUpdates, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -33,6 +33,24 @@ type StorageUsageView = {
   privateQuota: number;
   publicQuota: number;
   totalQuota: number;
+};
+
+type UpdateStatusView = {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseURL: string;
+  releaseNotes: string;
+  publishedAt: number;
+  checkedAt: number;
+  errorMessage: string;
+};
+
+type VersionHistoryItemView = {
+  version: string;
+  publishedAt: number;
+  summary: string;
+  url: string;
 };
 
 export function SettingsPanel({ 
@@ -76,6 +94,10 @@ export function SettingsPanel({
   const [storageUsage, setStorageUsage] = useState<StorageUsageView | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageMessage, setStorageMessage] = useState('');
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusView | null>(null);
+  const [versionHistory, setVersionHistory] = useState<VersionHistoryItemView[]>([]);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState('');
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const accountToastTimerRef = useRef<number | null>(null);
 
@@ -123,6 +145,22 @@ export function SettingsPanel({
     }
   };
 
+  const loadUpdateData = async () => {
+    if (!hasWailsRuntime()) return;
+    setUpdateBusy(true);
+    try {
+      const [status, history] = await Promise.all([CheckForUpdates(), GetVersionHistory(8)]);
+      setUpdateStatus(status);
+      setVersionHistory(history || []);
+      setUpdateMessage(status?.errorMessage || '');
+    } catch (error) {
+      console.error('Failed to load update data:', error);
+      setUpdateMessage('Failed to load update data.');
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
   const loadPrivacySettings = async () => {
     if (!hasWailsRuntime()) return;
     try {
@@ -157,6 +195,7 @@ export function SettingsPanel({
     void loadStorageUsage();
     void loadPrivacySettings();
     void loadGovernancePolicy();
+    void loadUpdateData();
     const unsubscribe = EventsOn('p2p:updated', () => {
       void loadP2PState();
     });
@@ -175,6 +214,15 @@ export function SettingsPanel({
       idx += 1;
     }
     return `${value.toFixed(value >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+  };
+
+  const formatDateTime = (ts: number): string => {
+    if (!ts) return 'Unknown';
+    try {
+      return new Date(ts * 1000).toLocaleString();
+    } catch {
+      return 'Unknown';
+    }
   };
 
   const usagePercent = (used: number, quota: number): number => {
@@ -825,48 +873,80 @@ export function SettingsPanel({
                         <span className="material-icons text-2xl text-warm-accent">system_update</span>
                       </div>
                       <div>
-                        <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Aegis v1.0.0</h3>
+                        <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">
+                          Aegis {updateStatus?.currentVersion || 'v0.1.0-dev'}
+                        </h3>
                         <p className="text-sm text-warm-text-secondary dark:text-slate-400">Current version</p>
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm text-green-600">
-                        <span className="material-icons text-sm">check_circle</span>
-                        <span>Latest version installed</span>
-                      </div>
+                      {updateStatus?.hasUpdate ? (
+                        <div className="flex items-center gap-2 text-sm text-amber-600">
+                          <span className="material-icons text-sm">new_releases</span>
+                          <span>Update available: {updateStatus.latestVersion}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm text-green-600">
+                          <span className="material-icons text-sm">check_circle</span>
+                          <span>Latest version installed</span>
+                        </div>
+                      )}
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400">
+                        Last checked: {formatDateTime(updateStatus?.checkedAt || 0)}
+                      </p>
                     </div>
                   </div>
                   
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">What's New</h3>
                     <ul className="space-y-3 text-sm text-warm-text-secondary dark:text-slate-400">
-                      <li className="flex items-start gap-2">
-                        <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
-                        <span>Initial release with core features</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
-                        <span>Decentralized forum functionality</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
-                        <span>P2P networking and sync</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
-                        <span>Sub communities and moderation</span>
-                      </li>
+                      {versionHistory.length === 0 ? (
+                        <li className="flex items-start gap-2">
+                          <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
+                          <span>No release history available yet.</span>
+                        </li>
+                      ) : (
+                        versionHistory.map((item) => (
+                          <li key={`${item.version}-${item.publishedAt}`} className="flex items-start gap-2">
+                            <span className="material-icons text-warm-accent text-sm mt-0.5">new_releases</span>
+                            <span>
+                              <strong>{item.version}</strong> - {item.summary} ({formatDateTime(item.publishedAt)})
+                            </span>
+                          </li>
+                        ))
+                      )}
                     </ul>
                   </div>
                   
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6">
                     <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white mb-4">Check for Updates</h3>
                     <p className="text-sm text-warm-text-secondary dark:text-slate-400 mb-4">
-                      You're running the latest version. We'll automatically check for updates in the background.
+                      {updateStatus?.hasUpdate
+                        ? `A newer version (${updateStatus.latestVersion}) is available.`
+                        : "You're running the latest version. We'll automatically check for updates in the background."}
                     </p>
-                    <button className="px-4 py-2 bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg font-medium transition-colors">
-                      Check for Updates
-                    </button>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={() => void loadUpdateData()}
+                        disabled={updateBusy}
+                        className="px-4 py-2 bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {updateBusy ? 'Checking...' : 'Check for Updates'}
+                      </button>
+                      {updateStatus?.releaseURL && (
+                        <a
+                          href={updateStatus.releaseURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-4 py-2 rounded-lg border border-warm-border dark:border-border-dark text-sm font-medium text-warm-text-primary dark:text-white hover:bg-warm-bg dark:hover:bg-background-dark"
+                        >
+                          Open Release Notes
+                        </a>
+                      )}
+                    </div>
+                    {updateMessage && (
+                      <p className="mt-3 text-xs text-warm-text-secondary dark:text-slate-400">{updateMessage}</p>
+                    )}
                   </div>
                 </div>
               </div>

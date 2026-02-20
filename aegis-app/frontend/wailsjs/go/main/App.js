@@ -38,6 +38,10 @@ export function ApplyUnban(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApplyUnban'](arg1, arg2, arg3);
 }
 
+export function CheckForUpdates() {
+  return window['go']['main']['App']['CheckForUpdates']();
+}
+
 export function ConnectPeer(arg1) {
   return window['go']['main']['App']['ConnectPeer'](arg1);
 }
@@ -176,6 +180,10 @@ export function GetSubscribedSubs() {
 
 export function GetTrustedAdmins() {
   return window['go']['main']['App']['GetTrustedAdmins']();
+}
+
+export function GetVersionHistory(arg1) {
+  return window['go']['main']['App']['GetVersionHistory'](arg1);
 }
 
 export function ImportIdentityFromMnemonic(arg1) {

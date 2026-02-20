@@ -20,6 +20,8 @@ export function ApplyShadowBan(arg1:string,arg2:string,arg3:string):Promise<void
 
 export function ApplyUnban(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function CheckForUpdates():Promise<main.UpdateStatus>;
+
 export function ConnectPeer(arg1:string):Promise<void>;
 
 export function CreateSub(arg1:string,arg2:string,arg3:string):Promise<main.Sub>;
@@ -89,6 +91,8 @@ export function GetSubs():Promise<Array<main.Sub>>;
 export function GetSubscribedSubs():Promise<Array<main.Sub>>;
 
 export function GetTrustedAdmins():Promise<Array<main.GovernanceAdmin>>;
+
+export function GetVersionHistory(arg1:number):Promise<Array<main.VersionHistoryItem>>;
 
 export function ImportIdentityFromMnemonic(arg1:string):Promise<main.Identity>;
 

@@ -52,10 +52,10 @@ Unify comment image handling with the existing post media blob architecture so t
 
 ## Execution Phases
 
-- **B1**: Schema + backend models + persistence helpers.
-- **B2**: Publish/process/sync wiring for comment attachments.
-- **B3**: Frontend composer integration and renderer support.
-- **B4**: Governance-aware media serving + verification.
+- **B1**: Done - schema/model/persistence completed (`attachments_json`, `comment_media_refs`, typed attachments).
+- **B2**: Done - publish/process/sync wiring completed (`PublishCommentWithAttachments`, COMMENT/COMMENT_SYNC attachments).
+- **B3**: Done - composer/renderer integrated (thumbnail chips, removal, click-to-zoom).
+- **B4**: Done - governance-aware media serving completed (comment-linked media follows A3/A4 policy gates).
 
 ## Verification
 
@@ -70,3 +70,16 @@ Unify comment image handling with the existing post media blob architecture so t
    - still render correctly.
 4. Shadow-ban policy:
    - comment-linked media from disallowed content is not served to peers.
+
+## Current Status (2026-02-20)
+
+- Core implementation: Done.
+- Known issues fixed in follow-up:
+  1. duplicate post identity collision under same-second repeated submit,
+  2. first comment image occasional delayed rendering (added retry path).
+
+## Remaining Tasks
+
+1. Add a lightweight comment media loading indicator in list view to improve slow-network feedback.
+2. Run and archive 3-node reliability replay (including restart/rejoin media fetch timing).
+3. Optional product decision: whether to fully retire legacy markdown image body path in a later cleanup phase.

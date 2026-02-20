@@ -631,6 +631,50 @@ export namespace main {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class UpdateStatus {
+	    currentVersion: string;
+	    latestVersion: string;
+	    hasUpdate: boolean;
+	    releaseURL: string;
+	    releaseNotes: string;
+	    publishedAt: number;
+	    checkedAt: number;
+	    errorMessage: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.hasUpdate = source["hasUpdate"];
+	        this.releaseURL = source["releaseURL"];
+	        this.releaseNotes = source["releaseNotes"];
+	        this.publishedAt = source["publishedAt"];
+	        this.checkedAt = source["checkedAt"];
+	        this.errorMessage = source["errorMessage"];
+	    }
+	}
+	export class VersionHistoryItem {
+	    version: string;
+	    publishedAt: number;
+	    summary: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VersionHistoryItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.publishedAt = source["publishedAt"];
+	        this.summary = source["summary"];
+	        this.url = source["url"];
+	    }
+	}
 
 }
 

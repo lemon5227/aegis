@@ -32,6 +32,7 @@ import {
   PublishUnban,
   GetModerationLogs,
   TriggerCommentSyncNow,
+  GetP2PStatus,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -78,6 +79,7 @@ function App() {
   const [governanceAdmins, setGovernanceAdmins] = useState<GovernanceAdmin[]>([]);
   const [moderationStates, setModerationStates] = useState<ModerationState[]>([]);
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
+  const [onlineCount, setOnlineCount] = useState(0);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
@@ -569,9 +571,44 @@ function App() {
     };
   }, [identity, view, currentSubId, sortMode, loadPosts]);
 
+  useEffect(() => {
+    if (!hasWailsRuntime() || !identity) {
+      setOnlineCount(0);
+      return;
+    }
+
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const status = await GetP2PStatus();
+        if (!alive) return;
+        if (!status?.started) {
+          setOnlineCount(0);
+          return;
+        }
+        const peers = Array.isArray(status.connectedPeers) ? status.connectedPeers.length : 0;
+        setOnlineCount(peers + 1);
+      } catch {
+        if (alive) setOnlineCount(0);
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 15000);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [identity]);
+
   const currentSub = currentSubId === 'recommended' 
     ? { id: 'recommended', title: 'Recommended Feed', description: 'Your personalized feed based on subscriptions and trending posts' }
     : (subs.find((s) => s.id === currentSubId) || { id: currentSubId, title: currentSubId, description: '' });
+
+  const membersCount = new Set(posts.map((post) => post.pubkey).filter((value) => !!value)).size;
 
   const isCurrentSubSubscribed = currentSubId !== 'recommended' && subscribedSubIds.has(currentSubId);
 
@@ -665,6 +702,8 @@ function App() {
           <RightPanel 
             sub={currentSub} 
             isSubscribed={isCurrentSubSubscribed}
+            membersCount={membersCount}
+            onlineCount={onlineCount}
             onToggleSubscription={() => handleToggleSubscription(currentSubId)}
           />
         )}

@@ -249,12 +249,24 @@ bio 与隐私设置 API，且与现有 `UpdateProfile/GetProfile` 保持兼容�
 
 ---
 
-## 7. 当前状态（2026-02-16）
+## 7. 当前状态（2026-02-20）
 - G0：Done（本文件）
 - G1：Done（收藏后端+分布式索引同步已实现）
 - G2：Done（`GetMyPosts` + `GetPostIndexByID` 已实现并接入前端）
 - G2.5：Done（P2P 配置持久化 API + Settings 接入已完成）
 - G3：Done（Profile Details + Privacy API 已实现并接入 Settings）
-- G4：Pending
-- G5：Pending
-- G6：In Progress（流程门禁持续执行）
+- G4：Done（治理页已接入真实管理员/状态/日志数据，封禁列表不再是静态占位）
+- G5：Done（`CheckForUpdates/GetVersionHistory` 已实现并接入 Updates 页面，更新源不可达时优雅降级）
+- G6：In Progress（自动门禁脚本已落地，仍需补齐公网 relay 回退实机联调归档）
+
+### 7.1 剩余任务
+1. G6：执行并归档 NAT/防火墙受限场景的 relay 回退联调（至少 1 公网 relay + 2 私网节点）。
+2. G6：将三节点回归结果写入发布文档（订阅/推送/搜索/FeedStream 四项）。
+
+### 7.2 本轮新增门禁能力
+1. 新增脚本：`aegis-app/scripts/run_g6_gate_checks.sh`。
+2. 脚本覆盖：
+   - `go test ./...` 编译检查。
+   - `frontend npm run build` 前端构建检查。
+   - `App.d.ts` 导出重复/关键 API 缺失检查。
+   - 迁移安全扫描（拦截 `DROP TABLE|DROP COLUMN|ALTER TABLE ... RENAME`）。

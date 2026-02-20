@@ -3,10 +3,12 @@ import { Sub } from '../types';
 interface RightPanelProps {
   sub: Sub | { id: string; title: string; description: string } | undefined;
   isSubscribed: boolean;
+  membersCount?: number;
+  onlineCount?: number;
   onToggleSubscription: () => void;
 }
 
-export function RightPanel({ sub, isSubscribed, onToggleSubscription }: RightPanelProps) {
+export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 0, onToggleSubscription }: RightPanelProps) {
   const subTitle = sub?.title || sub?.id || 'General';
   const subDescription = sub?.description || 'Welcome to this community!';
 
@@ -39,12 +41,12 @@ export function RightPanel({ sub, isSubscribed, onToggleSubscription }: RightPan
           
           <div className="grid grid-cols-2 gap-4 border-t border-warm-border/50 dark:border-border-dark pt-4 mb-4">
             <div>
-              <div className="text-lg font-bold text-warm-text-primary dark:text-white">-</div>
+              <div className="text-lg font-bold text-warm-text-primary dark:text-white">{membersCount.toLocaleString()}</div>
               <div className="text-xs text-warm-text-secondary dark:text-slate-400">Members</div>
             </div>
             <div>
               <div className="text-lg font-bold text-warm-text-primary dark:text-white flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-green-500"></span> -
+                <span className="w-2 h-2 rounded-full bg-green-500"></span> {onlineCount.toLocaleString()}
               </div>
               <div className="text-xs text-warm-text-secondary dark:text-slate-400">Online</div>
             </div>
