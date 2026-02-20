@@ -79,14 +79,14 @@ jobs:
             ls -la build/bin || true
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" build/bin/aegis-app-macos-arm64.zip
+          hdiutil create -volname "Aegis" -srcfolder "$APP_BUNDLE" -ov -format UDZO build/bin/aegis-app-macos-arm64.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: aegis-app-macos-arm64
           path: |
-            aegis-app/build/bin/aegis-app-macos-arm64.zip
+            aegis-app/build/bin/aegis-app-macos-arm64.dmg
             aegis-app/build/bin/*.app
           if-no-files-found: error
 
@@ -95,7 +95,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            aegis-app/build/bin/aegis-app-macos-arm64.zip
+            aegis-app/build/bin/aegis-app-macos-arm64.dmg
           overwrite_files: true
 
       - name: Publish draft prerelease assets
@@ -107,5 +107,5 @@ jobs:
           draft: true
           prerelease: true
           files: |
-            aegis-app/build/bin/aegis-app-macos-arm64.zip
+            aegis-app/build/bin/aegis-app-macos-arm64.dmg
           overwrite_files: true

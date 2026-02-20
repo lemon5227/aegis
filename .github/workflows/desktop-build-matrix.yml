@@ -89,22 +89,41 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          tar -C build/bin -czf build/bin/${{ matrix.artifact_name }}.tar.gz aegis-app
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ "$VERSION" == v* ]]; then
+            VERSION="${VERSION#v}"
+          else
+            VERSION="0.0.0+${GITHUB_SHA::7}"
+          fi
+          PKG_ROOT="build/pkg-deb"
+          rm -rf "$PKG_ROOT"
+          mkdir -p "$PKG_ROOT/DEBIAN" "$PKG_ROOT/usr/local/bin"
+          install -m 0755 build/bin/aegis-app "$PKG_ROOT/usr/local/bin/aegis-app"
+          cat > "$PKG_ROOT/DEBIAN/control" <<EOF
+          Package: aegis-app
+          Version: $VERSION
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Aegis Team <noreply@aegis.local>
+          Description: Aegis decentralized forum desktop app
+          EOF
+          dpkg-deb --build "$PKG_ROOT" "build/bin/aegis-app-linux-amd64.deb"
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "build/bin/aegis-app.exe" -DestinationPath "build/bin/${{ matrix.artifact_name }}.zip" -Force
+          if (-not (Test-Path "build/bin/aegis-app.exe")) {
+            throw "build/bin/aegis-app.exe not found"
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            aegis-app/build/bin/*.zip
-            aegis-app/build/bin/*.tar.gz
-            aegis-app/build/bin/aegis-app
+            aegis-app/build/bin/*.deb
             aegis-app/build/bin/aegis-app.exe
           if-no-files-found: error
 
@@ -113,7 +132,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            aegis-app/build/bin/${{ matrix.artifact_name }}.tar.gz
+            aegis-app/build/bin/aegis-app-linux-amd64.deb
           overwrite_files: true
 
       - name: Publish release assets (Windows)
@@ -121,7 +140,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            aegis-app/build/bin/${{ matrix.artifact_name }}.zip
             aegis-app/build/bin/aegis-app.exe
           overwrite_files: true
 
@@ -134,7 +152,7 @@ jobs:
           draft: true
           prerelease: true
           files: |
-            aegis-app/build/bin/${{ matrix.artifact_name }}.tar.gz
+            aegis-app/build/bin/aegis-app-linux-amd64.deb
           overwrite_files: true
 
       - name: Publish draft prerelease assets (Windows)
@@ -146,6 +164,5 @@ jobs:
           draft: true
           prerelease: true
           files: |
-            aegis-app/build/bin/${{ matrix.artifact_name }}.zip
             aegis-app/build/bin/aegis-app.exe
           overwrite_files: true
