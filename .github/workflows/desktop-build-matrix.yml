@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -138,3 +141,25 @@ jobs:
             aegis-app/build/bin/aegis-app.exe
             aegis-app/build/bin/Aegis.app
           if-no-files-found: error
+
+      - name: Publish release assets (Linux)
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aegis-app/build/bin/${{ matrix.artifact_name }}.tar.gz
+
+      - name: Publish release assets (macOS)
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aegis-app/build/bin/${{ matrix.artifact_name }}.zip
+            aegis-app/build/bin/${{ matrix.artifact_name }}-runner.zip
+
+      - name: Publish release assets (Windows)
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aegis-app/build/bin/${{ matrix.artifact_name }}.zip
