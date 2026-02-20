@@ -1,0 +1,100 @@
+name: Build macOS ARM App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: aegis-app
+
+    env:
+      DEFAULT_BOOTSTRAP_PEERS: ${{ secrets.AEGIS_BOOTSTRAP_PEERS }}
+      DEFAULT_RELAY_PEERS: ${{ secrets.AEGIS_RELAY_PEERS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: aegis-app/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: aegis-app/frontend/package-lock.json
+
+      - name: Install Wails CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+
+      - name: Build macOS arm64 app
+        shell: bash
+        run: |
+          export PATH="$HOME/go/bin:$PATH"
+          wails build -platform darwin/arm64
+
+      - name: Create startup helper
+        shell: bash
+        run: |
+          cat > build/bin/run-aegis.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          if [ -n "__BOOTSTRAP__" ]; then
+            export AEGIS_BOOTSTRAP_PEERS="__BOOTSTRAP__"
+          fi
+          if [ -n "__RELAY__" ]; then
+            export AEGIS_RELAY_PEERS="__RELAY__"
+          fi
+          exec "$SCRIPT_DIR/Aegis.app/Contents/MacOS/aegis-app"
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p = Path("build/bin/run-aegis.sh")
+          txt = p.read_text(encoding="utf-8")
+          txt = txt.replace("__BOOTSTRAP__", os.environ.get("DEFAULT_BOOTSTRAP_PEERS", ""))
+          txt = txt.replace("__RELAY__", os.environ.get("DEFAULT_RELAY_PEERS", ""))
+          p.write_text(txt, encoding="utf-8")
+          PY
+          chmod +x build/bin/run-aegis.sh
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent build/bin/Aegis.app build/bin/aegis-app-macos-arm64.zip
+          zip -j build/bin/aegis-app-macos-arm64-runner.zip build/bin/run-aegis.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-app-macos-arm64
+          path: |
+            aegis-app/build/bin/aegis-app-macos-arm64.zip
+            aegis-app/build/bin/aegis-app-macos-arm64-runner.zip
+            aegis-app/build/bin/Aegis.app
+            aegis-app/build/bin/run-aegis.sh
+          if-no-files-found: error
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aegis-app/build/bin/aegis-app-macos-arm64.zip
+            aegis-app/build/bin/aegis-app-macos-arm64-runner.zip
