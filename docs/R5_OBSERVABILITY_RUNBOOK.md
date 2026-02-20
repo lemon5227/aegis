@@ -66,10 +66,25 @@
 - `AEGIS_FETCH_RETRY_ATTEMPTS`：正文/媒体回源重试次数，默认 `1`，最大 `3`
 - `AEGIS_FETCH_REQUEST_LIMIT`：窗口内单 peer 请求上限
 - `AEGIS_FETCH_REQUEST_WINDOW_SEC`：请求限流窗口（秒）
+- `AEGIS_MSG_MAX_BYTES`：单条入站消息大小上限（默认 `2097152`）
+- `AEGIS_MSG_RATE_LIMIT`：入站消息每 peer 窗口限额（默认 `240`）
+- `AEGIS_MSG_RATE_WINDOW_SEC`：入站消息限流窗口秒数（默认 `60`）
+- `AEGIS_RELAY_SERVICE_ENABLED`：是否开启 relay service（默认 `true`）
 - `AEGIS_ANTI_ENTROPY_INTERVAL_SEC`：反熵周期（秒）
 - `AEGIS_RELEASE_ALERT_EVAL_INTERVAL_SEC`：告警评估周期（秒），默认 `30`
 - `AEGIS_GOVERNANCE_SYNC_BATCH_SIZE`：治理同步单次返回上限，默认 `200`
 - `AEGIS_GOVERNANCE_LOG_SYNC_LIMIT`：治理日志同步单次返回上限，默认 `200`
+
+## 7. Relay 过载应急
+1. 观察是否频繁出现：
+   - `incoming message rate limited`
+   - `incoming message too large`
+2. 若 relay 压力持续过高：
+   - 下调 `AEGIS_MSG_RATE_LIMIT`（例如 240 -> 120）
+   - 临时收紧 `AEGIS_MAX_CONNECTED_PEERS`
+3. 若疑似恶意流量：
+   - 使用 `AEGIS_P2P_BLACKLIST_PEERS` 封禁明确恶意 peer
+   - 重启后验证 join success 与 fetch success 是否恢复
 
 ## 6. 离线治理状态不一致排查
 1. 观察重连后是否出现治理同步日志：

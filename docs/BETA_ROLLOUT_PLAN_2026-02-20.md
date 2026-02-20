@@ -93,8 +93,33 @@ This plan focuses on:
 
 - BETA-0: Done
 - BETA-1: Done (auto public IP announce detection added)
-- BETA-2: Pending
-- BETA-3: Pending
+- BETA-2: Done (message size/rate guards, relay service toggle, known-peer dial preference hardening)
+- BETA-3: Ready for rollout execution
+
+## BETA-3 Rollout Checklist (Execution)
+
+1. Cohort A (10 users)
+   - Duration: 24h
+   - Criteria: no blocker incident, join success >= 95%
+2. Cohort B (30 users)
+   - Duration: 48h
+   - Criteria: relay dependence trending downward, no data-loss bug
+3. Cohort C (100 users)
+   - Duration: 7 days
+   - Criteria: stable sync, no critical governance divergence
+4. Weekly report fields
+   - join success rate
+   - relay fallback ratio
+   - anti-entropy lag distribution
+   - content/media fetch success rate
+
+## Recommended Beta Defaults
+
+1. `AEGIS_MSG_MAX_BYTES=2097152`
+2. `AEGIS_MSG_RATE_LIMIT=240`
+3. `AEGIS_MSG_RATE_WINDOW_SEC=60`
+4. `AEGIS_FETCH_REQUEST_LIMIT=60`
+5. `AEGIS_FETCH_REQUEST_WINDOW_SEC=60`
 
 ## Notes
 

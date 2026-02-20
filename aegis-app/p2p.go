@@ -121,7 +121,9 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 		libp2p.EnableAutoNATv2(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
-		libp2p.EnableRelayService(),
+	}
+	if resolveRelayServiceEnabled() {
+		options = append(options, libp2p.EnableRelayService())
 	}
 	if len(announceAddrs) > 0 {
 		announceAddrsCopy := append([]multiaddr.Multiaddr(nil), announceAddrs...)
@@ -1551,6 +1553,15 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		}
 
 		remotePeerID := strings.TrimSpace(message.ReceivedFrom.String())
+		if !a.allowIncomingMessage(remotePeerID, len(message.Data)) {
+			a.p2pMu.Lock()
+			host := a.p2pHost
+			a.p2pMu.Unlock()
+			if host != nil {
+				_ = host.Network().ClosePeer(message.ReceivedFrom)
+			}
+			continue
+		}
 		if a.p2pHost != nil {
 			if info := a.p2pHost.Peerstore().PeerInfo(message.ReceivedFrom); strings.TrimSpace(info.ID.String()) != "" {
 				a.rememberConnectedPeer(info, true)
@@ -1856,6 +1867,92 @@ func resolveFetchRateWindowSeconds() int64 {
 	}
 
 	return value
+}
+
+func resolveIncomingMessageRateLimitPerWindow() int {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_MSG_RATE_LIMIT"))
+	if raw == "" {
+		return 240
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 240
+	}
+	return value
+}
+
+func resolveIncomingMessageRateWindowSeconds() int64 {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_MSG_RATE_WINDOW_SEC"))
+	if raw == "" {
+		return 60
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 60
+	}
+	return value
+}
+
+func resolveMaxIncomingMessageBytes() int {
+	raw := strings.TrimSpace(os.Getenv("AEGIS_MSG_MAX_BYTES"))
+	if raw == "" {
+		return 2 * 1024 * 1024
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 2 * 1024 * 1024
+	}
+	return value
+}
+
+func resolveRelayServiceEnabled() bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv("AEGIS_RELAY_SERVICE_ENABLED")))
+	if raw == "" {
+		return true
+	}
+	return !(raw == "0" || raw == "false" || raw == "no" || raw == "off")
+}
+
+func (a *App) allowIncomingMessage(peerID string, payloadSize int) bool {
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return false
+	}
+
+	maxBytes := resolveMaxIncomingMessageBytes()
+	if payloadSize > maxBytes {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "incoming message too large peer=%s size=%d max=%d", peerID, payloadSize, maxBytes)
+		}
+		a.markPeerGreylisted(peerID, "incoming-message-too-large")
+		return false
+	}
+
+	limit := resolveIncomingMessageRateLimitPerWindow()
+	windowSec := resolveIncomingMessageRateWindowSeconds()
+	now := time.Now().Unix()
+	stateKey := "msg:" + peerID
+
+	a.fetchRateMu.Lock()
+	defer a.fetchRateMu.Unlock()
+
+	window, exists := a.fetchRateState[stateKey]
+	if !exists || now-window.StartedAt >= windowSec {
+		a.fetchRateState[stateKey] = fetchRateWindow{StartedAt: now, Count: 1}
+		return true
+	}
+
+	if window.Count >= limit {
+		if a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "incoming message rate limited peer=%s count=%d limit=%d window_sec=%d", peerID, window.Count, limit, windowSec)
+		}
+		a.markPeerGreylisted(peerID, "incoming-message-rate-limit")
+		return false
+	}
+
+	window.Count += 1
+	a.fetchRateState[stateKey] = window
+	return true
 }
 
 func (a *App) allowFetchRequest(peerID string, requestType string) bool {
