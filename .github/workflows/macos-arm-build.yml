@@ -62,7 +62,13 @@ jobs:
       - name: Package artifact
         shell: bash
         run: |
-          ditto -c -k --sequesterRsrc --keepParent build/bin/Aegis.app build/bin/aegis-app-macos-arm64.zip
+          APP_BUNDLE="$(ls -d build/bin/*.app | head -n 1)"
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "No .app bundle found in build/bin"
+            ls -la build/bin || true
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" build/bin/aegis-app-macos-arm64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -70,7 +76,7 @@ jobs:
           name: aegis-app-macos-arm64
           path: |
             aegis-app/build/bin/aegis-app-macos-arm64.zip
-            aegis-app/build/bin/Aegis.app
+            aegis-app/build/bin/*.app
           if-no-files-found: error
 
       - name: Publish release assets
