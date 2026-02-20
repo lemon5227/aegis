@@ -16,6 +16,10 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+      - "**/*.md"
     tags:
       - "v*"
 
