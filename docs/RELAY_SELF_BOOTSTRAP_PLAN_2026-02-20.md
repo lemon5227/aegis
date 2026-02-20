@@ -38,6 +38,7 @@ Runtime behavior:
 3. New announce resolution:
    - `AEGIS_ANNOUNCE_ADDRS` (preferred, supports multiple multiaddrs)
    - fallback `AEGIS_PUBLIC_IP` + listen port.
+   - auto public IP detection when explicit env is absent (`AEGIS_AUTO_ANNOUNCE`, default enabled).
 
 ## Suggested Deploy Command (systemd env example)
 

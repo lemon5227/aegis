@@ -2696,6 +2696,9 @@ func resolveP2PAnnounceAddrs(listenPort int) []multiaddr.Multiaddr {
 	raw := strings.TrimSpace(os.Getenv("AEGIS_ANNOUNCE_ADDRS"))
 	if raw == "" {
 		publicIP := strings.TrimSpace(os.Getenv("AEGIS_PUBLIC_IP"))
+		if publicIP == "" && resolveAutoAnnounceEnabled() {
+			publicIP = resolveAutoPublicIPv4()
+		}
 		if publicIP != "" {
 			raw = fmt.Sprintf("/ip4/%s/tcp/%d", publicIP, listenPort)
 		}
