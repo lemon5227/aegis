@@ -21,6 +21,11 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+var (
+	defaultBootstrapPeersCSV string
+	defaultRelayPeersCSV     string
+)
+
 // App struct
 type App struct {
 	ctx    context.Context
@@ -295,7 +300,11 @@ func resolveAutoStartP2PPort() int {
 }
 
 func resolveBootstrapPeers() []string {
-	return parsePeerAddressesCSV(os.Getenv("AEGIS_BOOTSTRAP_PEERS"))
+	fromEnv := parsePeerAddressesCSV(os.Getenv("AEGIS_BOOTSTRAP_PEERS"))
+	if len(fromEnv) > 0 {
+		return fromEnv
+	}
+	return parsePeerAddressesCSV(defaultBootstrapPeersCSV)
 }
 
 func resolveAutoStartPortCandidates(preferredPort int) []int {

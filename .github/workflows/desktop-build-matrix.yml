@@ -3,6 +3,8 @@ name: Build Desktop Apps (Windows/macOS/Linux)
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
     tags:
       - "v*"
 
@@ -26,10 +28,6 @@ jobs:
     defaults:
       run:
         working-directory: aegis-app
-
-    env:
-      DEFAULT_BOOTSTRAP_PEERS: ${{ secrets.AEGIS_BOOTSTRAP_PEERS }}
-      DEFAULT_RELAY_PEERS: ${{ secrets.AEGIS_RELAY_PEERS }}
 
     steps:
       - name: Checkout
@@ -61,59 +59,32 @@ jobs:
         shell: bash
         run: |
           export PATH="$HOME/go/bin:$PATH"
-          wails build -platform "${{ matrix.platform }}"
-
-      - name: Create startup helper (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          cat > build/bin/run-aegis.sh <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          if [ -n "__BOOTSTRAP__" ]; then
-            export AEGIS_BOOTSTRAP_PEERS="__BOOTSTRAP__"
+          BOOTSTRAP='${{ secrets.AEGIS_BOOTSTRAP_PEERS }}'
+          RELAY='${{ secrets.AEGIS_RELAY_PEERS }}'
+          LDFLAGS=""
+          if [ -n "$BOOTSTRAP" ]; then
+            LDFLAGS="$LDFLAGS -X 'main.defaultBootstrapPeersCSV=$BOOTSTRAP'"
           fi
-          if [ -n "__RELAY__" ]; then
-            export AEGIS_RELAY_PEERS="__RELAY__"
+          if [ -n "$RELAY" ]; then
+            LDFLAGS="$LDFLAGS -X 'main.defaultRelayPeersCSV=$RELAY'"
           fi
-          exec "$SCRIPT_DIR/aegis-app"
-          EOF
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          p = Path("build/bin/run-aegis.sh")
-          txt = p.read_text(encoding="utf-8")
-          txt = txt.replace("__BOOTSTRAP__", os.environ.get("DEFAULT_BOOTSTRAP_PEERS", ""))
-          txt = txt.replace("__RELAY__", os.environ.get("DEFAULT_RELAY_PEERS", ""))
-          p.write_text(txt, encoding="utf-8")
-          PY
-          chmod +x build/bin/run-aegis.sh
-
-      - name: Create startup helper (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          @"
-          @echo off
-          setlocal
-          if not "${env:DEFAULT_BOOTSTRAP_PEERS}"=="" set AEGIS_BOOTSTRAP_PEERS=${env:DEFAULT_BOOTSTRAP_PEERS}
-          if not "${env:DEFAULT_RELAY_PEERS}"=="" set AEGIS_RELAY_PEERS=${env:DEFAULT_RELAY_PEERS}
-          start "" "%~dp0aegis-app.exe"
-          endlocal
-          "@ | Set-Content -Path "build/bin/run-aegis.bat" -Encoding ASCII
+          if [ -n "$LDFLAGS" ]; then
+            wails build -platform "${{ matrix.platform }}" -ldflags "$LDFLAGS"
+          else
+            wails build -platform "${{ matrix.platform }}"
+          fi
 
       - name: Package artifact (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          tar -C build/bin -czf build/bin/${{ matrix.artifact_name }}.tar.gz aegis-app run-aegis.sh
+          tar -C build/bin -czf build/bin/${{ matrix.artifact_name }}.tar.gz aegis-app
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "build/bin/aegis-app.exe","build/bin/run-aegis.bat" -DestinationPath "build/bin/${{ matrix.artifact_name }}.zip" -Force
+          Compress-Archive -Path "build/bin/aegis-app.exe" -DestinationPath "build/bin/${{ matrix.artifact_name }}.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -122,7 +93,6 @@ jobs:
           path: |
             aegis-app/build/bin/*.zip
             aegis-app/build/bin/*.tar.gz
-            aegis-app/build/bin/run-aegis.*
             aegis-app/build/bin/aegis-app
             aegis-app/build/bin/aegis-app.exe
           if-no-files-found: error
@@ -141,4 +111,3 @@ jobs:
           files: |
             aegis-app/build/bin/${{ matrix.artifact_name }}.zip
             aegis-app/build/bin/aegis-app.exe
-            aegis-app/build/bin/run-aegis.bat

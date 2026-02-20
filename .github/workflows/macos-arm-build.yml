@@ -3,6 +3,8 @@ name: Build macOS ARM App
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
     tags:
       - "v*"
 
@@ -15,10 +17,6 @@ jobs:
     defaults:
       run:
         working-directory: aegis-app
-
-    env:
-      DEFAULT_BOOTSTRAP_PEERS: ${{ secrets.AEGIS_BOOTSTRAP_PEERS }}
-      DEFAULT_RELAY_PEERS: ${{ secrets.AEGIS_RELAY_PEERS }}
 
     steps:
       - name: Checkout
@@ -46,39 +44,25 @@ jobs:
         shell: bash
         run: |
           export PATH="$HOME/go/bin:$PATH"
-          wails build -platform darwin/arm64
-
-      - name: Create startup helper
-        shell: bash
-        run: |
-          cat > build/bin/run-aegis.sh <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          if [ -n "__BOOTSTRAP__" ]; then
-            export AEGIS_BOOTSTRAP_PEERS="__BOOTSTRAP__"
+          BOOTSTRAP='${{ secrets.AEGIS_BOOTSTRAP_PEERS }}'
+          RELAY='${{ secrets.AEGIS_RELAY_PEERS }}'
+          LDFLAGS=""
+          if [ -n "$BOOTSTRAP" ]; then
+            LDFLAGS="$LDFLAGS -X 'main.defaultBootstrapPeersCSV=$BOOTSTRAP'"
           fi
-          if [ -n "__RELAY__" ]; then
-            export AEGIS_RELAY_PEERS="__RELAY__"
+          if [ -n "$RELAY" ]; then
+            LDFLAGS="$LDFLAGS -X 'main.defaultRelayPeersCSV=$RELAY'"
           fi
-          exec "$SCRIPT_DIR/Aegis.app/Contents/MacOS/aegis-app"
-          EOF
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          p = Path("build/bin/run-aegis.sh")
-          txt = p.read_text(encoding="utf-8")
-          txt = txt.replace("__BOOTSTRAP__", os.environ.get("DEFAULT_BOOTSTRAP_PEERS", ""))
-          txt = txt.replace("__RELAY__", os.environ.get("DEFAULT_RELAY_PEERS", ""))
-          p.write_text(txt, encoding="utf-8")
-          PY
-          chmod +x build/bin/run-aegis.sh
+          if [ -n "$LDFLAGS" ]; then
+            wails build -platform darwin/arm64 -ldflags "$LDFLAGS"
+          else
+            wails build -platform darwin/arm64
+          fi
 
       - name: Package artifact
         shell: bash
         run: |
           ditto -c -k --sequesterRsrc --keepParent build/bin/Aegis.app build/bin/aegis-app-macos-arm64.zip
-          zip -j build/bin/aegis-app-macos-arm64-runner.zip build/bin/run-aegis.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -86,9 +70,7 @@ jobs:
           name: aegis-app-macos-arm64
           path: |
             aegis-app/build/bin/aegis-app-macos-arm64.zip
-            aegis-app/build/bin/aegis-app-macos-arm64-runner.zip
             aegis-app/build/bin/Aegis.app
-            aegis-app/build/bin/run-aegis.sh
           if-no-files-found: error
 
       - name: Publish release assets
@@ -97,4 +79,3 @@ jobs:
         with:
           files: |
             aegis-app/build/bin/aegis-app-macos-arm64.zip
-            aegis-app/build/bin/aegis-app-macos-arm64-runner.zip

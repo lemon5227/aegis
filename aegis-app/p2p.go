@@ -2766,7 +2766,11 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 }
 
 func resolveRelayPeers() []string {
-	return parsePeerAddressesCSV(os.Getenv("AEGIS_RELAY_PEERS"))
+	fromEnv := parsePeerAddressesCSV(os.Getenv("AEGIS_RELAY_PEERS"))
+	if len(fromEnv) > 0 {
+		return fromEnv
+	}
+	return parsePeerAddressesCSV(defaultRelayPeersCSV)
 }
 
 func resolveP2PListenAddrs(listenPort int) []string {
