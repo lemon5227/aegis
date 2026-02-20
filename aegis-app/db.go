@@ -307,7 +307,18 @@ type IncomingMessage struct {
 	Reason                 string              `json:"reason"`
 	Summaries              []SyncPostDigest    `json:"summaries,omitempty"`
 	CommentSummaries       []SyncCommentDigest `json:"comment_summaries,omitempty"`
+	KnownPeers             []KnownPeerExchange `json:"known_peers,omitempty"`
+	RelayCapable           bool                `json:"relay_capable,omitempty"`
+	PublicReachable        bool                `json:"public_reachable,omitempty"`
 	HideHistoryOnShadowBan bool                `json:"hide_history_on_shadowban"`
+}
+
+type KnownPeerExchange struct {
+	PeerID          string   `json:"peer_id"`
+	Addrs           []string `json:"addrs"`
+	RelayCapable    bool     `json:"relay_capable"`
+	PublicReachable bool     `json:"public_reachable"`
+	LastSeen        int64    `json:"last_seen"`
 }
 
 const defaultSubID = "general"
@@ -512,6 +523,18 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			auto_start INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS known_peers (
+			peer_id TEXT PRIMARY KEY,
+			addrs_json TEXT NOT NULL,
+			last_seen INTEGER NOT NULL,
+			success_count INTEGER NOT NULL DEFAULT 0,
+			fail_count INTEGER NOT NULL DEFAULT 0,
+			relay_capable INTEGER NOT NULL DEFAULT 0,
+			public_reachable INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_known_peers_updated_at ON known_peers(updated_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_known_peers_last_seen ON known_peers(last_seen DESC);`,
 		`CREATE TABLE IF NOT EXISTS identity_state (
 			pubkey TEXT PRIMARY KEY,
 			state TEXT NOT NULL,

@@ -39,6 +39,8 @@ const (
 	messageTypeFavoriteOp             = "FAVORITE_OP"
 	messageTypeFavoriteSyncRequest    = "FAVORITE_SYNC_REQUEST"
 	messageTypeFavoriteSyncResponse   = "FAVORITE_SYNC_RESPONSE"
+	messageTypePeerExchangeRequest    = "PEER_EXCHANGE_REQUEST"
+	messageTypePeerExchangeResponse   = "PEER_EXCHANGE_RESPONSE"
 )
 
 var (
@@ -186,9 +188,11 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 
 	go a.consumeP2PMessages(ctx, host.ID(), subscription)
 	go a.runAntiEntropySyncWorker(ctx, host.ID())
+	go a.runPeerExchangeWorker(ctx, host.ID())
 	go a.runReleaseAlertWorker(ctx)
 
-	for _, address := range bootstrapPeers {
+	knownBootstraps := a.getKnownPeerBootstrapAddresses(knownPeerBootstrapLimit)
+	for _, address := range mergePeerAddressLists(bootstrapPeers, knownBootstraps) {
 		trimmed := strings.TrimSpace(address)
 		if trimmed == "" {
 			continue
@@ -286,8 +290,10 @@ func (a *App) connectPeerLocked(address string) error {
 	defer cancel()
 
 	if err = a.p2pHost.Connect(ctx, *info); err != nil {
+		a.rememberConnectedPeer(*info, false)
 		return err
 	}
+	a.rememberConnectedPeer(*info, true)
 
 	a.publishLocalProfileUpdateLocked()
 	return nil
@@ -1545,6 +1551,11 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		}
 
 		remotePeerID := strings.TrimSpace(message.ReceivedFrom.String())
+		if a.p2pHost != nil {
+			if info := a.p2pHost.Peerstore().PeerInfo(message.ReceivedFrom); strings.TrimSpace(info.ID.String()) != "" {
+				a.rememberConnectedPeer(info, true)
+			}
+		}
 		if blocked, reason := a.isPeerBlocked(remotePeerID); blocked {
 			a.p2pMu.Lock()
 			host := a.p2pHost
@@ -1563,6 +1574,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		messageType := strings.ToUpper(strings.TrimSpace(incoming.Type))
 
 		switch messageType {
+		case messageTypePeerExchangeRequest:
+			a.handlePeerExchangeRequest(localPeerID.String(), incoming)
+			continue
+		case messageTypePeerExchangeResponse:
+			a.handlePeerExchangeResponse(localPeerID.String(), incoming)
+			continue
 		case messageTypeContentFetchRequest:
 			a.handleContentFetchRequest(localPeerID.String(), message.ReceivedFrom.String(), incoming)
 			continue

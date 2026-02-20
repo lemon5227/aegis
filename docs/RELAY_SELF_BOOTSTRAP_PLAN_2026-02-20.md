@@ -72,13 +72,19 @@ Startup order:
 1. try known peers
 2. fallback bootstrap relay
 
+Status: Done (baseline)
+
 ### Phase S2 - Peer Exchange
 
 After handshake, peers exchange a small set of healthy known peers (top-N scored), reducing dependence on central relay for discovery.
 
+Status: Done (baseline)
+
 ### Phase S3 - Community Relay Candidates
 
 Public-reachable nodes can opt into relay role and advertise that capability. Clients choose multiple relay candidates with scoring and load caps.
+
+Status: In Progress (capability gossip is live; scoring and caps are next)
 
 ### Phase S4 - Official Relay Retirement
 
@@ -87,6 +93,20 @@ Retire official relay only when:
 1. network has >= 3 stable community relay candidates,
 2. new node join success remains high without official relay,
 3. reconnect and anti-entropy continue to pass G6 checks.
+
+Status: Pending (operational milestone)
+
+## Deployment Checklist (Current)
+
+1. Build relay binary on server: `go build -tags relay -o aegis-relay .`
+2. Start with public announce env:
+   - `AEGIS_PUBLIC_IP=<public-ip>`
+   - or `AEGIS_ANNOUNCE_ADDRS=/ip4/<public-ip>/tcp/40100`
+3. Verify startup output includes:
+   - `listen_addrs`
+   - `announce_addrs` (must include public IP)
+4. Distribute relay multiaddr to clients as bootstrap/relay seed.
+5. Keep `AEGIS_RELAY_CANDIDATE=1` on public-capable community nodes that are willing to help as relay candidates.
 
 ## Operational Guardrails
 
