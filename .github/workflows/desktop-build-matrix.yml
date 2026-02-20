@@ -140,3 +140,5 @@ jobs:
         with:
           files: |
             aegis-app/build/bin/${{ matrix.artifact_name }}.zip
+            aegis-app/build/bin/aegis-app.exe
+            aegis-app/build/bin/run-aegis.bat
