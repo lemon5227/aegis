@@ -8,6 +8,8 @@ interface CommentItemProps {
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
   onImageClick: (src: string) => void;
+  currentPubkey?: string;
+  onDelete?: (commentId: string) => Promise<void> | void;
   depth?: number;
 }
 
@@ -56,11 +58,13 @@ function renderRichText(content: string, onImageClick: (src: string) => void) {
   });
 }
 
-export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick, depth = 0 }: CommentItemProps) {
+export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick, currentPubkey, onDelete, depth = 0 }: CommentItemProps) {
   const profile = profiles[comment.pubkey];
   const displayName = profile?.displayName || comment.pubkey.slice(0, 8);
   const avatarUrl = profile?.avatarURL;
+  const canDelete = !!currentPubkey && currentPubkey === comment.pubkey;
   const [resolvedAttachmentImages, setResolvedAttachmentImages] = useState<string[]>([]);
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const attachmentKey = (comment.attachments || [])
     .map((item) => `${item.kind}:${item.ref}`)
     .join('|');
@@ -115,6 +119,12 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
       alive = false;
     };
   }, [attachmentKey]);
+
+  useEffect(() => {
+    if (!deleteArmed) return;
+    const timer = window.setTimeout(() => setDeleteArmed(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [deleteArmed]);
 
   return (
     <div className={`${depth > 0 ? 'ml-5 md:ml-10 mt-2 relative pl-6 border-l-2 border-warm-border dark:border-border-dark' : 'mb-6 relative'}`}>
@@ -176,6 +186,22 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick
                 <span className="material-icons text-base">chat_bubble_outline</span>
                 <span className="text-xs font-medium">Reply</span>
               </button>
+              {canDelete && onDelete && (
+                <button
+                  onClick={async () => {
+                    if (!deleteArmed) {
+                      setDeleteArmed(true);
+                      return;
+                    }
+                    await onDelete(comment.id);
+                    setDeleteArmed(false);
+                  }}
+                  className={`flex items-center gap-1 transition-colors ${deleteArmed ? 'text-red-600' : 'text-warm-text-secondary dark:text-slate-400 hover:text-red-500'}`}
+                >
+                  <span className="material-icons text-base">{deleteArmed ? 'warning' : 'delete'}</span>
+                  <span className="text-xs font-medium">{deleteArmed ? 'Confirm' : 'Delete'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -189,10 +215,12 @@ interface CommentTreeProps {
   profiles: Record<string, Profile>;
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
+  currentPubkey?: string;
+  onDelete?: (commentId: string) => Promise<void> | void;
   onImageClick?: (src: string) => void;
 }
 
-export function CommentTree({ comments, profiles, onReply, onUpvote, onImageClick }: CommentTreeProps) {
+export function CommentTree({ comments, profiles, onReply, onUpvote, currentPubkey, onDelete, onImageClick }: CommentTreeProps) {
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
 
   const handleImageClick = (src: string) => {
@@ -217,6 +245,8 @@ export function CommentTree({ comments, profiles, onReply, onUpvote, onImageClic
           onReply={onReply}
           onUpvote={onUpvote}
           onImageClick={handleImageClick}
+          currentPubkey={currentPubkey}
+          onDelete={onDelete}
           depth={depth}
         />
         {children.map(child => renderComment(child, depth + 1))}

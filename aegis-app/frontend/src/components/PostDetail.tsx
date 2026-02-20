@@ -13,6 +13,8 @@ interface PostDetailProps {
   onUpvote: (postId: string) => void;
   onReply: (parentId: string, body: string, localImageDataURLs: string[], externalImageURLs: string[]) => Promise<void> | void;
   onCommentUpvote: (commentId: string) => void;
+  onDeletePost: (postId: string) => Promise<void> | void;
+  onDeleteComment: (commentId: string) => Promise<void> | void;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -43,13 +45,16 @@ export function PostDetail({
   onBack, 
   onUpvote,
   onReply,
-  onCommentUpvote 
+  onCommentUpvote,
+  onDeletePost,
+  onDeleteComment,
 }: PostDetailProps) {
   const [replyContent, setReplyContent] = useState('');
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [replyBusy, setReplyBusy] = useState(false);
   const [imageInsertBusy, setImageInsertBusy] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
+  const [deletePostArmed, setDeletePostArmed] = useState(false);
   const [commentSort, setCommentSort] = useState<'best' | 'newest' | 'controversial'>('best');
   const [postImageSrc, setPostImageSrc] = useState('');
   const [pendingLocalImages, setPendingLocalImages] = useState<string[]>([]);
@@ -61,6 +66,13 @@ export function PostDetail({
   const authorProfile = profiles[post.pubkey];
   const authorName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const authorAvatar = authorProfile?.avatarURL;
+  const canDeletePost = !!currentPubkey && currentPubkey === post.pubkey;
+
+  useEffect(() => {
+    if (!deletePostArmed) return;
+    const timer = window.setTimeout(() => setDeletePostArmed(false), 6000);
+    return () => window.clearTimeout(timer);
+  }, [deletePostArmed]);
 
   const replyingToComment = useMemo(() => {
     if (!replyToId) return null;
@@ -306,9 +318,28 @@ export function PostDetail({
                 <button className="p-2 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent hover:bg-warm-accent/10 rounded-full transition-colors">
                   <span className="material-icons">bookmark_border</span>
                 </button>
-                <button className="p-2 text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white hover:bg-warm-bg dark:hover:bg-surface-lighter rounded-full transition-colors">
-                  <span className="material-icons">more_horiz</span>
-                </button>
+                {canDeletePost && (
+                  <button
+                    onClick={async () => {
+                      if (!deletePostArmed) {
+                        setDeletePostArmed(true);
+                        setReplyMessage('Click delete again to confirm post deletion.');
+                        return;
+                      }
+                      try {
+                        await onDeletePost(post.id);
+                      } catch (error: any) {
+                        setReplyMessage(error?.message || 'Failed to delete post.');
+                      } finally {
+                        setDeletePostArmed(false);
+                      }
+                    }}
+                    className={`p-2 rounded-full transition-colors ${deletePostArmed ? 'text-red-600 bg-red-500/10' : 'text-warm-text-secondary dark:text-slate-400 hover:text-red-500 hover:bg-red-500/10'}`}
+                    title="Delete post"
+                  >
+                    <span className="material-icons">{deletePostArmed ? 'warning' : 'delete'}</span>
+                  </button>
+                )}
               </div>
             </div>
             
@@ -502,6 +533,8 @@ export function PostDetail({
               focusReplyInput();
             }}
             onUpvote={onCommentUpvote}
+            currentPubkey={currentPubkey}
+            onDelete={onDeleteComment}
             onImageClick={(src) => setPreviewImageSrc(src)}
           />
         </div>

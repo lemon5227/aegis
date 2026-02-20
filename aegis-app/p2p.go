@@ -634,6 +634,84 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 	return topic.Publish(ctx, payload)
 }
 
+func (a *App) PublishDeletePost(pubkey string, postID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	if err = a.deleteLocalPostAsAuthor(pubkey, postID, now, lamport); err != nil {
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return nil
+	}
+
+	msg := IncomingMessage{
+		Type:      "POST_DELETE",
+		Pubkey:    pubkey,
+		PostID:    postID,
+		Timestamp: now,
+		Lamport:   lamport,
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || commentID == "" {
+		return errors.New("pubkey and comment id are required")
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	postID, err := a.deleteLocalCommentAsAuthor(pubkey, commentID, now, lamport)
+	if err != nil {
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return nil
+	}
+
+	msg := IncomingMessage{
+		Type:      "COMMENT_DELETE",
+		Pubkey:    pubkey,
+		CommentID: commentID,
+		PostID:    postID,
+		Timestamp: now,
+		Lamport:   lamport,
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return topic.Publish(ctx, payload)
+}
+
 func (a *App) PublishPostUpvote(pubkey string, postID string) error {
 	pubkey = strings.TrimSpace(pubkey)
 	postID = strings.TrimSpace(postID)
@@ -1680,7 +1758,11 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 			if messageType == messageTypeFavoriteOp {
 				continue
 			}
-			if messageType == "COMMENT" || messageType == "COMMENT_UPVOTE" {
+			if messageType == "SUB_CREATE" {
+				runtime.EventsEmit(a.ctx, "subs:updated")
+				continue
+			}
+			if messageType == "COMMENT" || messageType == "COMMENT_UPVOTE" || messageType == "COMMENT_DELETE" {
 				postID := strings.TrimSpace(incoming.PostID)
 				if postID != "" {
 					runtime.EventsEmit(a.ctx, "comments:updated", map[string]string{"postId": postID})

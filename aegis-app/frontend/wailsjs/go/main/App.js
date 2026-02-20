@@ -218,6 +218,14 @@ export function PublishCreateSub(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishCreateSub'](arg1, arg2, arg3);
 }
 
+export function PublishDeleteComment(arg1, arg2) {
+  return window['go']['main']['App']['PublishDeleteComment'](arg1, arg2);
+}
+
+export function PublishDeletePost(arg1, arg2) {
+  return window['go']['main']['App']['PublishDeletePost'](arg1, arg2);
+}
+
 export function PublishGovernancePolicy(arg1) {
   return window['go']['main']['App']['PublishGovernancePolicy'](arg1);
 }
@@ -252,6 +260,10 @@ export function PublishUnban(arg1, arg2, arg3) {
 
 export function RemoveFavorite(arg1) {
   return window['go']['main']['App']['RemoveFavorite'](arg1);
+}
+
+export function ResetLocalTestData() {
+  return window['go']['main']['App']['ResetLocalTestData']();
 }
 
 export function SaveP2PConfig(arg1, arg2, arg3) {

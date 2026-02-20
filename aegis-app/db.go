@@ -124,6 +124,8 @@ type Comment struct {
 	Score       int64               `json:"score"`
 	Timestamp   int64               `json:"timestamp"`
 	Lamport     int64               `json:"lamport"`
+	DeletedAt   int64               `json:"deletedAt,omitempty"`
+	DeletedBy   string              `json:"deletedBy,omitempty"`
 }
 
 type CommentAttachment struct {
@@ -463,7 +465,9 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			attachments_json TEXT NOT NULL DEFAULT '[]',
 			score INTEGER NOT NULL DEFAULT 0,
 			timestamp INTEGER NOT NULL,
-			lamport INTEGER NOT NULL DEFAULT 0
+			lamport INTEGER NOT NULL DEFAULT 0,
+			deleted_at INTEGER NOT NULL DEFAULT 0,
+			deleted_by TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_post_timestamp ON comments(post_id, timestamp);`,
 		`CREATE TABLE IF NOT EXISTS comment_media_refs (
@@ -676,6 +680,16 @@ func (a *App) ensureSchema(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN deleted_by TEXT NOT NULL DEFAULT '';`); err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
@@ -1840,7 +1854,7 @@ func (a *App) getLatestPublicCommentTimestamp() (int64, error) {
 		SELECT MAX(c.timestamp)
 		FROM comments c
 		JOIN messages m ON m.id = c.post_id
-		WHERE m.zone = 'public' AND m.visibility = 'normal';
+		WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0;
 	`).Scan(&latest); err != nil {
 		return 0, err
 	}
@@ -1967,7 +1981,7 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.timestamp >= ?
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY c.timestamp ASC
 				LIMIT ?;
@@ -1980,7 +1994,7 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.timestamp >= ?
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2000,7 +2014,7 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal'
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0
 				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 				ORDER BY c.timestamp DESC
 				LIMIT ?;
@@ -2013,7 +2027,7 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 				JOIN messages m ON m.id = c.post_id
 				LEFT JOIN profiles p ON p.pubkey = c.pubkey
 				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-				WHERE m.zone = 'public' AND m.visibility = 'normal'
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0
 				  AND (
 					mo.action IS NULL
 					OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2084,7 +2098,7 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 			JOIN messages m ON m.id = c.post_id
 			LEFT JOIN profiles p ON p.pubkey = c.pubkey
 			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
+			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.post_id = ? AND c.timestamp >= ?
 			  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
 			ORDER BY c.timestamp ASC
 			LIMIT ?;
@@ -2097,7 +2111,7 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 			JOIN messages m ON m.id = c.post_id
 			LEFT JOIN profiles p ON p.pubkey = c.pubkey
 			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
+			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.deleted_at = 0 AND c.post_id = ? AND c.timestamp >= ?
 			  AND (
 				mo.action IS NULL
 				OR UPPER(mo.action) != 'SHADOW_BAN'
@@ -2234,6 +2248,14 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 	if digest.ID == "" || digest.Pubkey == "" || digest.ContentCID == "" {
 		return false, errors.New("invalid sync digest")
 	}
+	var existingVisibility string
+	if err := a.db.QueryRow(`SELECT visibility FROM messages WHERE id = ?;`, digest.ID).Scan(&existingVisibility); err == nil {
+		if strings.EqualFold(strings.TrimSpace(existingVisibility), "deleted") {
+			return false, nil
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
 	if digest.Title == "" {
 		digest.Title = "Untitled"
 	}
@@ -2244,15 +2266,51 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 		)
 		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, 0, 'public', ?, 0, 'normal')
 		ON CONFLICT(id) DO UPDATE SET
-			content_cid = CASE WHEN COALESCE(messages.content_cid, '') = '' THEN excluded.content_cid ELSE messages.content_cid END,
-			image_cid = CASE WHEN COALESCE(messages.image_cid, '') = '' THEN excluded.image_cid ELSE messages.image_cid END,
-			thumb_cid = CASE WHEN COALESCE(messages.thumb_cid, '') = '' THEN excluded.thumb_cid ELSE messages.thumb_cid END,
-			image_mime = CASE WHEN COALESCE(messages.image_mime, '') = '' THEN excluded.image_mime ELSE messages.image_mime END,
-			image_size = CASE WHEN COALESCE(messages.image_size, 0) = 0 THEN excluded.image_size ELSE messages.image_size END,
-			image_width = CASE WHEN COALESCE(messages.image_width, 0) = 0 THEN excluded.image_width ELSE messages.image_width END,
-			image_height = CASE WHEN COALESCE(messages.image_height, 0) = 0 THEN excluded.image_height ELSE messages.image_height END,
-			lamport = CASE WHEN COALESCE(messages.lamport, 0) = 0 THEN excluded.lamport ELSE messages.lamport END,
-			sub_id = CASE WHEN COALESCE(messages.sub_id, '') = '' THEN excluded.sub_id ELSE messages.sub_id END;
+			content_cid = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.content_cid
+				WHEN COALESCE(messages.content_cid, '') = '' THEN excluded.content_cid
+				ELSE messages.content_cid
+			END,
+			image_cid = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.image_cid
+				WHEN COALESCE(messages.image_cid, '') = '' THEN excluded.image_cid
+				ELSE messages.image_cid
+			END,
+			thumb_cid = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.thumb_cid
+				WHEN COALESCE(messages.thumb_cid, '') = '' THEN excluded.thumb_cid
+				ELSE messages.thumb_cid
+			END,
+			image_mime = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.image_mime
+				WHEN COALESCE(messages.image_mime, '') = '' THEN excluded.image_mime
+				ELSE messages.image_mime
+			END,
+			image_size = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.image_size
+				WHEN COALESCE(messages.image_size, 0) = 0 THEN excluded.image_size
+				ELSE messages.image_size
+			END,
+			image_width = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.image_width
+				WHEN COALESCE(messages.image_width, 0) = 0 THEN excluded.image_width
+				ELSE messages.image_width
+			END,
+			image_height = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.image_height
+				WHEN COALESCE(messages.image_height, 0) = 0 THEN excluded.image_height
+				ELSE messages.image_height
+			END,
+			lamport = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.lamport
+				WHEN COALESCE(messages.lamport, 0) = 0 THEN excluded.lamport
+				ELSE messages.lamport
+			END,
+			sub_id = CASE
+				WHEN messages.visibility = 'deleted' THEN messages.sub_id
+				WHEN COALESCE(messages.sub_id, '') = '' THEN excluded.sub_id
+				ELSE messages.sub_id
+			END;
 	`, digest.ID, digest.Pubkey, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.Lamport, digest.SubID)
 	if err != nil {
 		return false, err
@@ -2390,7 +2448,7 @@ func (a *App) GetCommentsByPost(postID string) ([]Comment, error) {
 	`
 	args := []interface{}{}
 	query += `
-		WHERE c.post_id = ?
+		WHERE c.post_id = ? AND c.deleted_at = 0
 	`
 	args = append(args, postID)
 	if hideHistoryOnShadowBan {
@@ -3290,6 +3348,79 @@ func (a *App) GetStorageUsage() (StorageUsage, error) {
 	return usage, nil
 }
 
+func (a *App) ResetLocalTestData() error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	statements := []string{
+		`DELETE FROM comment_media_refs;`,
+		`DELETE FROM comments;`,
+		`DELETE FROM comment_votes;`,
+		`DELETE FROM post_votes;`,
+		`DELETE FROM post_favorite_ops;`,
+		`DELETE FROM post_favorites_state;`,
+		`DELETE FROM messages;`,
+		`DELETE FROM content_blobs;`,
+		`DELETE FROM media_blobs;`,
+		`DELETE FROM sub_subscriptions;`,
+		`DELETE FROM subs;`,
+		`DELETE FROM moderation_logs;`,
+		`DELETE FROM moderation;`,
+		`DELETE FROM known_peers;`,
+		`DELETE FROM identity_state;`,
+		`DELETE FROM profiles;`,
+		`DELETE FROM profile_details;`,
+		`DELETE FROM logical_clock;`,
+	}
+
+	for _, statement := range statements {
+		if _, execErr := tx.Exec(statement); execErr != nil {
+			_ = tx.Rollback()
+			return execErr
+		}
+	}
+
+	now := time.Now().Unix()
+	if _, err = tx.Exec(`
+		INSERT INTO subs (id, title, description, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			description = excluded.description,
+			created_at = excluded.created_at;
+	`, defaultSubID, "General", "Default public community", now); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "feed:updated")
+		runtime.EventsEmit(a.ctx, "subs:updated")
+		runtime.EventsEmit(a.ctx, "p2p:updated")
+	}
+
+	a.releaseAlertMu.Lock()
+	a.releaseAlertState = make(map[string]int64)
+	a.releaseAlertActive = make(map[string]ReleaseAlert)
+	a.releaseAlertMu.Unlock()
+
+	a.antiEntropyMu.Lock()
+	a.antiEntropyStats = AntiEntropyStats{}
+	a.antiEntropyMu.Unlock()
+
+	return nil
+}
+
 func (a *App) nextLamport() (int64, error) {
 	if a.db == nil {
 		return 0, errors.New("database not initialized")
@@ -3395,6 +3526,31 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		return policyErr
 	case "PROFILE_UPDATE":
 		_, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp)
+		return err
+	case "POST_DELETE":
+		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.PostID) == "" {
+			return errors.New("invalid post delete payload")
+		}
+		if message.Timestamp <= 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.deleteLocalPostAsAuthor(message.Pubkey, message.PostID, message.Timestamp, lamport)
+	case "COMMENT_DELETE":
+		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.CommentID) == "" {
+			return errors.New("invalid comment delete payload")
+		}
+		if message.Timestamp <= 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		_, err = a.deleteLocalCommentAsAuthor(message.Pubkey, message.CommentID, message.Timestamp, lamport)
 		return err
 	case "POST_UPVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
@@ -3667,6 +3823,102 @@ func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, paren
 	}
 
 	return a.insertComment(comment)
+}
+
+func (a *App) deleteLocalPostAsAuthor(pubkey string, postID string, deletedAt int64, lamport int64) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+	if deletedAt <= 0 {
+		deletedAt = time.Now().Unix()
+	}
+	if lamport <= 0 {
+		lamport = deletedAt
+	}
+
+	var author string
+	err := a.db.QueryRow(`SELECT pubkey FROM messages WHERE id = ?;`, postID).Scan(&author)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("post not found")
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(author) != pubkey {
+		return errors.New("only post author can delete this post")
+	}
+
+	_, err = a.db.Exec(`
+		UPDATE messages
+		SET visibility = 'deleted',
+		    title = CASE WHEN title = '' THEN title ELSE '[deleted]' END,
+		    body = '',
+		    content = '',
+		    content_cid = '',
+		    image_cid = '',
+		    thumb_cid = '',
+		    image_mime = '',
+		    image_size = 0,
+		    image_width = 0,
+		    image_height = 0,
+		    timestamp = CASE WHEN timestamp > ? THEN timestamp ELSE ? END,
+		    lamport = CASE WHEN lamport > ? THEN lamport ELSE ? END
+		WHERE id = ?;
+	`, deletedAt, deletedAt, lamport, lamport, postID)
+	return err
+}
+
+func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, deletedAt int64, lamport int64) (string, error) {
+	if a.db == nil {
+		return "", errors.New("database not initialized")
+	}
+	pubkey = strings.TrimSpace(pubkey)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || commentID == "" {
+		return "", errors.New("pubkey and comment id are required")
+	}
+	if deletedAt <= 0 {
+		deletedAt = time.Now().Unix()
+	}
+	if lamport <= 0 {
+		lamport = deletedAt
+	}
+
+	var (
+		author string
+		postID string
+	)
+	err := a.db.QueryRow(`SELECT pubkey, post_id FROM comments WHERE id = ?;`, commentID).Scan(&author, &postID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("comment not found")
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(author) != pubkey {
+		return "", errors.New("only comment author can delete this comment")
+	}
+
+	_, err = a.db.Exec(`
+		UPDATE comments
+		SET body = '',
+		    attachments_json = '[]',
+		    deleted_at = CASE WHEN deleted_at > ? THEN deleted_at ELSE ? END,
+		    deleted_by = CASE WHEN deleted_at > 0 AND deleted_by != '' THEN deleted_by ELSE ? END,
+		    timestamp = CASE WHEN timestamp > ? THEN timestamp ELSE ? END,
+		    lamport = CASE WHEN lamport > ? THEN lamport ELSE ? END
+		WHERE id = ?;
+	`, deletedAt, deletedAt, pubkey, deletedAt, deletedAt, lamport, lamport, commentID)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(postID), nil
 }
 
 func (a *App) UpvotePost(postID string) error {
@@ -4419,6 +4671,14 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	if message.Lamport <= 0 {
 		message.Lamport = message.Timestamp
 	}
+	var existingVisibility string
+	if err := a.db.QueryRow(`SELECT visibility FROM messages WHERE id = ?;`, message.ID).Scan(&existingVisibility); err == nil {
+		if strings.EqualFold(strings.TrimSpace(existingVisibility), "deleted") {
+			return message, nil
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ForumMessage{}, err
+	}
 
 	message.Title = strings.TrimSpace(message.Title)
 	message.Body = strings.TrimSpace(message.Body)
@@ -4516,7 +4776,7 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	if comment.ID == "" || comment.PostID == "" || comment.Pubkey == "" {
 		return Comment{}, errors.New("invalid comment")
 	}
-	if comment.Body == "" && len(comment.Attachments) == 0 {
+	if comment.DeletedAt <= 0 && comment.Body == "" && len(comment.Attachments) == 0 {
 		return Comment{}, errors.New("invalid comment")
 	}
 	if comment.Timestamp == 0 {
@@ -4524,6 +4784,10 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	}
 	if comment.Lamport <= 0 {
 		comment.Lamport = comment.Timestamp
+	}
+	comment.DeletedBy = strings.TrimSpace(comment.DeletedBy)
+	if comment.DeletedAt < 0 {
+		comment.DeletedAt = 0
 	}
 	comment.Attachments = normalizeCommentAttachments(comment.Attachments)
 	attachmentsJSON, err := encodeCommentAttachmentsJSON(comment.Attachments)
@@ -4538,9 +4802,20 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	}
 
 	_, err = tx.Exec(`
-		INSERT OR REPLACE INTO comments (id, post_id, parent_id, pubkey, body, attachments_json, score, timestamp, lamport)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Body, attachmentsJSON, comment.Score, comment.Timestamp, comment.Lamport)
+		INSERT INTO comments (id, post_id, parent_id, pubkey, body, attachments_json, score, timestamp, lamport, deleted_at, deleted_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			post_id = comments.post_id,
+			parent_id = comments.parent_id,
+			pubkey = comments.pubkey,
+			body = CASE WHEN comments.deleted_at > 0 THEN comments.body ELSE excluded.body END,
+			attachments_json = CASE WHEN comments.deleted_at > 0 THEN comments.attachments_json ELSE excluded.attachments_json END,
+			score = CASE WHEN comments.deleted_at > 0 THEN comments.score ELSE excluded.score END,
+			timestamp = CASE WHEN comments.deleted_at > 0 THEN comments.timestamp ELSE excluded.timestamp END,
+			lamport = CASE WHEN comments.deleted_at > 0 THEN comments.lamport ELSE excluded.lamport END,
+			deleted_at = CASE WHEN comments.deleted_at > 0 THEN comments.deleted_at ELSE excluded.deleted_at END,
+			deleted_by = CASE WHEN comments.deleted_at > 0 THEN comments.deleted_by ELSE excluded.deleted_by END;
+	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Body, attachmentsJSON, comment.Score, comment.Timestamp, comment.Lamport, comment.DeletedAt, comment.DeletedBy)
 	if err != nil {
 		_ = tx.Rollback()
 		return Comment{}, err

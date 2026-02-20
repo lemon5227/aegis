@@ -64,6 +64,8 @@ export namespace main {
 	    score: number;
 	    timestamp: number;
 	    lamport: number;
+	    deletedAt?: number;
+	    deletedBy?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Comment(source);
@@ -80,6 +82,8 @@ export namespace main {
 	        this.score = source["score"];
 	        this.timestamp = source["timestamp"];
 	        this.lamport = source["lamport"];
+	        this.deletedAt = source["deletedAt"];
+	        this.deletedBy = source["deletedBy"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

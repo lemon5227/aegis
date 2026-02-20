@@ -110,6 +110,10 @@ export function PublishCommentWithAttachments(arg1:string,arg2:string,arg3:strin
 
 export function PublishCreateSub(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function PublishDeleteComment(arg1:string,arg2:string):Promise<void>;
+
+export function PublishDeletePost(arg1:string,arg2:string):Promise<void>;
+
 export function PublishGovernancePolicy(arg1:boolean):Promise<void>;
 
 export function PublishPostStructured(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -127,6 +131,8 @@ export function PublishShadowBan(arg1:string,arg2:string,arg3:string):Promise<vo
 export function PublishUnban(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function RemoveFavorite(arg1:string):Promise<void>;
+
+export function ResetLocalTestData():Promise<void>;
 
 export function SaveP2PConfig(arg1:number,arg2:Array<string>,arg3:boolean):Promise<main.P2PConfig>;
 

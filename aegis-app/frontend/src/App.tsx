@@ -32,7 +32,9 @@ import {
   PublishUnban,
   GetModerationLogs,
   TriggerCommentSyncNow,
-  GetP2PStatus,
+	GetP2PStatus,
+	PublishDeletePost,
+	PublishDeleteComment,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -453,6 +455,23 @@ function App() {
     }
   };
 
+  const handleDeletePost = async (postId: string) => {
+    if (!hasWailsRuntime() || !identity) return;
+    await PublishDeletePost(identity.publicKey, postId);
+    setSelectedPost(null);
+    setPostBody('');
+    setPostComments([]);
+    setView('feed');
+    await loadPosts(currentSubId, sortMode);
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!hasWailsRuntime() || !identity || !selectedPost) return;
+    await PublishDeleteComment(identity.publicKey, commentId);
+    const comments = await GetCommentsByPost(selectedPost.id);
+    setPostComments(comments);
+  };
+
   const handleCommentUpvote = async (commentId: string) => {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
@@ -574,6 +593,17 @@ function App() {
   }, [identity, loadSubs, loadSubscribedSubs]);
 
   useEffect(() => {
+    if (!hasWailsRuntime() || !identity) return;
+    const timer = window.setInterval(() => {
+      void loadSubs();
+      void loadSubscribedSubs();
+    }, 20000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [identity, loadSubs, loadSubscribedSubs]);
+
+  useEffect(() => {
     if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('feed:updated', () => {
       if (!identity || view !== 'feed') return;
@@ -689,6 +719,8 @@ function App() {
               onUpvote={handleUpvote}
               onReply={handleCommentReply}
               onCommentUpvote={handleCommentUpvote}
+              onDeletePost={handleDeletePost}
+              onDeleteComment={handleDeleteComment}
             />
           )}
           

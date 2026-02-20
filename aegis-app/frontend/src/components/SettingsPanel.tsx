@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Profile, GovernanceAdmin, ModerationLog, ModerationState } from '../types';
-import { CheckForUpdates, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { CheckForUpdates, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ResetLocalTestData, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -94,6 +94,8 @@ export function SettingsPanel({
   const [storageUsage, setStorageUsage] = useState<StorageUsageView | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageMessage, setStorageMessage] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetConfirmArmed, setResetConfirmArmed] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatusView | null>(null);
   const [versionHistory, setVersionHistory] = useState<VersionHistoryItemView[]>([]);
   const [updateBusy, setUpdateBusy] = useState(false);
@@ -228,6 +230,32 @@ export function SettingsPanel({
   const usagePercent = (used: number, quota: number): number => {
     if (!Number.isFinite(quota) || quota <= 0) return 0;
     return Math.max(0, Math.min(100, (used / quota) * 100));
+  };
+
+  const handleResetLocalTestData = async () => {
+    if (!hasWailsRuntime()) return;
+
+    if (!resetConfirmArmed) {
+      setResetConfirmArmed(true);
+      setStorageMessage('Click "Reset Local Data" again within 8 seconds to confirm.');
+      window.setTimeout(() => {
+        setResetConfirmArmed(false);
+      }, 8000);
+      return;
+    }
+
+    setResetBusy(true);
+    try {
+      await ResetLocalTestData();
+      await Promise.all([loadStorageUsage(), loadP2PState(), loadGovernancePolicy()]);
+      setStorageMessage('Local test data has been reset.');
+      setResetConfirmArmed(false);
+    } catch (error) {
+      console.error('Failed to reset local test data:', error);
+      setStorageMessage('Failed to reset local test data.');
+    } finally {
+      setResetBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -1144,6 +1172,24 @@ export function SettingsPanel({
                     <p className="text-xs text-warm-text-secondary dark:text-slate-400">
                       Shared = data your node may serve to peers. Private = local-only responsibility (including policy-blocked shadow-ban data).
                     </p>
+
+                    <div className="pt-2 border-t border-warm-border dark:border-border-dark">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-red-600 dark:text-red-400">Danger Zone: Reset Local Test Data</p>
+                          <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                            Keeps identity and app settings, clears local forum/test data for a clean test environment.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => void handleResetLocalTestData()}
+                          disabled={resetBusy}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed ${resetConfirmArmed ? 'bg-red-700 hover:bg-red-800' : 'bg-red-600 hover:bg-red-700'}`}
+                        >
+                          {resetBusy ? 'Resetting...' : (resetConfirmArmed ? 'Confirm Reset' : 'Reset Local Data')}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
