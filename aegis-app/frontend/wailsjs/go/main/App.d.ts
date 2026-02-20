@@ -6,6 +6,8 @@ export function AddFavorite(arg1:string):Promise<void>;
 
 export function AddLocalComment(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.Comment>;
 
+export function AddLocalCommentWithAttachments(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<main.CommentAttachment>):Promise<main.Comment>;
+
 export function AddLocalPostStructured(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ForumMessage>;
 
 export function AddLocalPostStructuredToSub(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<main.ForumMessage>;
@@ -100,6 +102,8 @@ export function PublishComment(arg1:string,arg2:string,arg3:string,arg4:string):
 
 export function PublishCommentUpvote(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function PublishCommentWithAttachments(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>,arg6:Array<string>):Promise<void>;
+
 export function PublishCreateSub(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function PublishGovernancePolicy(arg1:boolean):Promise<void>;
@@ -137,6 +141,8 @@ export function SignMessage(arg1:string,arg2:string):Promise<string>;
 export function StartP2P(arg1:number,arg2:Array<string>):Promise<main.P2PStatus>;
 
 export function StopP2P():Promise<void>;
+
+export function StoreCommentImageDataURL(arg1:string):Promise<main.CommentAttachment>;
 
 export function SubscribeSub(arg1:string):Promise<main.Sub>;
 

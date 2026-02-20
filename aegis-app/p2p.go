@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -320,33 +321,34 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 		return errors.New("p2p not started")
 	}
 
-	now := time.Now().Unix()
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
 	}
 
+	localPost, err := a.AddLocalPostStructuredToSub(pubkey, title, body, "public", subID)
+	if err != nil {
+		return err
+	}
+
 	msg := IncomingMessage{
 		Type:        "POST",
-		ID:          buildMessageID(pubkey, body, now),
+		ID:          localPost.ID,
 		Pubkey:      pubkey,
 		DisplayName: strings.TrimSpace(profile.DisplayName),
 		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
 		Title:       title,
 		Body:        body,
-		ContentCID:  buildContentCID(body),
+		ContentCID:  localPost.ContentCID,
 		Content:     "",
 		SubID:       normalizeSubID(subID),
-		Timestamp:   now,
+		Timestamp:   localPost.Timestamp,
+		Lamport:     localPost.Lamport,
 		Signature:   "",
 	}
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
-		return err
-	}
-
-	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
 
@@ -385,7 +387,6 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 		return errors.New("p2p not started")
 	}
 
-	now := time.Now().Unix()
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
@@ -413,7 +414,8 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 		ImageHeight: localPost.ImageHeight,
 		Content:     "",
 		SubID:       normalizeSubID(subID),
-		Timestamp:   now,
+		Timestamp:   localPost.Timestamp,
+		Lamport:     localPost.Lamport,
 		Signature:   "",
 	}
 
@@ -493,22 +495,26 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 		return errors.New("p2p not started")
 	}
 
-	now := time.Now().Unix()
-	raw := fmt.Sprintf("%s|%s|%s", postID, parentID, body)
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
 	}
+	localComment, err := a.AddLocalComment(pubkey, postID, parentID, body)
+	if err != nil {
+		return err
+	}
 	msg := IncomingMessage{
-		Type:        "COMMENT",
-		ID:          buildMessageID(pubkey, raw, now),
-		Pubkey:      pubkey,
-		PostID:      postID,
-		ParentID:    parentID,
-		DisplayName: strings.TrimSpace(profile.DisplayName),
-		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
-		Body:        body,
-		Timestamp:   now,
+		Type:               "COMMENT",
+		ID:                 localComment.ID,
+		Pubkey:             pubkey,
+		PostID:             postID,
+		ParentID:           parentID,
+		DisplayName:        strings.TrimSpace(profile.DisplayName),
+		AvatarURL:          strings.TrimSpace(profile.AvatarURL),
+		Body:               body,
+		CommentAttachments: localComment.Attachments,
+		Timestamp:          localComment.Timestamp,
+		Lamport:            localComment.Lamport,
 	}
 
 	payload, err := json.Marshal(msg)
@@ -516,7 +522,96 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 		return err
 	}
 
-	if err = a.ProcessIncomingMessage(payload); err != nil {
+	return topic.Publish(ctx, payload)
+}
+
+func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parentID string, body string, localImageDataURLs []string, externalImageURLs []string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	parentID = strings.TrimSpace(parentID)
+	body = strings.TrimSpace(body)
+
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+	if body == "" && len(localImageDataURLs) == 0 && len(externalImageURLs) == 0 {
+		return errors.New("comment content is required")
+	}
+
+	attachments := make([]CommentAttachment, 0, len(localImageDataURLs)+len(externalImageURLs))
+	for _, dataURL := range localImageDataURLs {
+		dataURL = strings.TrimSpace(dataURL)
+		if dataURL == "" {
+			continue
+		}
+		item, err := a.StoreCommentImageDataURL(dataURL)
+		if err != nil {
+			return err
+		}
+		attachments = append(attachments, item)
+	}
+	for _, external := range externalImageURLs {
+		external = strings.TrimSpace(external)
+		if external == "" {
+			continue
+		}
+		u, err := url.Parse(external)
+		if err != nil {
+			continue
+		}
+		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+		if scheme != "http" && scheme != "https" {
+			continue
+		}
+		attachments = append(attachments, CommentAttachment{Kind: "external_url", Ref: u.String()})
+	}
+	attachments = normalizeCommentAttachments(attachments)
+	if body == "" && len(attachments) == 0 {
+		return errors.New("comment content is required")
+	}
+
+	shadowBanned, err := a.isShadowBanned(pubkey)
+	if err != nil {
+		return err
+	}
+	if shadowBanned {
+		_, err = a.AddLocalCommentWithAttachments(pubkey, postID, parentID, body, attachments)
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return errors.New("p2p not started")
+	}
+
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
+	}
+	localComment, err := a.AddLocalCommentWithAttachments(pubkey, postID, parentID, body, attachments)
+	if err != nil {
+		return err
+	}
+
+	msg := IncomingMessage{
+		Type:               "COMMENT",
+		ID:                 localComment.ID,
+		Pubkey:             pubkey,
+		PostID:             postID,
+		ParentID:           parentID,
+		DisplayName:        strings.TrimSpace(profile.DisplayName),
+		AvatarURL:          strings.TrimSpace(profile.AvatarURL),
+		Body:               body,
+		CommentAttachments: localComment.Attachments,
+		Timestamp:          localComment.Timestamp,
+		Lamport:            localComment.Lamport,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
 		return err
 	}
 
@@ -771,6 +866,14 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 		return errors.New("admin pubkey is required")
 	}
 
+	trusted, err := a.isTrustedAdmin(adminPubkey)
+	if err != nil {
+		return err
+	}
+	if !trusted {
+		return errors.New("admin pubkey is not trusted")
+	}
+
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
 	ctx := a.p2pCtx
@@ -781,20 +884,25 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 	}
 
 	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
 	msg := IncomingMessage{
 		Type:         action,
 		TargetPubkey: strings.TrimSpace(targetPubkey),
 		AdminPubkey:  strings.TrimSpace(adminPubkey),
 		Timestamp:    now,
+		Lamport:      lamport,
 		Reason:       strings.TrimSpace(reason),
+	}
+
+	if err = a.upsertModeration(msg.TargetPubkey, action, msg.AdminPubkey, now, lamport, msg.Reason); err != nil {
+		return err
 	}
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
-		return err
-	}
-
-	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
 
@@ -1517,8 +1625,18 @@ func (a *App) handleContentFetchRequest(localPeerID string, remotePeerID string,
 		return
 	}
 
+	shareable, shareErr := a.canServeContentBlobToNetwork(contentCID)
+	if shareErr != nil || !shareable {
+		if a.ctx != nil && shareErr == nil {
+			runtime.LogInfof(a.ctx, "content_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
+		}
+		a.publishContentFetchNotFound(localPeerID, requester, requestID, contentCID)
+		return
+	}
+
 	body, err := a.getContentBlobLocal(contentCID)
 	if err != nil {
+		a.publishContentFetchNotFound(localPeerID, requester, requestID, contentCID)
 		return
 	}
 
@@ -1542,6 +1660,31 @@ func (a *App) handleContentFetchRequest(localPeerID string, remotePeerID string,
 		return
 	}
 
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+}
+
+func (a *App) publishContentFetchNotFound(localPeerID string, requester string, requestID string, contentCID string) {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	response := IncomingMessage{
+		Type:            messageTypeContentFetchResponse,
+		RequestID:       requestID,
+		RequesterPeerID: requester,
+		ResponderPeerID: localPeerID,
+		ContentCID:      contentCID,
+		Found:           false,
+		Timestamp:       time.Now().Unix(),
+	}
 	payload, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
 		return
@@ -1586,8 +1729,18 @@ func (a *App) handleMediaFetchRequest(localPeerID string, remotePeerID string, m
 		return
 	}
 
+	shareable, shareErr := a.canServeMediaBlobToNetwork(contentCID)
+	if shareErr != nil || !shareable {
+		if a.ctx != nil && shareErr == nil {
+			runtime.LogInfof(a.ctx, "media_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
+		}
+		a.publishMediaFetchNotFound(localPeerID, requester, requestID, contentCID)
+		return
+	}
+
 	media, raw, err := a.getMediaBlobRawLocal(contentCID)
 	if err != nil {
+		a.publishMediaFetchNotFound(localPeerID, requester, requestID, contentCID)
 		return
 	}
 
@@ -1614,6 +1767,31 @@ func (a *App) handleMediaFetchRequest(localPeerID string, remotePeerID string, m
 		return
 	}
 
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+}
+
+func (a *App) publishMediaFetchNotFound(localPeerID string, requester string, requestID string, contentCID string) {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	response := IncomingMessage{
+		Type:            messageTypeMediaFetchResponse,
+		RequestID:       requestID,
+		RequesterPeerID: requester,
+		ResponderPeerID: localPeerID,
+		ContentCID:      contentCID,
+		Found:           false,
+		Timestamp:       time.Now().Unix(),
+	}
 	payload, marshalErr := json.Marshal(response)
 	if marshalErr != nil {
 		return
@@ -1799,8 +1977,17 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 	seenMediaCIDs := make(map[string]struct{}, mediaFetchBudget)
 	indexInsertions := int64(0)
 	remoteMaxTimestamp := int64(0)
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
 
 	for _, digest := range summaries {
+		allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
+		if allowErr != nil || !allowed {
+			continue
+		}
+
 		if digest.Timestamp > remoteMaxTimestamp {
 			remoteMaxTimestamp = digest.Timestamp
 		}
@@ -2028,7 +2215,16 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 	inserted := 0
 	updatedProfiles := 0
 	updatedPostIDs := make(map[string]struct{})
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
 	for _, digest := range commentSummaries {
+		allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
+		if allowErr != nil || !allowed {
+			continue
+		}
+
 		if strings.TrimSpace(digest.DisplayName) != "" || strings.TrimSpace(digest.AvatarURL) != "" {
 			if _, err := a.upsertProfile(digest.Pubkey, digest.DisplayName, digest.AvatarURL, digest.Timestamp); err == nil {
 				updatedProfiles++
@@ -2036,13 +2232,15 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 		}
 
 		if _, err := a.insertComment(Comment{
-			ID:        digest.ID,
-			PostID:    digest.PostID,
-			ParentID:  digest.ParentID,
-			Pubkey:    digest.Pubkey,
-			Body:      digest.Body,
-			Score:     digest.Score,
-			Timestamp: digest.Timestamp,
+			ID:          digest.ID,
+			PostID:      digest.PostID,
+			ParentID:    digest.ParentID,
+			Pubkey:      digest.Pubkey,
+			Body:        digest.Body,
+			Attachments: digest.Attachments,
+			Score:       digest.Score,
+			Timestamp:   digest.Timestamp,
+			Lamport:     digest.Lamport,
 		}); err != nil {
 			continue
 		}
@@ -2166,7 +2364,18 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 	}
 
 	sort.SliceStable(states, func(i int, j int) bool {
-		return states[i].Timestamp < states[j].Timestamp
+		left := states[i]
+		right := states[j]
+		if left.Lamport > 0 && right.Lamport > 0 && left.Lamport != right.Lamport {
+			return left.Lamport < right.Lamport
+		}
+		if left.Timestamp != right.Timestamp {
+			return left.Timestamp < right.Timestamp
+		}
+		if left.TargetPubkey != right.TargetPubkey {
+			return left.TargetPubkey < right.TargetPubkey
+		}
+		return left.Action < right.Action
 	})
 
 	applied := 0
@@ -2178,7 +2387,7 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 			}
 			continue
 		}
-		if err := a.upsertModeration(row.TargetPubkey, row.Action, row.SourceAdmin, row.Timestamp, row.Reason); err != nil {
+		if err := a.upsertModeration(row.TargetPubkey, row.Action, row.SourceAdmin, row.Timestamp, row.Lamport, row.Reason); err != nil {
 			if a.ctx != nil {
 				runtime.LogWarningf(a.ctx, "governance_sync.apply_failed target=%s action=%s err=%v", row.TargetPubkey, row.Action, err)
 			}
@@ -2213,6 +2422,7 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 			Action:       action,
 			SourceAdmin:  row.SourceAdmin,
 			Timestamp:    row.Timestamp,
+			Lamport:      row.Lamport,
 			Reason:       row.Reason,
 			Result:       "applied",
 		})

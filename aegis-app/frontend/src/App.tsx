@@ -12,6 +12,7 @@ import {
   CreateSub,
   PublishCreateSub,
   PublishPostStructuredToSub,
+  PublishPostWithImageToSub,
   PublishPostUpvote,
   LoadSavedIdentity,
   GenerateIdentity,
@@ -19,10 +20,11 @@ import {
   GetProfileDetails,
   GetProfile,
   GetTrustedAdmins,
+  GetModerationState,
   GetPostIndexByID,
   GetPostBodyByID,
   GetCommentsByPost,
-  PublishComment,
+	PublishCommentWithAttachments,
   PublishCommentUpvote,
   UpdateProfileDetails,
   PublishProfileUpdate,
@@ -43,7 +45,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { CreateSubModal } from './components/CreateSubModal';
 import { CreatePostModal } from './components/CreatePostModal';
 import { LoginModal } from './components/LoginModal';
-import { Sub, Profile, Post, GovernanceAdmin, Identity, Comment, ModerationLog } from './types';
+import { Sub, Profile, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState } from './types';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 type SortMode = 'hot' | 'new';
@@ -73,11 +75,32 @@ function App() {
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [postBody, setPostBody] = useState<string>('');
   const [postComments, setPostComments] = useState<Comment[]>([]);
+  const [governanceAdmins, setGovernanceAdmins] = useState<GovernanceAdmin[]>([]);
+  const [moderationStates, setModerationStates] = useState<ModerationState[]>([]);
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
 
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
   };
+
+  const loadGovernanceData = useCallback(async (publicKey?: string) => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const [admins, states, logs] = await Promise.all([
+        GetTrustedAdmins(),
+        GetModerationState(),
+        GetModerationLogs(200),
+      ]);
+      setGovernanceAdmins(admins || []);
+      setModerationStates(states || []);
+      setModerationLogs(logs || []);
+      if (publicKey) {
+        setIsAdmin((admins || []).some((a: GovernanceAdmin) => a.adminPubkey === publicKey && a.active));
+      }
+    } catch (error) {
+      console.error('Failed to load governance data:', error);
+    }
+  }, []);
 
   const loadIdentity = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -88,13 +111,12 @@ function App() {
         const p = await GetProfileDetails(id.publicKey);
         setProfile(p);
         setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
-        const admins = await GetTrustedAdmins();
-        setIsAdmin(admins.some((a: GovernanceAdmin) => a.adminPubkey === id.publicKey && a.active));
+        await loadGovernanceData(id.publicKey);
       }
     } catch (e) {
       console.log('No saved identity');
     }
-  }, []);
+  }, [loadGovernanceData]);
 
   const loadSubs = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -123,12 +145,11 @@ function App() {
       const p = await GetProfileDetails(id.publicKey);
       setProfile(p);
       setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
-      const admins = await GetTrustedAdmins();
-      setIsAdmin(admins.some((a: GovernanceAdmin) => a.adminPubkey === id.publicKey && a.active));
+      await loadGovernanceData(id.publicKey);
     }
     await loadSubs();
     await loadSubscribedSubs();
-  }, [loadSubs, loadSubscribedSubs]);
+  }, [loadGovernanceData, loadSubs, loadSubscribedSubs]);
 
   const loadRecommendedFeed = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -263,14 +284,31 @@ function App() {
     }
   };
 
-  const handleCreatePost = async (title: string, body: string) => {
+  const handleCreatePost = async (title: string, body: string, imageBase64?: string, imageMime?: string, externalImageURL?: string) => {
     if (!hasWailsRuntime() || !identity) return;
     try {
       const targetSubId = currentSubId === 'recommended' ? 'general' : currentSubId;
-      await PublishPostStructuredToSub(identity.publicKey, title, body, targetSubId);
+      const trimmedTitle = title.trim();
+      const trimmedBody = body.trim();
+      const effectiveBody = trimmedBody || trimmedTitle;
+      const trimmedImage = (imageBase64 || '').trim();
+      const trimmedMime = (imageMime || '').trim();
+      const trimmedExternalImage = (externalImageURL || '').trim();
+
+      if (trimmedImage && trimmedMime) {
+        await PublishPostWithImageToSub(identity.publicKey, trimmedTitle, effectiveBody, trimmedImage, trimmedMime, targetSubId);
+      } else {
+        let finalBody = effectiveBody;
+        if (trimmedExternalImage) {
+          const markdownImage = `![image](${trimmedExternalImage})`;
+          finalBody = finalBody ? `${finalBody}\n\n${markdownImage}` : markdownImage;
+        }
+        await PublishPostStructuredToSub(identity.publicKey, trimmedTitle, finalBody, targetSubId);
+      }
       await loadPosts(currentSubId, sortMode);
     } catch (e) {
       console.error('Failed to create post:', e);
+      throw e;
     }
   };
 
@@ -401,10 +439,10 @@ function App() {
     }
   };
 
-  const handleCommentReply = async (parentId: string, body: string) => {
+  const handleCommentReply = async (parentId: string, body: string, localImageDataURLs: string[] = [], externalImageURLs: string[] = []) => {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
-      await PublishComment(identity.publicKey, selectedPost.id, parentId, body);
+      await PublishCommentWithAttachments(identity.publicKey, selectedPost.id, parentId, body, localImageDataURLs, externalImageURLs);
       const comments = await GetCommentsByPost(selectedPost.id);
       setPostComments(comments);
     } catch (e) {
@@ -453,6 +491,7 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishShadowBan(targetPubkey, identity.publicKey, reason);
+      await loadGovernanceData(identity.publicKey);
     } catch (e) {
       console.error('Failed to ban user:', e);
     }
@@ -462,6 +501,7 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishUnban(targetPubkey, identity.publicKey, reason);
+      await loadGovernanceData(identity.publicKey);
     } catch (e) {
       console.error('Failed to unban user:', e);
     }
@@ -505,12 +545,6 @@ function App() {
       setShowLoginModal(true);
     }
   }, [identity]);
-
-  useEffect(() => {
-    if (isAdmin) {
-      GetModerationLogs(100).then(setModerationLogs).catch(console.error);
-    }
-  }, [isAdmin]);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -641,7 +675,8 @@ function App() {
         onClose={() => setShowSettingsPanel(false)}
         profile={profile || undefined}
         isAdmin={isAdmin}
-        governanceAdmins={[]}
+        governanceAdmins={governanceAdmins}
+        moderationStates={moderationStates}
         moderationLogs={moderationLogs}
         onSaveProfile={handleSaveProfile}
         onPublishProfile={handlePublishProfile}

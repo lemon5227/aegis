@@ -49,8 +49,18 @@ export interface Comment {
   parentId: string;
   pubkey: string;
   body: string;
+  attachments?: CommentAttachment[];
   score: number;
   timestamp: number;
+}
+
+export interface CommentAttachment {
+  kind: string;
+  ref: string;
+  mime?: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
 }
 
 export interface ModerationLog {
@@ -61,6 +71,14 @@ export interface ModerationLog {
   timestamp: number;
   reason: string;
   result: string;
+}
+
+export interface ModerationState {
+  targetPubkey: string;
+  action: string;
+  sourceAdmin: string;
+  timestamp: number;
+  reason: string;
 }
 
 export interface ForumMessage {

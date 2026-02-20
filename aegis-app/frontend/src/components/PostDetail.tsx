@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Post, Profile, Comment } from '../types';
 import { CommentTree } from './CommentTree';
+import { GetPostMediaByID } from '../../wailsjs/go/main/App';
 
 interface PostDetailProps {
   post: Post;
@@ -10,7 +11,7 @@ interface PostDetailProps {
   currentPubkey?: string;
   onBack: () => void;
   onUpvote: (postId: string) => void;
-  onReply: (parentId: string, body: string) => Promise<void> | void;
+  onReply: (parentId: string, body: string, localImageDataURLs: string[], externalImageURLs: string[]) => Promise<void> | void;
   onCommentUpvote: (commentId: string) => void;
 }
 
@@ -47,9 +48,15 @@ export function PostDetail({
   const [replyContent, setReplyContent] = useState('');
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [replyBusy, setReplyBusy] = useState(false);
+  const [imageInsertBusy, setImageInsertBusy] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
   const [commentSort, setCommentSort] = useState<'best' | 'newest' | 'controversial'>('best');
+  const [postImageSrc, setPostImageSrc] = useState('');
+  const [pendingLocalImages, setPendingLocalImages] = useState<string[]>([]);
+  const [pendingExternalImages, setPendingExternalImages] = useState<string[]>([]);
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const replyInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const authorProfile = profiles[post.pubkey];
   const authorName = authorProfile?.displayName || post.pubkey.slice(0, 8);
@@ -66,13 +73,42 @@ export function PostDetail({
     }, 0);
   };
 
+  useEffect(() => {
+    let active = true;
+    const loadPostImage = async () => {
+      if (!post.imageCid) {
+        if (active) setPostImageSrc('');
+        return;
+      }
+      try {
+        const media = await GetPostMediaByID(post.id);
+        if (!active) return;
+        if (media?.dataBase64 && media?.mime) {
+          setPostImageSrc(`data:${media.mime};base64,${media.dataBase64}`);
+          return;
+        }
+        setPostImageSrc('');
+      } catch {
+        if (active) setPostImageSrc('');
+      }
+    };
+    void loadPostImage();
+    return () => {
+      active = false;
+    };
+  }, [post.id, post.imageCid]);
+
   const handleSubmitReply = async () => {
-    if (!replyContent.trim()) return;
+    const textPart = replyContent.trim();
+    if (!textPart && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) return;
+
     setReplyBusy(true);
     setReplyMessage('');
     try {
-      await onReply(replyToId || '', replyContent.trim());
+      await onReply(replyToId || '', textPart, pendingLocalImages, pendingExternalImages);
       setReplyContent('');
+      setPendingLocalImages([]);
+      setPendingExternalImages([]);
       setReplyToId(null);
       setReplyMessage('Comment posted.');
     } catch (error) {
@@ -89,10 +125,152 @@ export function PostDetail({
     focusReplyInput();
   };
 
-  const handleInsertImageTemplate = () => {
-    const addition = replyContent.trim() ? '\n\n![image](https://)' : '![image](https://)';
-    setReplyContent((prev) => `${prev}${addition}`);
+  const addPendingLocalImage = (imageURL: string) => {
+    const normalized = imageURL.trim();
+    if (!normalized) return;
+    setPendingLocalImages((prev) => [...prev, normalized]);
     focusReplyInput();
+  };
+
+  const addPendingExternalImage = (imageURL: string) => {
+    const normalized = imageURL.trim();
+    if (!normalized) return;
+    setPendingExternalImages((prev) => [...prev, normalized]);
+    focusReplyInput();
+  };
+
+  const readFileAsDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const loadImageFromDataURL = (dataURL: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Failed to decode image'));
+      image.src = dataURL;
+    });
+  };
+
+  const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Failed to convert image'));
+          return;
+        }
+        resolve(blob);
+      }, type, quality);
+    });
+  };
+
+  const compressCommentImage = async (file: File): Promise<string> => {
+    const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
+    const MAX_OUTPUT_BYTES = 180 * 1024;
+    const MAX_DIMENSION = 960;
+
+    if (file.size > MAX_SOURCE_BYTES) {
+      throw new Error('Selected image is too large (>10MB). Try a smaller image.');
+    }
+
+    const sourceDataURL = await readFileAsDataURL(file);
+    const image = await loadImageFromDataURL(sourceDataURL);
+
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
+    const targetWidth = Math.max(1, Math.round(image.width * scale));
+    const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('Canvas unavailable');
+    }
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    const qualityCandidates = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42, 0.34, 0.26];
+    for (const quality of qualityCandidates) {
+      const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (blob.size <= MAX_OUTPUT_BYTES) {
+        return await readFileAsDataURL(new File([blob], 'comment.jpg', { type: 'image/jpeg' }));
+      }
+    }
+
+    throw new Error('Image is still too large after compression. Try a smaller source image.');
+  };
+
+  const handleInsertImageURL = () => {
+    const input = window.prompt('Paste image URL (https://...)');
+    if (!input) return;
+    try {
+      const parsed = new URL(input.trim());
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        setReplyMessage('Only http/https image URLs are supported.');
+        return;
+      }
+        addPendingExternalImage(parsed.toString());
+        setReplyMessage('Image URL attached to this comment.');
+    } catch {
+      setReplyMessage('Invalid image URL.');
+    }
+  };
+
+  const handleSelectLocalImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setReplyMessage('Please select an image file.');
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      setImageInsertBusy(true);
+      setReplyMessage('Processing image...');
+      const dataURL = await compressCommentImage(file);
+      if (!dataURL) {
+        setReplyMessage('Failed to read image file.');
+      } else {
+        addPendingLocalImage(dataURL);
+        setReplyMessage('Image attached to this comment.');
+      }
+    } catch (error: any) {
+      setReplyMessage(error?.message || 'Failed to insert local image.');
+    } finally {
+      setImageInsertBusy(false);
+      event.target.value = '';
+    }
+  };
+
+  const renderRichText = (raw: string) => {
+    const text = raw || '';
+    const lines = text.split('\n');
+    return lines.map((line, index) => {
+      const imageMatch = line.trim().match(/^!\[[^\]]*\]\(([^)]+)\)$/);
+      if (imageMatch && imageMatch[1]) {
+        const src = imageMatch[1].trim();
+        return (
+          <img
+            key={`img-${index}`}
+            src={src}
+            alt="comment image"
+            className="max-h-80 w-auto rounded-lg border border-warm-border dark:border-border-dark cursor-zoom-in"
+            onClick={() => setPreviewImageSrc(src)}
+          />
+        );
+      }
+      return (
+        <p key={`txt-${index}`} className="whitespace-pre-wrap break-words">
+          {line}
+        </p>
+      );
+    });
   };
 
   return (
@@ -139,8 +317,18 @@ export function PostDetail({
             </h1>
             
             <div className="prose max-w-none text-warm-text-secondary dark:text-slate-300 leading-relaxed space-y-4">
-              {body || post.bodyPreview || 'No content'}
+              {renderRichText(body || post.bodyPreview || 'No content')}
             </div>
+            {postImageSrc && (
+              <div className="mt-5">
+                <img
+                  src={postImageSrc}
+                  alt="Post media"
+                  className="max-h-[520px] w-auto rounded-xl border border-warm-border dark:border-border-dark cursor-zoom-in"
+                  onClick={() => setPreviewImageSrc(postImageSrc)}
+                />
+              </div>
+            )}
           </div>
           
           <div className="bg-warm-bg/40 dark:bg-background-dark/40 px-6 py-4 border-t border-warm-border/60 dark:border-border-dark/60 flex items-center justify-between">
@@ -223,12 +411,67 @@ export function PostDetail({
                 placeholder="What are your thoughts?" 
                 rows={3}
               />
+              {(pendingLocalImages.length > 0 || pendingExternalImages.length > 0) && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {pendingLocalImages.map((src, idx) => (
+                    <div key={`${src.slice(0, 24)}-${idx}`} className="relative group">
+                      <img
+                        src={src}
+                        alt={`Pending attachment ${idx + 1}`}
+                        className="h-16 w-16 rounded-md object-cover border border-warm-border dark:border-border-dark cursor-zoom-in"
+                        onClick={() => setPreviewImageSrc(src)}
+                      />
+                      <button
+                        onClick={() => setPendingLocalImages((prev) => prev.filter((_, i) => i !== idx))}
+                        className="absolute -top-2 -right-2 rounded-full bg-red-500 text-white text-xs leading-none w-5 h-5 hidden group-hover:flex items-center justify-center"
+                        title="Remove image"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                  {pendingExternalImages.map((src, idx) => (
+                    <div key={`${src}-${idx}`} className="relative group">
+                      <div
+                        className="h-16 w-40 rounded-md border border-warm-border dark:border-border-dark bg-warm-surface dark:bg-surface-dark text-xs text-warm-text-secondary dark:text-slate-300 px-2 py-1 overflow-hidden break-all cursor-pointer"
+                        onClick={() => setPreviewImageSrc(src)}
+                        title={src}
+                      >
+                        {src}
+                      </div>
+                      <button
+                        onClick={() => setPendingExternalImages((prev) => prev.filter((_, i) => i !== idx))}
+                        className="absolute -top-2 -right-2 rounded-full bg-red-500 text-white text-xs leading-none w-5 h-5 hidden group-hover:flex items-center justify-center"
+                        title="Remove image"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="mt-2 flex items-center justify-end gap-2">
                 <button
-                  onClick={handleInsertImageTemplate}
+                  onClick={() => imageFileInputRef.current?.click()}
+                  disabled={imageInsertBusy || replyBusy}
                   className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
+                  title="Insert local image"
                 >
                   <span className="material-icons text-lg">image</span>
+                </button>
+                <input
+                  ref={imageFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleSelectLocalImage}
+                />
+                <button
+                  onClick={handleInsertImageURL}
+                  className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
+                  title="Insert external image URL"
+                >
+                  <span className="material-icons text-lg">link</span>
                 </button>
                 <button
                   onClick={handleInsertCodeBlock}
@@ -238,7 +481,7 @@ export function PostDetail({
                 </button>
                 <button 
                   onClick={handleSubmitReply}
-                  disabled={!replyContent.trim() || replyBusy}
+                  disabled={(!replyContent.trim() && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) || replyBusy}
                   className="bg-warm-accent hover:bg-warm-accent-hover text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md shadow-warm-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {replyBusy ? 'Posting...' : 'Comment'}
@@ -259,9 +502,28 @@ export function PostDetail({
               focusReplyInput();
             }}
             onUpvote={onCommentUpvote}
+            onImageClick={(src) => setPreviewImageSrc(src)}
           />
         </div>
       </div>
+
+      {previewImageSrc && (
+        <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
+          <img
+            src={previewImageSrc}
+            alt="Preview"
+            className="max-w-full max-h-full rounded-lg border border-white/20"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setPreviewImageSrc(null)}
+            className="absolute top-4 right-4 text-white/90 hover:text-white"
+            title="Close preview"
+          >
+            <span className="material-icons">close</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

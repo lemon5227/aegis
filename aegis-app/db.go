@@ -13,6 +13,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ type ForumMessage struct {
 	Content     string `json:"content"`
 	Score       int64  `json:"score"`
 	Timestamp   int64  `json:"timestamp"`
+	Lamport     int64  `json:"lamport"`
 	SizeBytes   int64  `json:"sizeBytes"`
 	Zone        string `json:"zone"`
 	SubID       string `json:"subId"`
@@ -113,13 +115,24 @@ type ProfileDetails struct {
 }
 
 type Comment struct {
-	ID        string `json:"id"`
-	PostID    string `json:"postId"`
-	ParentID  string `json:"parentId"`
-	Pubkey    string `json:"pubkey"`
-	Body      string `json:"body"`
-	Score     int64  `json:"score"`
-	Timestamp int64  `json:"timestamp"`
+	ID          string              `json:"id"`
+	PostID      string              `json:"postId"`
+	ParentID    string              `json:"parentId"`
+	Pubkey      string              `json:"pubkey"`
+	Body        string              `json:"body"`
+	Attachments []CommentAttachment `json:"attachments,omitempty"`
+	Score       int64               `json:"score"`
+	Timestamp   int64               `json:"timestamp"`
+	Lamport     int64               `json:"lamport"`
+}
+
+type CommentAttachment struct {
+	Kind      string `json:"kind"`
+	Ref       string `json:"ref"`
+	Mime      string `json:"mime,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
 }
 
 type ModerationState struct {
@@ -127,6 +140,7 @@ type ModerationState struct {
 	Action       string `json:"action"`
 	SourceAdmin  string `json:"sourceAdmin"`
 	Timestamp    int64  `json:"timestamp"`
+	Lamport      int64  `json:"lamport"`
 	Reason       string `json:"reason"`
 }
 
@@ -136,6 +150,7 @@ type ModerationLog struct {
 	Action       string `json:"action"`
 	SourceAdmin  string `json:"sourceAdmin"`
 	Timestamp    int64  `json:"timestamp"`
+	Lamport      int64  `json:"lamport"`
 	Reason       string `json:"reason"`
 	Result       string `json:"result"`
 }
@@ -219,19 +234,22 @@ type SyncPostDigest struct {
 	ImageWidth  int    `json:"image_width"`
 	ImageHeight int    `json:"image_height"`
 	Timestamp   int64  `json:"timestamp"`
+	Lamport     int64  `json:"lamport"`
 	SubID       string `json:"sub_id"`
 }
 
 type SyncCommentDigest struct {
-	ID          string `json:"id"`
-	PostID      string `json:"post_id"`
-	ParentID    string `json:"parent_id"`
-	Pubkey      string `json:"pubkey"`
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
-	Body        string `json:"body"`
-	Score       int64  `json:"score"`
-	Timestamp   int64  `json:"timestamp"`
+	ID          string              `json:"id"`
+	PostID      string              `json:"post_id"`
+	ParentID    string              `json:"parent_id"`
+	Pubkey      string              `json:"pubkey"`
+	DisplayName string              `json:"display_name"`
+	AvatarURL   string              `json:"avatar_url"`
+	Body        string              `json:"body"`
+	Attachments []CommentAttachment `json:"attachments,omitempty"`
+	Score       int64               `json:"score"`
+	Timestamp   int64               `json:"timestamp"`
+	Lamport     int64               `json:"lamport"`
 }
 
 type IncomingMessage struct {
@@ -246,6 +264,7 @@ type IncomingMessage struct {
 	AvatarURL              string              `json:"avatar_url"`
 	Title                  string              `json:"title"`
 	Body                   string              `json:"body"`
+	CommentAttachments     []CommentAttachment `json:"comment_attachments,omitempty"`
 	ContentCID             string              `json:"content_cid"`
 	ImageCID               string              `json:"image_cid"`
 	ThumbCID               string              `json:"thumb_cid"`
@@ -281,6 +300,7 @@ type IncomingMessage struct {
 	SubTitle               string              `json:"sub_title"`
 	SubDesc                string              `json:"sub_desc"`
 	Timestamp              int64               `json:"timestamp"`
+	Lamport                int64               `json:"lamport,omitempty"`
 	Signature              string              `json:"signature"`
 	TargetPubkey           string              `json:"target_pubkey"`
 	AdminPubkey            string              `json:"admin_pubkey"`
@@ -351,6 +371,7 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			content TEXT NOT NULL,
 			score INTEGER NOT NULL DEFAULT 0,
 			timestamp INTEGER NOT NULL,
+			lamport INTEGER NOT NULL DEFAULT 0,
 			size_bytes INTEGER NOT NULL,
 			zone TEXT NOT NULL CHECK (zone IN ('private', 'public')),
 			sub_id TEXT NOT NULL DEFAULT 'general',
@@ -428,10 +449,18 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			parent_id TEXT NOT NULL DEFAULT '',
 			pubkey TEXT NOT NULL,
 			body TEXT NOT NULL,
+			attachments_json TEXT NOT NULL DEFAULT '[]',
 			score INTEGER NOT NULL DEFAULT 0,
-			timestamp INTEGER NOT NULL
+			timestamp INTEGER NOT NULL,
+			lamport INTEGER NOT NULL DEFAULT 0
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_post_timestamp ON comments(post_id, timestamp);`,
+		`CREATE TABLE IF NOT EXISTS comment_media_refs (
+			comment_id TEXT NOT NULL,
+			content_cid TEXT NOT NULL,
+			PRIMARY KEY (comment_id, content_cid)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_comment_media_refs_cid ON comment_media_refs(content_cid);`,
 		`CREATE TABLE IF NOT EXISTS post_votes (
 			post_id TEXT NOT NULL,
 			voter_pubkey TEXT NOT NULL,
@@ -451,6 +480,7 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			action TEXT NOT NULL,
 			source_admin TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
+			lamport INTEGER NOT NULL DEFAULT 0,
 			reason TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE TABLE IF NOT EXISTS moderation_logs (
@@ -459,6 +489,7 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			action TEXT NOT NULL,
 			source_admin TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
+			lamport INTEGER NOT NULL DEFAULT 0,
 			reason TEXT NOT NULL DEFAULT '',
 			result TEXT NOT NULL DEFAULT 'applied'
 		);`,
@@ -498,6 +529,11 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			mnemonic TEXT NOT NULL,
 			pubkey TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS logical_clock (
+			scope TEXT PRIMARY KEY,
+			value INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
 	}
@@ -604,6 +640,49 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		}
 	}
 
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS comment_media_refs (
+			comment_id TEXT NOT NULL,
+			content_cid TEXT NOT NULL,
+			PRIMARY KEY (comment_id, content_cid)
+		);
+	`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_comment_media_refs_cid ON comment_media_refs(content_cid);`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`ALTER TABLE moderation ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE moderation_logs ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
 	if _, err := db.Exec(`UPDATE messages SET sub_id = ? WHERE COALESCE(TRIM(sub_id), '') = '';`, defaultSubID); err != nil {
 		return err
 	}
@@ -613,6 +692,36 @@ func (a *App) ensureSchema(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`UPDATE messages SET title = SUBSTR(body, 1, 20) WHERE COALESCE(TRIM(title), '') = '';`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`UPDATE messages SET lamport = timestamp WHERE lamport = 0;`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE comments SET lamport = timestamp WHERE lamport = 0;`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE moderation SET lamport = timestamp WHERE lamport = 0;`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE moderation_logs SET lamport = timestamp WHERE lamport = 0;`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO logical_clock (scope, value, updated_at)
+		SELECT 'global',
+			MAX(COALESCE(mv, 0), COALESCE(cv, 0), COALESCE(gv, 0), COALESCE(glv, 0)),
+			?
+		FROM (
+			SELECT (SELECT MAX(lamport) FROM messages) AS mv,
+			       (SELECT MAX(lamport) FROM comments) AS cv,
+			       (SELECT MAX(lamport) FROM moderation) AS gv,
+			       (SELECT MAX(lamport) FROM moderation_logs) AS glv
+		)
+		WHERE 1 = 1
+		ON CONFLICT(scope) DO NOTHING;
+	`, time.Now().Unix()); err != nil {
 		return err
 	}
 
@@ -691,6 +800,15 @@ func (a *App) ensureSchema(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_zone_sub_timestamp ON messages(zone, sub_id, timestamp);`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_lamport ON messages(lamport);`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_comments_lamport ON comments(lamport);`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_moderation_lamport ON moderation(lamport);`); err != nil {
 		return err
 	}
 
@@ -1479,6 +1597,136 @@ func (a *App) getContentBlobLocal(contentCID string) (PostBodyBlob, error) {
 	return body, nil
 }
 
+func (a *App) canServeContentBlobToNetwork(contentCID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	if contentCID == "" {
+		return false, nil
+	}
+
+	rows, err := a.db.Query(`
+		SELECT id, pubkey, timestamp, lamport
+		FROM messages
+		WHERE zone = 'public' AND visibility = 'normal' AND content_cid = ?;
+	`, contentCID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id        string
+			pubkey    string
+			timestamp int64
+			lamport   int64
+		)
+		if err = rows.Scan(&id, &pubkey, &timestamp, &lamport); err != nil {
+			return false, err
+		}
+
+		allowed, allowErr := a.shouldAcceptPublicContent(pubkey, lamport, timestamp, id, "")
+		if allowErr != nil {
+			return false, allowErr
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func (a *App) canServeMediaBlobToNetwork(contentCID string) (bool, error) {
+	if a.db == nil {
+		return false, errors.New("database not initialized")
+	}
+
+	contentCID = strings.TrimSpace(contentCID)
+	if contentCID == "" {
+		return false, nil
+	}
+
+	rows, err := a.db.Query(`
+		SELECT id, pubkey, timestamp, lamport
+		FROM messages
+		WHERE zone = 'public' AND visibility = 'normal' AND (image_cid = ? OR thumb_cid = ?);
+	`, contentCID, contentCID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id        string
+			pubkey    string
+			timestamp int64
+			lamport   int64
+		)
+		if err = rows.Scan(&id, &pubkey, &timestamp, &lamport); err != nil {
+			return false, err
+		}
+
+		allowed, allowErr := a.shouldAcceptPublicContent(pubkey, lamport, timestamp, id, "")
+		if allowErr != nil {
+			return false, allowErr
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+
+	if err = rows.Err(); err != nil {
+		return false, err
+	}
+
+	commentRows, err := a.db.Query(`
+		SELECT c.id, c.pubkey, c.timestamp, c.lamport
+		FROM comment_media_refs r
+		JOIN comments c ON c.id = r.comment_id
+		JOIN messages m ON m.id = c.post_id
+		WHERE r.content_cid = ? AND m.zone = 'public' AND m.visibility = 'normal';
+	`, contentCID)
+	if err != nil {
+		return false, err
+	}
+	defer commentRows.Close()
+
+	for commentRows.Next() {
+		var (
+			id        string
+			pubkey    string
+			timestamp int64
+			lamport   int64
+		)
+		if err = commentRows.Scan(&id, &pubkey, &timestamp, &lamport); err != nil {
+			return false, err
+		}
+
+		allowed, allowErr := a.shouldAcceptPublicContent(pubkey, lamport, timestamp, id, "")
+		if allowErr != nil {
+			return false, allowErr
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+
+	if err = commentRows.Err(); err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
 func (a *App) upsertContentBlob(contentCID string, body string, sizeBytes int64) error {
 	if a.db == nil {
 		return errors.New("database not initialized")
@@ -1590,24 +1838,67 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 		limit = 200
 	}
 
+	policy, err := a.GetGovernancePolicy()
+	if err != nil {
+		return nil, err
+	}
+
 	var rows *sql.Rows
-	var err error
+	err = nil
 	if sinceTimestamp > 0 {
-		rows, err = a.db.Query(`
-			SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
-			FROM messages
-			WHERE zone = 'public' AND visibility = 'normal' AND content_cid != '' AND timestamp >= ?
-			ORDER BY timestamp ASC
-			LIMIT ?;
-		`, sinceTimestamp, limit)
+		if policy.HideHistoryOnShadowBan {
+			rows, err = a.db.Query(`
+				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				FROM messages m
+				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != '' AND m.timestamp >= ?
+				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
+				ORDER BY m.timestamp ASC
+				LIMIT ?;
+			`, sinceTimestamp, limit)
+		} else {
+			rows, err = a.db.Query(`
+				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				FROM messages m
+				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != '' AND m.timestamp >= ?
+				  AND (
+					mo.action IS NULL
+					OR UPPER(mo.action) != 'SHADOW_BAN'
+					OR m.lamport < mo.lamport
+					OR (m.lamport = 0 OR mo.lamport = 0) AND m.timestamp < mo.timestamp
+				  )
+				ORDER BY m.timestamp ASC
+				LIMIT ?;
+			`, sinceTimestamp, limit)
+		}
 	} else {
-		rows, err = a.db.Query(`
-			SELECT id, pubkey, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, sub_id
-			FROM messages
-			WHERE zone = 'public' AND visibility = 'normal' AND content_cid != ''
-			ORDER BY timestamp DESC
-			LIMIT ?;
-		`, limit)
+		if policy.HideHistoryOnShadowBan {
+			rows, err = a.db.Query(`
+				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				FROM messages m
+				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != ''
+				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
+				ORDER BY m.timestamp DESC
+				LIMIT ?;
+			`, limit)
+		} else {
+			rows, err = a.db.Query(`
+				SELECT m.id, m.pubkey, m.title, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime, m.image_size, m.image_width, m.image_height, m.timestamp, m.lamport, m.sub_id
+				FROM messages m
+				LEFT JOIN moderation mo ON mo.target_pubkey = m.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND m.content_cid != ''
+				  AND (
+					mo.action IS NULL
+					OR UPPER(mo.action) != 'SHADOW_BAN'
+					OR m.lamport < mo.lamport
+					OR (m.lamport = 0 OR mo.lamport = 0) AND m.timestamp < mo.timestamp
+				  )
+				ORDER BY m.timestamp DESC
+				LIMIT ?;
+			`, limit)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -1617,7 +1908,7 @@ func (a *App) listPublicPostDigestsSince(sinceTimestamp int64, limit int) ([]Syn
 	result := make([]SyncPostDigest, 0, limit)
 	for rows.Next() {
 		var digest SyncPostDigest
-		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.SubID); err != nil {
+		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID); err != nil {
 			return nil, err
 		}
 		result = append(result, digest)
@@ -1635,32 +1926,81 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 		limit = 200
 	}
 
+	policy, policyErr := a.GetGovernancePolicy()
+	if policyErr != nil {
+		return nil, policyErr
+	}
+
 	var (
 		rows *sql.Rows
 		err  error
 	)
 	if sinceTimestamp > 0 {
-		rows, err = a.db.Query(`
-			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
-			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
-			FROM comments c
-			JOIN messages m ON m.id = c.post_id
-			LEFT JOIN profiles p ON p.pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
-			ORDER BY c.timestamp ASC
-			LIMIT ?;
-		`, sinceTimestamp, limit)
+		if policy.HideHistoryOnShadowBan {
+			rows, err = a.db.Query(`
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+				FROM comments c
+				JOIN messages m ON m.id = c.post_id
+				LEFT JOIN profiles p ON p.pubkey = c.pubkey
+				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
+				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
+				ORDER BY c.timestamp ASC
+				LIMIT ?;
+			`, sinceTimestamp, limit)
+		} else {
+			rows, err = a.db.Query(`
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+				FROM comments c
+				JOIN messages m ON m.id = c.post_id
+				LEFT JOIN profiles p ON p.pubkey = c.pubkey
+				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.timestamp >= ?
+				  AND (
+					mo.action IS NULL
+					OR UPPER(mo.action) != 'SHADOW_BAN'
+					OR c.lamport < mo.lamport
+					OR (c.lamport = 0 OR mo.lamport = 0) AND c.timestamp < mo.timestamp
+				  )
+				ORDER BY c.timestamp ASC
+				LIMIT ?;
+			`, sinceTimestamp, limit)
+		}
 	} else {
-		rows, err = a.db.Query(`
-			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
-			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
-			FROM comments c
-			JOIN messages m ON m.id = c.post_id
-			LEFT JOIN profiles p ON p.pubkey = c.pubkey
-			WHERE m.zone = 'public' AND m.visibility = 'normal'
-			ORDER BY c.timestamp DESC
-			LIMIT ?;
-		`, limit)
+		if policy.HideHistoryOnShadowBan {
+			rows, err = a.db.Query(`
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+				FROM comments c
+				JOIN messages m ON m.id = c.post_id
+				LEFT JOIN profiles p ON p.pubkey = c.pubkey
+				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal'
+				  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
+				ORDER BY c.timestamp DESC
+				LIMIT ?;
+			`, limit)
+		} else {
+			rows, err = a.db.Query(`
+				SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+				       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+				FROM comments c
+				JOIN messages m ON m.id = c.post_id
+				LEFT JOIN profiles p ON p.pubkey = c.pubkey
+				LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+				WHERE m.zone = 'public' AND m.visibility = 'normal'
+				  AND (
+					mo.action IS NULL
+					OR UPPER(mo.action) != 'SHADOW_BAN'
+					OR c.lamport < mo.lamport
+					OR (c.lamport = 0 OR mo.lamport = 0) AND c.timestamp < mo.timestamp
+				  )
+				ORDER BY c.timestamp DESC
+				LIMIT ?;
+			`, limit)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -1670,19 +2010,23 @@ func (a *App) listPublicCommentDigestsSince(sinceTimestamp int64, limit int) ([]
 	result := make([]SyncCommentDigest, 0, limit)
 	for rows.Next() {
 		var item SyncCommentDigest
+		var attachmentsJSON string
 		if err = rows.Scan(
 			&item.ID,
 			&item.PostID,
 			&item.ParentID,
 			&item.Pubkey,
 			&item.Body,
+			&attachmentsJSON,
 			&item.Score,
 			&item.Timestamp,
+			&item.Lamport,
 			&item.DisplayName,
 			&item.AvatarURL,
 		); err != nil {
 			return nil, err
 		}
+		item.Attachments = decodeCommentAttachmentsJSON(attachmentsJSON)
 		result = append(result, item)
 	}
 
@@ -1703,16 +2047,44 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 		limit = 200
 	}
 
-	rows, err := a.db.Query(`
-		SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.score, c.timestamp,
-		       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
-		FROM comments c
-		JOIN messages m ON m.id = c.post_id
-		LEFT JOIN profiles p ON p.pubkey = c.pubkey
-		WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
-		ORDER BY c.timestamp ASC
-		LIMIT ?;
-	`, postID, sinceTimestamp, limit)
+	policy, err := a.GetGovernancePolicy()
+	if err != nil {
+		return nil, err
+	}
+
+	var rows *sql.Rows
+	if policy.HideHistoryOnShadowBan {
+		rows, err = a.db.Query(`
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+			FROM comments c
+			JOIN messages m ON m.id = c.post_id
+			LEFT JOIN profiles p ON p.pubkey = c.pubkey
+			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
+			  AND (mo.action IS NULL OR UPPER(mo.action) != 'SHADOW_BAN')
+			ORDER BY c.timestamp ASC
+			LIMIT ?;
+		`, postID, sinceTimestamp, limit)
+	} else {
+		rows, err = a.db.Query(`
+			SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport,
+			       COALESCE(p.display_name, ''), COALESCE(p.avatar_url, '')
+			FROM comments c
+			JOIN messages m ON m.id = c.post_id
+			LEFT JOIN profiles p ON p.pubkey = c.pubkey
+			LEFT JOIN moderation mo ON mo.target_pubkey = c.pubkey
+			WHERE m.zone = 'public' AND m.visibility = 'normal' AND c.post_id = ? AND c.timestamp >= ?
+			  AND (
+				mo.action IS NULL
+				OR UPPER(mo.action) != 'SHADOW_BAN'
+				OR c.lamport < mo.lamport
+				OR (c.lamport = 0 OR mo.lamport = 0) AND c.timestamp < mo.timestamp
+			  )
+			ORDER BY c.timestamp ASC
+			LIMIT ?;
+		`, postID, sinceTimestamp, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1721,19 +2093,23 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 	result := make([]SyncCommentDigest, 0, limit)
 	for rows.Next() {
 		var item SyncCommentDigest
+		var attachmentsJSON string
 		if err = rows.Scan(
 			&item.ID,
 			&item.PostID,
 			&item.ParentID,
 			&item.Pubkey,
 			&item.Body,
+			&attachmentsJSON,
 			&item.Score,
 			&item.Timestamp,
+			&item.Lamport,
 			&item.DisplayName,
 			&item.AvatarURL,
 		); err != nil {
 			return nil, err
 		}
+		item.Attachments = decodeCommentAttachmentsJSON(attachmentsJSON)
 		result = append(result, item)
 	}
 
@@ -1828,6 +2204,9 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 	if digest.Timestamp <= 0 {
 		digest.Timestamp = time.Now().Unix()
 	}
+	if digest.Lamport <= 0 {
+		digest.Lamport = digest.Timestamp
+	}
 
 	if digest.ID == "" || digest.Pubkey == "" || digest.ContentCID == "" {
 		return false, errors.New("invalid sync digest")
@@ -1838,9 +2217,9 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 
 	result, err := a.db.Exec(`
 		INSERT INTO messages (
-			id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+			id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected, visibility
 		)
-		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, 0, 'public', ?, 0, 'normal')
+		VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, 0, 'public', ?, 0, 'normal')
 		ON CONFLICT(id) DO UPDATE SET
 			content_cid = CASE WHEN COALESCE(messages.content_cid, '') = '' THEN excluded.content_cid ELSE messages.content_cid END,
 			image_cid = CASE WHEN COALESCE(messages.image_cid, '') = '' THEN excluded.image_cid ELSE messages.image_cid END,
@@ -1849,8 +2228,9 @@ func (a *App) upsertPublicPostIndexFromDigest(digest SyncPostDigest) (bool, erro
 			image_size = CASE WHEN COALESCE(messages.image_size, 0) = 0 THEN excluded.image_size ELSE messages.image_size END,
 			image_width = CASE WHEN COALESCE(messages.image_width, 0) = 0 THEN excluded.image_width ELSE messages.image_width END,
 			image_height = CASE WHEN COALESCE(messages.image_height, 0) = 0 THEN excluded.image_height ELSE messages.image_height END,
+			lamport = CASE WHEN COALESCE(messages.lamport, 0) = 0 THEN excluded.lamport ELSE messages.lamport END,
 			sub_id = CASE WHEN COALESCE(messages.sub_id, '') = '' THEN excluded.sub_id ELSE messages.sub_id END;
-	`, digest.ID, digest.Pubkey, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.SubID)
+	`, digest.ID, digest.Pubkey, digest.Title, digest.ContentCID, digest.ImageCID, digest.ThumbCID, digest.ImageMIME, digest.ImageSize, digest.ImageWidth, digest.ImageHeight, digest.Timestamp, digest.Lamport, digest.SubID)
 	if err != nil {
 		return false, err
 	}
@@ -1969,12 +2349,53 @@ func (a *App) GetCommentsByPost(postID string) ([]Comment, error) {
 		return nil, errors.New("post id is required")
 	}
 
-	rows, err := a.db.Query(`
-		SELECT id, post_id, parent_id, pubkey, body, score, timestamp
-		FROM comments
-		WHERE post_id = ?
-		ORDER BY timestamp ASC;
-	`, postID)
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	policy, policyErr := a.GetGovernancePolicy()
+	hideHistoryOnShadowBan := true
+	if policyErr == nil {
+		hideHistoryOnShadowBan = policy.HideHistoryOnShadowBan
+	}
+
+	query := `
+		SELECT c.id, c.post_id, c.parent_id, c.pubkey, c.body, c.attachments_json, c.score, c.timestamp, c.lamport
+		FROM comments c
+		LEFT JOIN moderation m ON m.target_pubkey = c.pubkey
+	`
+	args := []interface{}{}
+	query += `
+		WHERE c.post_id = ?
+	`
+	args = append(args, postID)
+	if hideHistoryOnShadowBan {
+		query += `
+		  AND (
+			m.action IS NULL
+			OR UPPER(m.action) != 'SHADOW_BAN'
+			OR c.pubkey = ?
+		  )
+		`
+		args = append(args, viewerPubkey)
+	} else {
+		query += `
+		  AND (
+			m.action IS NULL
+			OR UPPER(m.action) != 'SHADOW_BAN'
+			OR c.pubkey = ?
+			OR c.lamport < m.lamport
+			OR (c.lamport = 0 OR m.lamport = 0) AND c.timestamp < m.timestamp
+		  )
+		`
+		args = append(args, viewerPubkey)
+	}
+	query += `
+		ORDER BY c.timestamp ASC;
+	`
+
+	rows, err := a.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1983,9 +2404,11 @@ func (a *App) GetCommentsByPost(postID string) ([]Comment, error) {
 	result := make([]Comment, 0)
 	for rows.Next() {
 		var comment Comment
-		if err := rows.Scan(&comment.ID, &comment.PostID, &comment.ParentID, &comment.Pubkey, &comment.Body, &comment.Score, &comment.Timestamp); err != nil {
+		var attachmentsJSON string
+		if err := rows.Scan(&comment.ID, &comment.PostID, &comment.ParentID, &comment.Pubkey, &comment.Body, &attachmentsJSON, &comment.Score, &comment.Timestamp, &comment.Lamport); err != nil {
 			return nil, err
 		}
+		comment.Attachments = decodeCommentAttachmentsJSON(attachmentsJSON)
 		result = append(result, comment)
 	}
 
@@ -2456,7 +2879,7 @@ func (a *App) GetModerationState() ([]ModerationState, error) {
 	}
 
 	rows, err := a.db.Query(`
-		SELECT target_pubkey, action, source_admin, timestamp, reason
+		SELECT target_pubkey, action, source_admin, timestamp, lamport, reason
 		FROM moderation
 		ORDER BY timestamp DESC;
 	`)
@@ -2468,7 +2891,7 @@ func (a *App) GetModerationState() ([]ModerationState, error) {
 	result := make([]ModerationState, 0)
 	for rows.Next() {
 		var state ModerationState
-		if err := rows.Scan(&state.TargetPubkey, &state.Action, &state.SourceAdmin, &state.Timestamp, &state.Reason); err != nil {
+		if err := rows.Scan(&state.TargetPubkey, &state.Action, &state.SourceAdmin, &state.Timestamp, &state.Lamport, &state.Reason); err != nil {
 			return nil, err
 		}
 		result = append(result, state)
@@ -2505,7 +2928,7 @@ func (a *App) listModerationSince(sinceTimestamp int64, limit int) ([]Moderation
 	}
 
 	rows, err := a.db.Query(`
-		SELECT target_pubkey, action, source_admin, timestamp, reason
+		SELECT target_pubkey, action, source_admin, timestamp, lamport, reason
 		FROM moderation
 		WHERE timestamp >= ?
 		ORDER BY timestamp ASC
@@ -2519,7 +2942,7 @@ func (a *App) listModerationSince(sinceTimestamp int64, limit int) ([]Moderation
 	result := make([]ModerationState, 0, limit)
 	for rows.Next() {
 		var row ModerationState
-		if err = rows.Scan(&row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Reason); err != nil {
+		if err = rows.Scan(&row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Lamport, &row.Reason); err != nil {
 			return nil, err
 		}
 		result = append(result, row)
@@ -2556,7 +2979,7 @@ func (a *App) listAppliedModerationLogsSince(sinceTimestamp int64, limit int) ([
 	}
 
 	rows, err := a.db.Query(`
-		SELECT id, target_pubkey, action, source_admin, timestamp, reason, result
+		SELECT id, target_pubkey, action, source_admin, timestamp, lamport, reason, result
 		FROM moderation_logs
 		WHERE result = 'applied' AND timestamp >= ?
 		ORDER BY timestamp ASC, id ASC
@@ -2570,7 +2993,7 @@ func (a *App) listAppliedModerationLogsSince(sinceTimestamp int64, limit int) ([
 	result := make([]ModerationLog, 0, limit)
 	for rows.Next() {
 		var row ModerationLog
-		if err = rows.Scan(&row.ID, &row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Reason, &row.Result); err != nil {
+		if err = rows.Scan(&row.ID, &row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Lamport, &row.Reason, &row.Result); err != nil {
 			return nil, err
 		}
 		result = append(result, row)
@@ -2598,6 +3021,9 @@ func (a *App) insertModerationLogIfAbsent(log ModerationLog) (bool, error) {
 	if log.Timestamp <= 0 {
 		log.Timestamp = time.Now().Unix()
 	}
+	if log.Lamport <= 0 {
+		log.Lamport = log.Timestamp
+	}
 
 	var exists int
 	err := a.db.QueryRow(`
@@ -2619,9 +3045,9 @@ func (a *App) insertModerationLogIfAbsent(log ModerationLog) (bool, error) {
 	}
 
 	_, err = a.db.Exec(`
-		INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, reason, result)
-		VALUES (?, ?, ?, ?, ?, ?);
-	`, log.TargetPubkey, log.Action, log.SourceAdmin, log.Timestamp, log.Reason, log.Result)
+		INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, lamport, reason, result)
+		VALUES (?, ?, ?, ?, ?, ?, ?);
+	`, log.TargetPubkey, log.Action, log.SourceAdmin, log.Timestamp, log.Lamport, log.Reason, log.Result)
 	if err != nil {
 		return false, err
 	}
@@ -2638,7 +3064,7 @@ func (a *App) GetModerationLogs(limit int) ([]ModerationLog, error) {
 	}
 
 	rows, err := a.db.Query(`
-		SELECT id, target_pubkey, action, source_admin, timestamp, reason, result
+		SELECT id, target_pubkey, action, source_admin, timestamp, lamport, reason, result
 		FROM moderation_logs
 		ORDER BY timestamp DESC, id DESC
 		LIMIT ?;
@@ -2651,7 +3077,7 @@ func (a *App) GetModerationLogs(limit int) ([]ModerationLog, error) {
 	result := make([]ModerationLog, 0)
 	for rows.Next() {
 		var row ModerationLog
-		if err = rows.Scan(&row.ID, &row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Reason, &row.Result); err != nil {
+		if err = rows.Scan(&row.ID, &row.TargetPubkey, &row.Action, &row.SourceAdmin, &row.Timestamp, &row.Lamport, &row.Reason, &row.Result); err != nil {
 			return nil, err
 		}
 		result = append(result, row)
@@ -2774,29 +3200,142 @@ func (a *App) GetStorageUsage() (StorageUsage, error) {
 		TotalQuota:   totalQuotaBytes,
 	}
 
-	if err := a.db.QueryRow(`
-		SELECT COALESCE(SUM(cb.size_bytes), 0)
-		FROM content_blobs cb
-		WHERE EXISTS (
-			SELECT 1 FROM messages m
-			WHERE m.zone = 'private' AND m.content_cid = cb.content_cid
-		);
-	`).Scan(&usage.PrivateUsedBytes); err != nil {
+	rows, err := a.db.Query(`
+		SELECT content_cid, size_bytes
+		FROM content_blobs;
+	`)
+	if err != nil {
+		return StorageUsage{}, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid  string
+			size int64
+		)
+		if err = rows.Scan(&cid, &size); err != nil {
+			return StorageUsage{}, err
+		}
+
+		shareable, shareErr := a.canServeContentBlobToNetwork(cid)
+		if shareErr != nil {
+			return StorageUsage{}, shareErr
+		}
+		if shareable {
+			usage.PublicUsedBytes += size
+		} else {
+			usage.PrivateUsedBytes += size
+		}
+	}
+	if err = rows.Err(); err != nil {
 		return StorageUsage{}, err
 	}
 
-	if err := a.db.QueryRow(`
-		SELECT COALESCE(SUM(cb.size_bytes), 0)
-		FROM content_blobs cb
-		WHERE EXISTS (
-			SELECT 1 FROM messages m
-			WHERE m.zone = 'public' AND m.content_cid = cb.content_cid
-		);
-	`).Scan(&usage.PublicUsedBytes); err != nil {
+	mediaRows, err := a.db.Query(`
+		SELECT content_cid, size_bytes
+		FROM media_blobs;
+	`)
+	if err != nil {
+		return StorageUsage{}, err
+	}
+	defer mediaRows.Close()
+
+	for mediaRows.Next() {
+		var (
+			cid  string
+			size int64
+		)
+		if err = mediaRows.Scan(&cid, &size); err != nil {
+			return StorageUsage{}, err
+		}
+
+		shareable, shareErr := a.canServeMediaBlobToNetwork(cid)
+		if shareErr != nil {
+			return StorageUsage{}, shareErr
+		}
+		if shareable {
+			usage.PublicUsedBytes += size
+		} else {
+			usage.PrivateUsedBytes += size
+		}
+	}
+	if err = mediaRows.Err(); err != nil {
 		return StorageUsage{}, err
 	}
 
 	return usage, nil
+}
+
+func (a *App) nextLamport() (int64, error) {
+	if a.db == nil {
+		return 0, errors.New("database not initialized")
+	}
+
+	now := time.Now().Unix()
+	if _, err := a.db.Exec(`
+		INSERT INTO logical_clock (scope, value, updated_at)
+		VALUES ('global', 0, ?)
+		ON CONFLICT(scope) DO NOTHING;
+	`, now); err != nil {
+		return 0, err
+	}
+
+	var lamport int64
+	if err := a.db.QueryRow(`
+		UPDATE logical_clock
+		SET value = value + 1,
+		    updated_at = ?
+		WHERE scope = 'global'
+		RETURNING value;
+	`, now).Scan(&lamport); err != nil {
+		return 0, err
+	}
+
+	return lamport, nil
+}
+
+func (a *App) observeLamport(incomingLamport int64) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	if incomingLamport < 0 {
+		incomingLamport = 0
+	}
+	now := time.Now().Unix()
+	if _, err := a.db.Exec(`
+		INSERT INTO logical_clock (scope, value, updated_at)
+		VALUES ('global', 0, ?)
+		ON CONFLICT(scope) DO NOTHING;
+	`, now); err != nil {
+		return err
+	}
+
+	_, err := a.db.Exec(`
+		UPDATE logical_clock
+		SET value = CASE
+			WHEN value > ? THEN value + 1
+			ELSE ? + 1
+		END,
+		updated_at = ?
+		WHERE scope = 'global';
+	`, incomingLamport, incomingLamport, now)
+	return err
+}
+
+func (a *App) normalizeIncomingLamport(incomingLamport int64, timestamp int64) (int64, error) {
+	if timestamp <= 0 {
+		timestamp = time.Now().Unix()
+	}
+	if incomingLamport <= 0 {
+		incomingLamport = timestamp
+	}
+	if err := a.observeLamport(incomingLamport); err != nil {
+		return 0, err
+	}
+
+	return incomingLamport, nil
 }
 
 func (a *App) ProcessIncomingMessage(payload []byte) error {
@@ -2885,17 +3424,30 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if strings.TrimSpace(message.Pubkey) == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid comment payload")
 		}
-
-		shadowBanned, err := a.isShadowBanned(message.Pubkey)
+		if message.Timestamp == 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
 		if err != nil {
 			return err
 		}
-		if shadowBanned {
+		message.Lamport = lamport
+
+		viewerPubkey := ""
+		if identity, idErr := a.getLocalIdentity(); idErr == nil {
+			viewerPubkey = strings.TrimSpace(identity.PublicKey)
+		}
+		allowed, err := a.shouldAcceptPublicContent(message.Pubkey, message.Lamport, message.Timestamp, message.ID, viewerPubkey)
+		if err != nil {
+			return err
+		}
+		if !allowed {
 			return nil
 		}
 
 		commentBody := strings.TrimSpace(message.Body)
-		if commentBody == "" {
+		attachments := normalizeCommentAttachments(message.CommentAttachments)
+		if commentBody == "" && len(attachments) == 0 {
 			return errors.New("invalid comment payload")
 		}
 
@@ -2906,20 +3458,23 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 
 		if strings.TrimSpace(message.ID) == "" {
-			raw := fmt.Sprintf("%s|%s|%s", message.PostID, strings.TrimSpace(message.ParentID), commentBody)
+			attachmentsJSON, err := encodeCommentAttachmentsJSON(attachments)
+			if err != nil {
+				return err
+			}
+			raw := fmt.Sprintf("%s|%s|%s|%s|%d", message.PostID, strings.TrimSpace(message.ParentID), commentBody, attachmentsJSON, message.Lamport)
 			message.ID = buildMessageID(message.Pubkey, raw, message.Timestamp)
-		}
-		if message.Timestamp == 0 {
-			message.Timestamp = time.Now().Unix()
 		}
 
 		_, err = a.insertComment(Comment{
-			ID:        message.ID,
-			PostID:    strings.TrimSpace(message.PostID),
-			ParentID:  strings.TrimSpace(message.ParentID),
-			Pubkey:    message.Pubkey,
-			Body:      commentBody,
-			Timestamp: message.Timestamp,
+			ID:          message.ID,
+			PostID:      strings.TrimSpace(message.PostID),
+			ParentID:    strings.TrimSpace(message.ParentID),
+			Pubkey:      message.Pubkey,
+			Body:        commentBody,
+			Attachments: attachments,
+			Timestamp:   message.Timestamp,
+			Lamport:     message.Lamport,
 		})
 		return err
 	case "SHADOW_BAN":
@@ -2930,7 +3485,14 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if !trusted {
 			return errors.New("admin pubkey is not trusted")
 		}
-		return a.upsertModeration(message.TargetPubkey, "SHADOW_BAN", message.AdminPubkey, message.Timestamp, message.Reason)
+		if message.Timestamp == 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.upsertModeration(message.TargetPubkey, "SHADOW_BAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason)
 	case "UNBAN":
 		trusted, err := a.isTrustedAdmin(message.AdminPubkey)
 		if err != nil {
@@ -2939,11 +3501,26 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if !trusted {
 			return errors.New("admin pubkey is not trusted")
 		}
-		return a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, message.Reason)
+		if message.Timestamp == 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason)
 	case "POST":
 		if strings.TrimSpace(message.Pubkey) == "" {
 			return errors.New("invalid post payload")
 		}
+		if message.Timestamp == 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		message.Lamport = lamport
 
 		if strings.TrimSpace(message.DisplayName) != "" || strings.TrimSpace(message.AvatarURL) != "" {
 			if _, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp); err != nil {
@@ -2962,19 +3539,21 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid post payload")
 		}
 
-		shadowBanned, err := a.isShadowBanned(message.Pubkey)
+		viewerPubkey := ""
+		if identity, idErr := a.getLocalIdentity(); idErr == nil {
+			viewerPubkey = strings.TrimSpace(identity.PublicKey)
+		}
+		allowed, err := a.shouldAcceptPublicContent(message.Pubkey, message.Lamport, message.Timestamp, message.ID, viewerPubkey)
 		if err != nil {
 			return err
 		}
-		if shadowBanned {
+		if !allowed {
 			return nil
 		}
 
 		if strings.TrimSpace(message.ID) == "" {
-			message.ID = buildMessageID(message.Pubkey, body, message.Timestamp)
-		}
-		if message.Timestamp == 0 {
-			message.Timestamp = time.Now().Unix()
+			seed := fmt.Sprintf("%s|%s|%d", title, body, message.Lamport)
+			message.ID = buildMessageID(message.Pubkey, seed, message.Timestamp)
 		}
 
 		insertedMessage, err := a.insertMessage(ForumMessage{
@@ -2992,6 +3571,7 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			Content:     "",
 			Score:       0,
 			Timestamp:   message.Timestamp,
+			Lamport:     message.Lamport,
 			SizeBytes:   int64(len([]byte(body))),
 			Zone:        "public",
 			SubID:       normalizeSubID(message.SubID),
@@ -3014,6 +3594,10 @@ func (a *App) AddLocalPostStructured(pubkey string, title string, body string, z
 }
 
 func (a *App) AddLocalComment(pubkey string, postID string, parentID string, body string) (Comment, error) {
+	return a.AddLocalCommentWithAttachments(pubkey, postID, parentID, body, nil)
+}
+
+func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, parentID string, body string, attachments []CommentAttachment) (Comment, error) {
 	if a.db == nil {
 		return Comment{}, errors.New("database not initialized")
 	}
@@ -3023,20 +3607,34 @@ func (a *App) AddLocalComment(pubkey string, postID string, parentID string, bod
 	parentID = strings.TrimSpace(parentID)
 	body = strings.TrimSpace(body)
 
-	if pubkey == "" || postID == "" || body == "" {
-		return Comment{}, errors.New("pubkey, post id and body are required")
+	attachments = normalizeCommentAttachments(attachments)
+	if pubkey == "" || postID == "" {
+		return Comment{}, errors.New("pubkey and post id are required")
+	}
+	if body == "" && len(attachments) == 0 {
+		return Comment{}, errors.New("comment content is required")
 	}
 
 	now := time.Now().Unix()
-	raw := fmt.Sprintf("%s|%s|%s", postID, parentID, body)
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return Comment{}, err
+	}
+	attachmentsJSON, err := encodeCommentAttachmentsJSON(attachments)
+	if err != nil {
+		return Comment{}, err
+	}
+	raw := fmt.Sprintf("%s|%s|%s|%s|%d", postID, parentID, body, attachmentsJSON, lamport)
 	comment := Comment{
-		ID:        buildMessageID(pubkey, raw, now),
-		PostID:    postID,
-		ParentID:  parentID,
-		Pubkey:    pubkey,
-		Body:      body,
-		Score:     0,
-		Timestamp: now,
+		ID:          buildMessageID(pubkey, raw, now),
+		PostID:      postID,
+		ParentID:    parentID,
+		Pubkey:      pubkey,
+		Body:        body,
+		Attachments: attachments,
+		Score:       0,
+		Timestamp:   now,
+		Lamport:     lamport,
 	}
 
 	return a.insertComment(comment)
@@ -3422,8 +4020,13 @@ func (a *App) AddLocalPostStructuredToSub(pubkey string, title string, body stri
 	}
 
 	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return ForumMessage{}, err
+	}
+	messageIDSeed := fmt.Sprintf("%s|%s|%d", title, body, lamport)
 	message := ForumMessage{
-		ID:          buildMessageID(pubkey, body, now),
+		ID:          buildMessageID(pubkey, messageIDSeed, now),
 		Pubkey:      pubkey,
 		Title:       title,
 		Body:        body,
@@ -3431,6 +4034,7 @@ func (a *App) AddLocalPostStructuredToSub(pubkey string, title string, body stri
 		Content:     "",
 		Score:       0,
 		Timestamp:   now,
+		Lamport:     lamport,
 		SizeBytes:   int64(len([]byte(body))),
 		Zone:        zone,
 		SubID:       normalizeSubID(subID),
@@ -3489,6 +4093,54 @@ func (a *App) AddLocalPostWithImageToSub(pubkey string, title string, body strin
 	message.ImageHeight = height
 
 	return message, nil
+}
+
+func (a *App) StoreCommentImageDataURL(dataURL string) (CommentAttachment, error) {
+	if a.db == nil {
+		return CommentAttachment{}, errors.New("database not initialized")
+	}
+
+	dataURL = strings.TrimSpace(dataURL)
+	if dataURL == "" {
+		return CommentAttachment{}, errors.New("image payload is required")
+	}
+	if !strings.HasPrefix(dataURL, "data:") {
+		return CommentAttachment{}, errors.New("invalid data URL")
+	}
+	commaIndex := strings.Index(dataURL, ",")
+	if commaIndex <= 0 {
+		return CommentAttachment{}, errors.New("invalid data URL")
+	}
+
+	header := dataURL[5:commaIndex]
+	body := dataURL[commaIndex+1:]
+	if !strings.Contains(strings.ToLower(header), ";base64") {
+		return CommentAttachment{}, errors.New("comment image must be base64 encoded")
+	}
+	hintMIME := strings.TrimSpace(strings.SplitN(header, ";", 2)[0])
+	raw, err := base64.StdEncoding.DecodeString(body)
+	if err != nil || len(raw) == 0 {
+		return CommentAttachment{}, errors.New("invalid image payload")
+	}
+
+	processedBytes, processedMime, width, height, _, _, _, _, prepErr := prepareImageAssets(raw, hintMIME)
+	if prepErr != nil {
+		return CommentAttachment{}, prepErr
+	}
+
+	contentCID := buildBinaryCID(processedBytes)
+	if err = a.upsertMediaBlobRaw(contentCID, processedMime, processedBytes, width, height, false); err != nil {
+		return CommentAttachment{}, err
+	}
+
+	return CommentAttachment{
+		Kind:      "media_cid",
+		Ref:       contentCID,
+		Mime:      processedMime,
+		Width:     width,
+		Height:    height,
+		SizeBytes: int64(len(processedBytes)),
+	}, nil
 }
 
 func prepareImageAssets(source []byte, hintMIME string) (mainBytes []byte, mainMIME string, width int, height int, thumbBytes []byte, thumbMIME string, thumbWidth int, thumbHeight int, err error) {
@@ -3617,7 +4269,12 @@ func (a *App) ApplyShadowBan(targetPubkey string, adminPubkey string, reason str
 		return errors.New("admin pubkey is not trusted")
 	}
 
-	return a.upsertModeration(targetPubkey, "SHADOW_BAN", adminPubkey, time.Now().Unix(), reason)
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	return a.upsertModeration(targetPubkey, "SHADOW_BAN", adminPubkey, now, lamport, reason)
 }
 
 func (a *App) ApplyUnban(targetPubkey string, adminPubkey string, reason string) error {
@@ -3629,7 +4286,12 @@ func (a *App) ApplyUnban(targetPubkey string, adminPubkey string, reason string)
 		return errors.New("admin pubkey is not trusted")
 	}
 
-	return a.upsertModeration(targetPubkey, "UNBAN", adminPubkey, time.Now().Unix(), reason)
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	return a.upsertModeration(targetPubkey, "UNBAN", adminPubkey, now, lamport, reason)
 }
 
 func (a *App) AddTrustedAdmin(pubkey string, role string) error {
@@ -3722,6 +4384,12 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	if message.SizeBytes <= 0 {
 		message.SizeBytes = int64(len([]byte(message.Body)))
 	}
+	if message.Timestamp <= 0 {
+		message.Timestamp = time.Now().Unix()
+	}
+	if message.Lamport <= 0 {
+		message.Lamport = message.Timestamp
+	}
 
 	message.Title = strings.TrimSpace(message.Title)
 	message.Body = strings.TrimSpace(message.Body)
@@ -3770,8 +4438,8 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 	}
 
 	_, err = tx.Exec(
-		`INSERT OR REPLACE INTO messages (id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+		`INSERT OR REPLACE INTO messages (id, pubkey, title, body, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, content, score, timestamp, lamport, size_bytes, zone, sub_id, is_protected, visibility)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		message.ID,
 		message.Pubkey,
 		message.Title,
@@ -3786,6 +4454,7 @@ func (a *App) insertMessage(message ForumMessage) (ForumMessage, error) {
 		message.Content,
 		message.Score,
 		message.Timestamp,
+		message.Lamport,
 		message.SizeBytes,
 		message.Zone,
 		message.SubID,
@@ -3815,18 +4484,55 @@ func (a *App) insertComment(comment Comment) (Comment, error) {
 	comment.Pubkey = strings.TrimSpace(comment.Pubkey)
 	comment.Body = strings.TrimSpace(comment.Body)
 
-	if comment.ID == "" || comment.PostID == "" || comment.Pubkey == "" || comment.Body == "" {
+	if comment.ID == "" || comment.PostID == "" || comment.Pubkey == "" {
+		return Comment{}, errors.New("invalid comment")
+	}
+	if comment.Body == "" && len(comment.Attachments) == 0 {
 		return Comment{}, errors.New("invalid comment")
 	}
 	if comment.Timestamp == 0 {
 		comment.Timestamp = time.Now().Unix()
 	}
-
-	_, err := a.db.Exec(`
-		INSERT OR REPLACE INTO comments (id, post_id, parent_id, pubkey, body, score, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?);
-	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Body, comment.Score, comment.Timestamp)
+	if comment.Lamport <= 0 {
+		comment.Lamport = comment.Timestamp
+	}
+	comment.Attachments = normalizeCommentAttachments(comment.Attachments)
+	attachmentsJSON, err := encodeCommentAttachmentsJSON(comment.Attachments)
 	if err != nil {
+		return Comment{}, err
+	}
+	mediaCIDs := mediaCIDsFromAttachments(comment.Attachments)
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return Comment{}, err
+	}
+
+	_, err = tx.Exec(`
+		INSERT OR REPLACE INTO comments (id, post_id, parent_id, pubkey, body, attachments_json, score, timestamp, lamport)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`, comment.ID, comment.PostID, comment.ParentID, comment.Pubkey, comment.Body, attachmentsJSON, comment.Score, comment.Timestamp, comment.Lamport)
+	if err != nil {
+		_ = tx.Rollback()
+		return Comment{}, err
+	}
+
+	if _, err = tx.Exec(`DELETE FROM comment_media_refs WHERE comment_id = ?;`, comment.ID); err != nil {
+		_ = tx.Rollback()
+		return Comment{}, err
+	}
+	for _, cid := range mediaCIDs {
+		if _, err = tx.Exec(`
+			INSERT INTO comment_media_refs (comment_id, content_cid)
+			VALUES (?, ?)
+			ON CONFLICT(comment_id, content_cid) DO NOTHING;
+		`, comment.ID, cid); err != nil {
+			_ = tx.Rollback()
+			return Comment{}, err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
 		return Comment{}, err
 	}
 
@@ -4317,7 +5023,7 @@ func ensureBlobQuotaWithLRU(tx *sql.Tx, zone string, quota int64, incomingBytes 
 	return nil
 }
 
-func (a *App) upsertModeration(targetPubkey string, action string, sourceAdmin string, timestamp int64, reason string) error {
+func (a *App) upsertModeration(targetPubkey string, action string, sourceAdmin string, timestamp int64, lamport int64, reason string) error {
 	if a.db == nil {
 		return errors.New("database not initialized")
 	}
@@ -4334,6 +5040,9 @@ func (a *App) upsertModeration(targetPubkey string, action string, sourceAdmin s
 	if timestamp == 0 {
 		timestamp = time.Now().Unix()
 	}
+	if lamport <= 0 {
+		lamport = timestamp
+	}
 
 	var existingTimestamp int64
 	err := a.db.QueryRow(`
@@ -4347,31 +5056,32 @@ func (a *App) upsertModeration(targetPubkey string, action string, sourceAdmin s
 
 	if err == nil && existingTimestamp > timestamp {
 		if _, logErr := a.db.Exec(`
-			INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, reason, result)
-			VALUES (?, ?, ?, ?, ?, 'ignored_older');
-		`, targetPubkey, action, sourceAdmin, timestamp, reason); logErr != nil {
+			INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, lamport, reason, result)
+			VALUES (?, ?, ?, ?, ?, ?, 'ignored_older');
+		`, targetPubkey, action, sourceAdmin, timestamp, lamport, reason); logErr != nil {
 			return logErr
 		}
 		return nil
 	}
 
 	_, err = a.db.Exec(`
-		INSERT INTO moderation (target_pubkey, action, source_admin, timestamp, reason)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO moderation (target_pubkey, action, source_admin, timestamp, lamport, reason)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(target_pubkey) DO UPDATE SET
 			action = excluded.action,
 			source_admin = excluded.source_admin,
 			timestamp = excluded.timestamp,
+			lamport = excluded.lamport,
 			reason = excluded.reason;
-	`, targetPubkey, action, sourceAdmin, timestamp, reason)
+	`, targetPubkey, action, sourceAdmin, timestamp, lamport, reason)
 	if err != nil {
 		return err
 	}
 
 	if _, err = a.db.Exec(`
-		INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, reason, result)
-		VALUES (?, ?, ?, ?, ?, 'applied');
-	`, targetPubkey, action, sourceAdmin, timestamp, reason); err != nil {
+		INSERT INTO moderation_logs (target_pubkey, action, source_admin, timestamp, lamport, reason, result)
+		VALUES (?, ?, ?, ?, ?, ?, 'applied');
+	`, targetPubkey, action, sourceAdmin, timestamp, lamport, reason); err != nil {
 		return err
 	}
 
@@ -4434,6 +5144,95 @@ func (a *App) isShadowBanned(pubkey string) (bool, error) {
 	}
 
 	return strings.ToUpper(action) == "SHADOW_BAN", nil
+}
+
+func (a *App) getModerationSnapshot(pubkey string) (string, int64, int64, string, error) {
+	if a.db == nil {
+		return "", 0, 0, "", errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return "", 0, 0, "", nil
+	}
+
+	var action string
+	var timestamp int64
+	var lamport int64
+	var sourceAdmin string
+	err := a.db.QueryRow(`
+		SELECT action, timestamp, lamport, source_admin
+		FROM moderation
+		WHERE target_pubkey = ?;
+	`, pubkey).Scan(&action, &timestamp, &lamport, &sourceAdmin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, 0, "", nil
+	}
+	if err != nil {
+		return "", 0, 0, "", err
+	}
+
+	return strings.ToUpper(strings.TrimSpace(action)), timestamp, lamport, strings.TrimSpace(sourceAdmin), nil
+}
+
+func (a *App) shouldAcceptPublicContent(authorPubkey string, contentLamport int64, contentTimestamp int64, contentID string, viewerPubkey string) (bool, error) {
+	authorPubkey = strings.TrimSpace(authorPubkey)
+	contentID = strings.TrimSpace(contentID)
+	viewerPubkey = strings.TrimSpace(viewerPubkey)
+	if authorPubkey == "" {
+		return false, errors.New("author pubkey is required")
+	}
+
+	if viewerPubkey != "" && authorPubkey == viewerPubkey {
+		return true, nil
+	}
+
+	action, moderationTimestamp, moderationLamport, moderationAdmin, err := a.getModerationSnapshot(authorPubkey)
+	if err != nil {
+		return false, err
+	}
+	if action != "SHADOW_BAN" {
+		return true, nil
+	}
+
+	policy, err := a.GetGovernancePolicy()
+	if err != nil {
+		return false, err
+	}
+	if policy.HideHistoryOnShadowBan {
+		return false, nil
+	}
+
+	if contentTimestamp <= 0 {
+		contentTimestamp = time.Now().Unix()
+	}
+	if contentLamport <= 0 {
+		contentLamport = contentTimestamp
+	}
+
+	if moderationLamport > 0 && contentLamport > 0 {
+		if contentLamport < moderationLamport {
+			return true, nil
+		}
+		if contentLamport > moderationLamport {
+			return false, nil
+		}
+
+		if contentTimestamp < moderationTimestamp {
+			return true, nil
+		}
+		if contentTimestamp > moderationTimestamp {
+			return false, nil
+		}
+
+		if contentID == "" {
+			return false, nil
+		}
+		moderationKey := fmt.Sprintf("%s|%d|%s", moderationAdmin, moderationTimestamp, action)
+		return strings.Compare(contentID, moderationKey) < 0, nil
+	}
+
+	return contentTimestamp < moderationTimestamp, nil
 }
 
 func buildMessageID(pubkey string, content string, timestamp int64) string {
@@ -4509,6 +5308,105 @@ func normalizeSubID(subID string) string {
 	}
 
 	return clean
+}
+
+func normalizeCommentAttachments(input []CommentAttachment) []CommentAttachment {
+	if len(input) == 0 {
+		return []CommentAttachment{}
+	}
+
+	result := make([]CommentAttachment, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
+	for _, item := range input {
+		kind := strings.ToLower(strings.TrimSpace(item.Kind))
+		ref := strings.TrimSpace(item.Ref)
+		if ref == "" {
+			continue
+		}
+		if kind != "media_cid" && kind != "external_url" {
+			continue
+		}
+		if kind == "external_url" {
+			u, err := url.Parse(ref)
+			if err != nil {
+				continue
+			}
+			proto := strings.ToLower(strings.TrimSpace(u.Scheme))
+			if proto != "http" && proto != "https" {
+				continue
+			}
+			ref = u.String()
+		}
+
+		key := kind + "|" + ref
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, CommentAttachment{
+			Kind:      kind,
+			Ref:       ref,
+			Mime:      strings.TrimSpace(item.Mime),
+			Width:     item.Width,
+			Height:    item.Height,
+			SizeBytes: item.SizeBytes,
+		})
+	}
+
+	if len(result) > 8 {
+		result = result[:8]
+	}
+
+	return result
+}
+
+func encodeCommentAttachmentsJSON(items []CommentAttachment) (string, error) {
+	normalized := normalizeCommentAttachments(items)
+	if len(normalized) == 0 {
+		return "[]", nil
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+func decodeCommentAttachmentsJSON(raw string) []CommentAttachment {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []CommentAttachment{}
+	}
+
+	var items []CommentAttachment
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return []CommentAttachment{}
+	}
+	return normalizeCommentAttachments(items)
+}
+
+func mediaCIDsFromAttachments(items []CommentAttachment) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.ToLower(strings.TrimSpace(item.Kind)) != "media_cid" {
+			continue
+		}
+		cid := strings.TrimSpace(item.Ref)
+		if cid == "" {
+			continue
+		}
+		if _, exists := seen[cid]; exists {
+			continue
+		}
+		seen[cid] = struct{}{}
+		result = append(result, cid)
+	}
+	return result
 }
 
 func normalizeSearchLimit(limit int) int {

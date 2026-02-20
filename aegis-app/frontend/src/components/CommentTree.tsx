@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Comment, Profile } from '../types';
+import { GetMediaByCID } from '../../wailsjs/go/main/App';
 
 interface CommentItemProps {
   comment: Comment;
   profiles: Record<string, Profile>;
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
+  onImageClick: (src: string) => void;
   depth?: number;
 }
 
@@ -28,10 +30,91 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function CommentItem({ comment, profiles, onReply, onUpvote, depth = 0 }: CommentItemProps) {
+function renderRichText(content: string, onImageClick: (src: string) => void) {
+  const text = content || '';
+  const lines = text.split('\n');
+  return lines.map((line, index) => {
+    const imageMatch = line.trim().match(/^!\[[^\]]*\]\(([^)]+)\)$/);
+    if (imageMatch && imageMatch[1]) {
+      const src = imageMatch[1].trim();
+      return (
+        <img
+          key={`img-${index}`}
+          src={src}
+          alt="comment image"
+          className="max-h-64 w-auto rounded-lg border border-warm-border dark:border-border-dark cursor-zoom-in"
+          onClick={() => onImageClick(src)}
+        />
+      );
+    }
+
+    return (
+      <p key={`txt-${index}`} className="whitespace-pre-wrap break-words">
+        {line}
+      </p>
+    );
+  });
+}
+
+export function CommentItem({ comment, profiles, onReply, onUpvote, onImageClick, depth = 0 }: CommentItemProps) {
   const profile = profiles[comment.pubkey];
   const displayName = profile?.displayName || comment.pubkey.slice(0, 8);
   const avatarUrl = profile?.avatarURL;
+  const [resolvedAttachmentImages, setResolvedAttachmentImages] = useState<string[]>([]);
+  const attachmentKey = (comment.attachments || [])
+    .map((item) => `${item.kind}:${item.ref}`)
+    .join('|');
+
+  useEffect(() => {
+    let alive = true;
+
+    const resolveMediaCIDWithRetry = async (cid: string): Promise<string | null> => {
+      const attempts = 3;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          const media = await GetMediaByCID(cid);
+          if (media?.dataBase64 && media?.mime) {
+            return `data:${media.mime};base64,${media.dataBase64}`;
+          }
+        } catch {
+          // retry when remote media arrives slightly later
+        }
+        if (attempt < attempts) {
+          await new Promise((resolve) => window.setTimeout(resolve, 300 * attempt));
+        }
+      }
+      return null;
+    };
+
+    const run = async () => {
+      const items = comment.attachments || [];
+      if (items.length === 0) {
+        if (alive) setResolvedAttachmentImages([]);
+        return;
+      }
+
+      const output: string[] = [];
+      for (const item of items) {
+        if (item.kind === 'external_url' && item.ref) {
+          output.push(item.ref);
+          continue;
+        }
+        if (item.kind === 'media_cid' && item.ref) {
+          const resolved = await resolveMediaCIDWithRetry(item.ref);
+          if (resolved) {
+            output.push(resolved);
+          }
+        }
+      }
+      if (alive) {
+        setResolvedAttachmentImages(output);
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [attachmentKey]);
 
   return (
     <div className={`${depth > 0 ? 'ml-5 md:ml-10 mt-2 relative pl-6 border-l-2 border-warm-border dark:border-border-dark' : 'mb-6 relative'}`}>
@@ -62,9 +145,22 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, depth = 0 }:
                 </span>
               </div>
             </div>
-            <p className="text-sm text-warm-text-secondary dark:text-slate-300 mb-3">
-              {comment.body}
-            </p>
+            <div className="text-sm text-warm-text-secondary dark:text-slate-300 mb-3 space-y-2">
+              {renderRichText(comment.body, onImageClick)}
+            </div>
+            {resolvedAttachmentImages.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {resolvedAttachmentImages.map((src, index) => (
+                  <img
+                    key={`${src.slice(0, 30)}-${index}`}
+                    src={src}
+                    alt="comment attachment"
+                    className="max-h-64 w-auto rounded-lg border border-warm-border dark:border-border-dark cursor-zoom-in"
+                    onClick={() => onImageClick(src)}
+                  />
+                ))}
+              </div>
+            )}
             <div className="flex items-center gap-4">
               <button 
                 onClick={() => onUpvote(comment.id)}
@@ -93,9 +189,20 @@ interface CommentTreeProps {
   profiles: Record<string, Profile>;
   onReply: (parentId: string) => void;
   onUpvote: (commentId: string) => void;
+  onImageClick?: (src: string) => void;
 }
 
-export function CommentTree({ comments, profiles, onReply, onUpvote }: CommentTreeProps) {
+export function CommentTree({ comments, profiles, onReply, onUpvote, onImageClick }: CommentTreeProps) {
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
+
+  const handleImageClick = (src: string) => {
+    if (onImageClick) {
+      onImageClick(src);
+      return;
+    }
+    setPreviewImageSrc(src);
+  };
+
   const commentIdSet = new Set(comments.map((c) => c.id));
   const rootComments = comments.filter((c) => !c.parentId || c.parentId === '' || !commentIdSet.has(c.parentId));
   
@@ -109,6 +216,7 @@ export function CommentTree({ comments, profiles, onReply, onUpvote }: CommentTr
           profiles={profiles}
           onReply={onReply}
           onUpvote={onUpvote}
+          onImageClick={handleImageClick}
           depth={depth}
         />
         {children.map(child => renderComment(child, depth + 1))}
@@ -128,6 +236,23 @@ export function CommentTree({ comments, profiles, onReply, onUpvote }: CommentTr
   return (
     <div>
       {rootComments.map(comment => renderComment(comment))}
+      {previewImageSrc && (
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
+          <img
+            src={previewImageSrc}
+            alt="Comment image preview"
+            className="max-w-full max-h-full rounded-lg border border-white/20"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setPreviewImageSrc(null)}
+            className="absolute top-4 right-4 text-white/90 hover:text-white"
+            title="Close preview"
+          >
+            <span className="material-icons">close</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

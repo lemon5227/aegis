@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
-import { Profile, GovernanceAdmin, ModerationLog } from '../types';
-import { GetP2PConfig, GetP2PStatus, GetPrivacySettings, SaveP2PConfig, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
+import { Profile, GovernanceAdmin, ModerationLog, ModerationState } from '../types';
+import { GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -9,6 +9,7 @@ interface SettingsPanelProps {
   profile?: Profile;
   isAdmin: boolean;
   governanceAdmins: GovernanceAdmin[];
+  moderationStates?: ModerationState[];
   moderationLogs?: ModerationLog[];
   onSaveProfile: (displayName: string, avatarURL: string, bio: string) => Promise<void> | void;
   onPublishProfile: (displayName: string, avatarURL: string) => void;
@@ -26,12 +27,21 @@ type P2PStatusView = {
   topic: string;
 };
 
+type StorageUsageView = {
+  privateUsedBytes: number;
+  publicUsedBytes: number;
+  privateQuota: number;
+  publicQuota: number;
+  totalQuota: number;
+};
+
 export function SettingsPanel({ 
   isOpen, 
   onClose,
   profile,
   isAdmin,
   governanceAdmins,
+  moderationStates = [],
   moderationLogs = [],
   onSaveProfile,
   onPublishProfile,
@@ -54,12 +64,18 @@ export function SettingsPanel({
   const [banTarget, setBanTarget] = useState('');
   const [banReason, setBanReason] = useState('');
   const [governanceTab, setGovernanceTab] = useState<'banned' | 'appeals' | 'logs'>('banned');
+  const [hideHistoryOnShadowBan, setHideHistoryOnShadowBan] = useState(true);
+  const [governancePolicyBusy, setGovernancePolicyBusy] = useState(false);
+  const [governancePolicyMessage, setGovernancePolicyMessage] = useState('');
   const [p2pListenPort, setP2PListenPort] = useState('40100');
   const [p2pRelayPeersInput, setP2PRelayPeersInput] = useState('');
   const [p2pAutoStart, setP2PAutoStart] = useState(true);
   const [p2pStatus, setP2PStatus] = useState<P2PStatusView | null>(null);
   const [p2pBusy, setP2PBusy] = useState(false);
   const [p2pMessage, setP2PMessage] = useState('');
+  const [storageUsage, setStorageUsage] = useState<StorageUsageView | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageMessage, setStorageMessage] = useState('');
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const accountToastTimerRef = useRef<number | null>(null);
 
@@ -92,6 +108,21 @@ export function SettingsPanel({
     }
   };
 
+  const loadStorageUsage = async () => {
+    if (!hasWailsRuntime()) return;
+    setStorageLoading(true);
+    try {
+      const usage = await GetStorageUsage();
+      setStorageUsage(usage);
+      setStorageMessage('');
+    } catch (error) {
+      console.error('Failed to load storage usage:', error);
+      setStorageMessage('Failed to load storage usage.');
+    } finally {
+      setStorageLoading(false);
+    }
+  };
+
   const loadPrivacySettings = async () => {
     if (!hasWailsRuntime()) return;
     try {
@@ -105,13 +136,27 @@ export function SettingsPanel({
     }
   };
 
+  const loadGovernancePolicy = async () => {
+    if (!isAdmin || !hasWailsRuntime()) return;
+    try {
+      const policy = await GetGovernancePolicy();
+      setHideHistoryOnShadowBan(!!policy.hideHistoryOnShadowBan);
+      setGovernancePolicyMessage('');
+    } catch (error) {
+      console.error('Failed to load governance policy:', error);
+      setGovernancePolicyMessage('Failed to load governance policy.');
+    }
+  };
+
   useEffect(() => {
     if (!isOpen || !hasWailsRuntime()) {
       return;
     }
 
     void loadP2PState();
+    void loadStorageUsage();
     void loadPrivacySettings();
+    void loadGovernancePolicy();
     const unsubscribe = EventsOn('p2p:updated', () => {
       void loadP2PState();
     });
@@ -119,6 +164,23 @@ export function SettingsPanel({
       unsubscribe();
     };
   }, [isOpen]);
+
+  const formatBytes = (bytes: number): string => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+      value /= 1024;
+      idx += 1;
+    }
+    return `${value.toFixed(value >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+  };
+
+  const usagePercent = (used: number, quota: number): number => {
+    if (!Number.isFinite(quota) || quota <= 0) return 0;
+    return Math.max(0, Math.min(100, (used / quota) * 100));
+  };
 
   useEffect(() => {
     setDisplayName(profile?.displayName || '');
@@ -303,6 +365,25 @@ export function SettingsPanel({
 
   const handleUnban = (pubkey: string) => {
     onUnbanUser(pubkey, 'Approved unban request');
+  };
+
+  const activeBannedUsers = moderationStates.filter((state) => state.action.toUpperCase() === 'SHADOW_BAN');
+  const pendingAppeals = moderationLogs.filter((log) => log.action.toUpperCase().includes('UNBAN_REQUEST'));
+
+  const handleSaveGovernancePolicy = async () => {
+    if (!isAdmin || !hasWailsRuntime()) return;
+    setGovernancePolicyBusy(true);
+    setGovernancePolicyMessage('');
+    try {
+      const policy = await SetGovernancePolicy(hideHistoryOnShadowBan);
+      setHideHistoryOnShadowBan(!!policy.hideHistoryOnShadowBan);
+      setGovernancePolicyMessage('Governance policy saved.');
+    } catch (error) {
+      console.error('Failed to save governance policy:', error);
+      setGovernancePolicyMessage('Failed to save governance policy.');
+    } finally {
+      setGovernancePolicyBusy(false);
+    }
   };
 
   const handleSavePrivacySettings = async () => {
@@ -924,6 +1005,66 @@ export function SettingsPanel({
                       </div>
                     </div>
                   </div>
+
+                  <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-warm-text-primary dark:text-white">Storage Usage</h3>
+                      <button
+                        onClick={() => void loadStorageUsage()}
+                        disabled={storageLoading}
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-warm-border dark:border-border-dark text-warm-text-primary dark:text-white hover:bg-warm-card dark:hover:bg-surface-lighter disabled:opacity-50"
+                      >
+                        {storageLoading ? 'Refreshing...' : 'Refresh'}
+                      </button>
+                    </div>
+
+                    {storageMessage && (
+                      <p className="text-sm text-warm-text-secondary dark:text-slate-300">{storageMessage}</p>
+                    )}
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark p-3">
+                        <p className="text-xs uppercase text-warm-text-secondary dark:text-slate-400">Shared Responsibility</p>
+                        <p className="mt-1 text-sm font-semibold text-warm-text-primary dark:text-white">
+                          {formatBytes(storageUsage?.publicUsedBytes || 0)} / {formatBytes(storageUsage?.publicQuota || 0)}
+                        </p>
+                        <div className="mt-2 h-2 rounded bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                          <div
+                            className="h-full bg-warm-accent"
+                            style={{ width: `${usagePercent(storageUsage?.publicUsedBytes || 0, storageUsage?.publicQuota || 0)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark p-3">
+                        <p className="text-xs uppercase text-warm-text-secondary dark:text-slate-400">Private Responsibility</p>
+                        <p className="mt-1 text-sm font-semibold text-warm-text-primary dark:text-white">
+                          {formatBytes(storageUsage?.privateUsedBytes || 0)} / {formatBytes(storageUsage?.privateQuota || 0)}
+                        </p>
+                        <div className="mt-2 h-2 rounded bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500"
+                            style={{ width: `${usagePercent(storageUsage?.privateUsedBytes || 0, storageUsage?.privateQuota || 0)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark p-3">
+                        <p className="text-xs uppercase text-warm-text-secondary dark:text-slate-400">Total Quota</p>
+                        <p className="mt-1 text-sm font-semibold text-warm-text-primary dark:text-white">
+                          {formatBytes((storageUsage?.publicUsedBytes || 0) + (storageUsage?.privateUsedBytes || 0))} / {formatBytes(storageUsage?.totalQuota || 0)}
+                        </p>
+                        <div className="mt-2 h-2 rounded bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                          <div
+                            className="h-full bg-indigo-500"
+                            style={{ width: `${usagePercent((storageUsage?.publicUsedBytes || 0) + (storageUsage?.privateUsedBytes || 0), storageUsage?.totalQuota || 0)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-warm-text-secondary dark:text-slate-400">
+                      Shared = data your node may serve to peers. Private = local-only responsibility (including policy-blocked shadow-ban data).
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -944,6 +1085,40 @@ export function SettingsPanel({
               </header>
               
               <div className="px-8 pt-4 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark">
+                <div className="mb-4 rounded-xl border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="font-semibold text-warm-text-primary dark:text-white">Governance Policy</h3>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                        Control whether shadow-ban hides historical posts and comments from other users.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={hideHistoryOnShadowBan}
+                        onChange={(e) => setHideHistoryOnShadowBan(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-warm-accent"></div>
+                    </label>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-xs text-warm-text-secondary dark:text-slate-400">
+                      {hideHistoryOnShadowBan ? 'History hidden for shadow-banned users' : 'Only future posts/comments affected'}
+                    </span>
+                    <button
+                      onClick={handleSaveGovernancePolicy}
+                      disabled={governancePolicyBusy}
+                      className="px-3 py-1.5 text-xs font-medium bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {governancePolicyBusy ? 'Saving...' : 'Save Policy'}
+                    </button>
+                  </div>
+                  {governancePolicyMessage && (
+                    <p className="mt-2 text-xs text-warm-text-secondary dark:text-slate-400">{governancePolicyMessage}</p>
+                  )}
+                </div>
                 <div className="flex space-x-6">
                   <button 
                     onClick={() => setGovernanceTab('banned')}
@@ -964,7 +1139,7 @@ export function SettingsPanel({
                     }`}
                   >
                     Unban Requests 
-                    <span className="ml-2 bg-warm-accent text-white text-[10px] px-1.5 py-0.5 rounded-full">3</span>
+                    <span className="ml-2 bg-warm-accent text-white text-[10px] px-1.5 py-0.5 rounded-full">{pendingAppeals.length}</span>
                   </button>
                   <button 
                     onClick={() => setGovernanceTab('logs')}
@@ -1013,9 +1188,31 @@ export function SettingsPanel({
                       <div className="p-4 border-b border-warm-border dark:border-border-dark">
                         <h3 className="font-semibold text-warm-text-primary dark:text-white">Banned Users</h3>
                       </div>
-                      <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
-                        No banned users
-                      </div>
+                      {activeBannedUsers.length === 0 ? (
+                        <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
+                          No banned users
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-warm-border dark:divide-border-dark">
+                          {activeBannedUsers.map((item) => (
+                            <div key={`${item.targetPubkey}-${item.timestamp}`} className="p-4 flex items-start justify-between gap-4">
+                              <div>
+                                <p className="font-mono text-sm text-warm-text-primary dark:text-white break-all">{item.targetPubkey}</p>
+                                <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">Reason: {item.reason || 'No reason provided'}</p>
+                                <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                                  By {item.sourceAdmin.slice(0, 12)}... · {new Date(item.timestamp * 1000).toLocaleString()}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleUnban(item.targetPubkey)}
+                                className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                              >
+                                Unban
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1024,11 +1221,33 @@ export function SettingsPanel({
                   <div className="bg-white dark:bg-surface-dark rounded-xl border border-warm-border dark:border-border-dark overflow-hidden">
                     <div className="p-4 border-b border-warm-border dark:border-border-dark flex justify-between items-center">
                       <h3 className="font-semibold text-warm-text-primary dark:text-white">Active Unban Requests</h3>
-                      <button className="text-xs text-warm-accent hover:underline">View All History</button>
+                      <span className="text-xs text-warm-text-secondary dark:text-slate-400">Auto-collected from moderation logs</span>
                     </div>
-                    <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
-                      No pending appeals
-                    </div>
+                    {pendingAppeals.length === 0 ? (
+                      <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
+                        No pending appeals
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-warm-border dark:divide-border-dark">
+                        {pendingAppeals.map((item) => (
+                          <div key={item.id} className="p-4 flex items-start justify-between gap-4">
+                            <div>
+                              <p className="font-mono text-sm text-warm-text-primary dark:text-white break-all">{item.targetPubkey}</p>
+                              <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">Reason: {item.reason || 'No reason provided'}</p>
+                              <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                                Requested at {new Date(item.timestamp * 1000).toLocaleString()}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleUnban(item.targetPubkey)}
+                              className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                            >
+                              Approve Unban
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 
@@ -1037,9 +1256,29 @@ export function SettingsPanel({
                     <div className="p-4 border-b border-warm-border dark:border-border-dark">
                       <h3 className="font-semibold text-warm-text-primary dark:text-white">Operation Log</h3>
                     </div>
-                    <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
-                      No logs yet
-                    </div>
+                    {moderationLogs.length === 0 ? (
+                      <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400">
+                        No logs yet
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-warm-border dark:divide-border-dark">
+                        {moderationLogs.map((log) => (
+                          <div key={log.id} className="p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${log.action.toUpperCase() === 'UNBAN' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}`}>
+                                  {log.action}
+                                </span>
+                                <span className="font-mono text-xs text-warm-text-secondary dark:text-slate-400 break-all">{log.targetPubkey}</span>
+                              </div>
+                              <span className="text-xs text-warm-text-secondary dark:text-slate-400">{new Date(log.timestamp * 1000).toLocaleString()}</span>
+                            </div>
+                            <p className="text-sm text-warm-text-primary dark:text-white mt-2">{log.reason || 'No reason provided'}</p>
+                            <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">By {log.sourceAdmin.slice(0, 12)}... · Result: {log.result || 'applied'}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -10,6 +10,10 @@ export function AddLocalComment(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddLocalComment'](arg1, arg2, arg3, arg4);
 }
 
+export function AddLocalCommentWithAttachments(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['AddLocalCommentWithAttachments'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function AddLocalPostStructured(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddLocalPostStructured'](arg1, arg2, arg3, arg4);
 }
@@ -198,6 +202,10 @@ export function PublishCommentUpvote(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishCommentUpvote'](arg1, arg2, arg3);
 }
 
+export function PublishCommentWithAttachments(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['PublishCommentWithAttachments'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function PublishCreateSub(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishCreateSub'](arg1, arg2, arg3);
 }
@@ -272,6 +280,10 @@ export function StartP2P(arg1, arg2) {
 
 export function StopP2P() {
   return window['go']['main']['App']['StopP2P']();
+}
+
+export function StoreCommentImageDataURL(arg1) {
+  return window['go']['main']['App']['StoreCommentImageDataURL'](arg1);
 }
 
 export function SubscribeSub(arg1) {

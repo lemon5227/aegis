@@ -32,14 +32,38 @@ export namespace main {
 	        this.lastObservedSyncLagSec = source["lastObservedSyncLagSec"];
 	    }
 	}
+	export class CommentAttachment {
+	    kind: string;
+	    ref: string;
+	    mime?: string;
+	    width?: number;
+	    height?: number;
+	    sizeBytes?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommentAttachment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.ref = source["ref"];
+	        this.mime = source["mime"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.sizeBytes = source["sizeBytes"];
+	    }
+	}
 	export class Comment {
 	    id: string;
 	    postId: string;
 	    parentId: string;
 	    pubkey: string;
 	    body: string;
+	    attachments?: CommentAttachment[];
 	    score: number;
 	    timestamp: number;
+	    lamport: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Comment(source);
@@ -52,10 +76,31 @@ export namespace main {
 	        this.parentId = source["parentId"];
 	        this.pubkey = source["pubkey"];
 	        this.body = source["body"];
+	        this.attachments = this.convertValues(source["attachments"], CommentAttachment);
 	        this.score = source["score"];
 	        this.timestamp = source["timestamp"];
+	        this.lamport = source["lamport"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
+	
 	export class ForumMessage {
 	    id: string;
 	    pubkey: string;
@@ -71,6 +116,7 @@ export namespace main {
 	    content: string;
 	    score: number;
 	    timestamp: number;
+	    lamport: number;
 	    sizeBytes: number;
 	    zone: string;
 	    subId: string;
@@ -97,6 +143,7 @@ export namespace main {
 	        this.content = source["content"];
 	        this.score = source["score"];
 	        this.timestamp = source["timestamp"];
+	        this.lamport = source["lamport"];
 	        this.sizeBytes = source["sizeBytes"];
 	        this.zone = source["zone"];
 	        this.subId = source["subId"];
@@ -270,6 +317,7 @@ export namespace main {
 	    action: string;
 	    sourceAdmin: string;
 	    timestamp: number;
+	    lamport: number;
 	    reason: string;
 	    result: string;
 	
@@ -284,6 +332,7 @@ export namespace main {
 	        this.action = source["action"];
 	        this.sourceAdmin = source["sourceAdmin"];
 	        this.timestamp = source["timestamp"];
+	        this.lamport = source["lamport"];
 	        this.reason = source["reason"];
 	        this.result = source["result"];
 	    }
@@ -293,6 +342,7 @@ export namespace main {
 	    action: string;
 	    sourceAdmin: string;
 	    timestamp: number;
+	    lamport: number;
 	    reason: string;
 	
 	    static createFrom(source: any = {}) {
@@ -305,6 +355,7 @@ export namespace main {
 	        this.action = source["action"];
 	        this.sourceAdmin = source["sourceAdmin"];
 	        this.timestamp = source["timestamp"];
+	        this.lamport = source["lamport"];
 	        this.reason = source["reason"];
 	    }
 	}
