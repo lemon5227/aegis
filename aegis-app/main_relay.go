@@ -38,6 +38,15 @@ func main() {
 		}
 	}
 
+	if len(status.AnnounceAddrs) == 0 {
+		fmt.Println("announce_addrs: none (set AEGIS_ANNOUNCE_ADDRS or AEGIS_PUBLIC_IP)")
+	} else {
+		fmt.Println("announce_addrs:")
+		for _, addr := range status.AnnounceAddrs {
+			fmt.Printf("- %s\n", strings.TrimSpace(addr))
+		}
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh

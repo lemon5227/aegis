@@ -63,6 +63,7 @@ type P2PStatus struct {
 	Started        bool     `json:"started"`
 	PeerID         string   `json:"peerId"`
 	ListenAddrs    []string `json:"listenAddrs"`
+	AnnounceAddrs  []string `json:"announceAddrs"`
 	ConnectedPeers []string `json:"connectedPeers"`
 	Topic          string   `json:"topic"`
 }
@@ -108,6 +109,7 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 	a.refreshPeerPoliciesFromEnv()
 
 	listenAddrs := resolveP2PListenAddrs(listenPort)
+	announceAddrs := resolveP2PAnnounceAddrs(listenPort)
 	relayInfos := resolveRelayPeerInfos(bootstrapPeers)
 
 	options := []libp2p.Option{
@@ -118,6 +120,12 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
 		libp2p.EnableRelayService(),
+	}
+	if len(announceAddrs) > 0 {
+		announceAddrsCopy := append([]multiaddr.Multiaddr(nil), announceAddrs...)
+		options = append(options, libp2p.AddrsFactory(func(_ []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			return append([]multiaddr.Multiaddr(nil), announceAddrsCopy...)
+		}))
 	}
 	if len(relayInfos) > 0 {
 		options = append(options, libp2p.EnableAutoRelayWithStaticRelays(relayInfos))
@@ -1505,9 +1513,15 @@ func (a *App) getP2PStatusLocked() P2PStatus {
 
 	status.Started = true
 	status.PeerID = a.p2pHost.ID().String()
-	status.ListenAddrs = make([]string, 0, len(a.p2pHost.Addrs()))
-	for _, addr := range a.p2pHost.Addrs() {
+	listenRaw := a.p2pHost.Network().ListenAddresses()
+	status.ListenAddrs = make([]string, 0, len(listenRaw))
+	for _, addr := range listenRaw {
 		status.ListenAddrs = append(status.ListenAddrs, fmt.Sprintf("%s/p2p/%s", addr.String(), a.p2pHost.ID().String()))
+	}
+	announced := a.p2pHost.Addrs()
+	status.AnnounceAddrs = make([]string, 0, len(announced))
+	for _, addr := range announced {
+		status.AnnounceAddrs = append(status.AnnounceAddrs, fmt.Sprintf("%s/p2p/%s", addr.String(), a.p2pHost.ID().String()))
 	}
 
 	connected := a.p2pHost.Network().Peers()
@@ -2655,6 +2669,59 @@ func resolveP2PListenAddrs(listenPort int) []string {
 	}
 
 	return []string{ipv4, ipv6}
+}
+
+func resolveP2PAnnounceAddrs(listenPort int) []multiaddr.Multiaddr {
+	if listenPort <= 0 {
+		listenPort = 40100
+	}
+
+	raw := strings.TrimSpace(os.Getenv("AEGIS_ANNOUNCE_ADDRS"))
+	if raw == "" {
+		publicIP := strings.TrimSpace(os.Getenv("AEGIS_PUBLIC_IP"))
+		if publicIP != "" {
+			raw = fmt.Sprintf("/ip4/%s/tcp/%d", publicIP, listenPort)
+		}
+	}
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		switch r {
+		case ',', ';', '\n', '\r':
+			return true
+		default:
+			return false
+		}
+	})
+
+	result := make([]multiaddr.Multiaddr, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		if idx := strings.Index(item, "/p2p/"); idx > 0 {
+			item = strings.TrimSpace(item[:idx])
+		}
+		maddr, err := multiaddr.NewMultiaddr(item)
+		if err != nil {
+			continue
+		}
+		normalized := maddr.String()
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, maddr)
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func resolveRelayPeerInfos(bootstrapPeers []string) []peer.AddrInfo {

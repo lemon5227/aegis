@@ -381,6 +381,7 @@ export namespace main {
 	    started: boolean;
 	    peerId: string;
 	    listenAddrs: string[];
+	    announceAddrs: string[];
 	    connectedPeers: string[];
 	    topic: string;
 	
@@ -393,6 +394,7 @@ export namespace main {
 	        this.started = source["started"];
 	        this.peerId = source["peerId"];
 	        this.listenAddrs = source["listenAddrs"];
+	        this.announceAddrs = source["announceAddrs"];
 	        this.connectedPeers = source["connectedPeers"];
 	        this.topic = source["topic"];
 	    }
