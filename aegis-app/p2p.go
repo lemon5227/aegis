@@ -997,17 +997,37 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 			return nil, publishErr
 		}
 
-		select {
-		case response := <-responseCh:
-			if !response.Found {
-				return nil, errContentFetchNotFound
+		deadline := time.Now().Add(timeout)
+		notFoundCount := 0
+		peerCount := len(host.Network().Peers())
+		for {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				if notFoundCount > 0 {
+					return nil, errContentFetchNotFound
+				}
+				return nil, errContentFetchTimeout
 			}
-			if upsertErr := a.upsertContentBlob(response.ContentCID, response.Content, response.SizeBytes); upsertErr != nil {
-				return nil, upsertErr
+
+			select {
+			case response := <-responseCh:
+				if !response.Found {
+					notFoundCount += 1
+					if peerCount > 0 && notFoundCount >= peerCount {
+						return nil, errContentFetchNotFound
+					}
+					continue
+				}
+				if upsertErr := a.upsertContentBlob(response.ContentCID, response.Content, response.SizeBytes); upsertErr != nil {
+					return nil, upsertErr
+				}
+				return nil, nil
+			case <-time.After(remaining):
+				if notFoundCount > 0 {
+					return nil, errContentFetchNotFound
+				}
+				return nil, errContentFetchTimeout
 			}
-			return nil, nil
-		case <-time.After(timeout):
-			return nil, errContentFetchTimeout
 		}
 	})
 	elapsedMs := time.Since(startedAt).Milliseconds()
@@ -1103,21 +1123,41 @@ func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration
 			return nil, publishErr
 		}
 
-		select {
-		case response := <-responseCh:
-			if !response.Found {
-				return nil, errMediaFetchNotFound
+		deadline := time.Now().Add(timeout)
+		notFoundCount := 0
+		peerCount := len(host.Network().Peers())
+		for {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				if notFoundCount > 0 {
+					return nil, errMediaFetchNotFound
+				}
+				return nil, errMediaFetchTimeout
 			}
-			raw, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.ImageDataBase64))
-			if decodeErr != nil || len(raw) == 0 {
-				return nil, errors.New("invalid media response payload")
+
+			select {
+			case response := <-responseCh:
+				if !response.Found {
+					notFoundCount += 1
+					if peerCount > 0 && notFoundCount >= peerCount {
+						return nil, errMediaFetchNotFound
+					}
+					continue
+				}
+				raw, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.ImageDataBase64))
+				if decodeErr != nil || len(raw) == 0 {
+					return nil, errors.New("invalid media response payload")
+				}
+				if upsertErr := a.upsertMediaBlobRaw(response.ContentCID, response.ImageMIME, raw, response.ImageWidth, response.ImageHeight, response.IsThumbnail); upsertErr != nil {
+					return nil, upsertErr
+				}
+				return nil, nil
+			case <-time.After(remaining):
+				if notFoundCount > 0 {
+					return nil, errMediaFetchNotFound
+				}
+				return nil, errMediaFetchTimeout
 			}
-			if upsertErr := a.upsertMediaBlobRaw(response.ContentCID, response.ImageMIME, raw, response.ImageWidth, response.ImageHeight, response.IsThumbnail); upsertErr != nil {
-				return nil, upsertErr
-			}
-			return nil, nil
-		case <-time.After(timeout):
-			return nil, errMediaFetchTimeout
 		}
 	})
 	if a.ctx != nil {
@@ -2770,7 +2810,11 @@ func resolveRelayPeers() []string {
 	if len(fromEnv) > 0 {
 		return fromEnv
 	}
-	return parsePeerAddressesCSV(defaultRelayPeersCSV)
+	fromBuild := parsePeerAddressesCSV(defaultRelayPeersCSV)
+	if len(fromBuild) > 0 {
+		return fromBuild
+	}
+	return []string{officialBootstrapRelayAddr}
 }
 
 func resolveP2PListenAddrs(listenPort int) []string {

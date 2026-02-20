@@ -26,6 +26,8 @@ var (
 	defaultRelayPeersCSV     string
 )
 
+const officialBootstrapRelayAddr = "/ip4/51.107.6.171/tcp/40100/p2p/12D3KooWAFxb45HZaK3rtSRAy6wTR7PN8nUaZrXgBNuBPJoNKqwg"
+
 // App struct
 type App struct {
 	ctx    context.Context
@@ -304,7 +306,11 @@ func resolveBootstrapPeers() []string {
 	if len(fromEnv) > 0 {
 		return fromEnv
 	}
-	return parsePeerAddressesCSV(defaultBootstrapPeersCSV)
+	fromBuild := parsePeerAddressesCSV(defaultBootstrapPeersCSV)
+	if len(fromBuild) > 0 {
+		return fromBuild
+	}
+	return []string{officialBootstrapRelayAddr}
 }
 
 func resolveAutoStartPortCandidates(preferredPort int) []int {
