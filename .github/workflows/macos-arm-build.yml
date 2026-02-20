@@ -2,6 +2,17 @@ name: Build macOS ARM App
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_draft_release:
+        description: "Publish artifacts to draft prerelease"
+        required: false
+        default: false
+        type: boolean
+      draft_tag_name:
+        description: "Draft prerelease tag name"
+        required: false
+        default: "beta-draft"
+        type: string
   push:
     branches:
       - master
@@ -88,11 +99,11 @@ jobs:
           overwrite_files: true
 
       - name: Publish draft prerelease assets
-        if: github.ref == 'refs/heads/master'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_draft_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: master-nightly
-          name: master-nightly (auto)
+          tag_name: ${{ github.event.inputs.draft_tag_name }}
+          name: ${{ github.event.inputs.draft_tag_name }} (manual draft)
           draft: true
           prerelease: true
           files: |
