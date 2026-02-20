@@ -79,3 +79,16 @@ jobs:
         with:
           files: |
             aegis-app/build/bin/aegis-app-macos-arm64.zip
+          overwrite_files: true
+
+      - name: Publish draft prerelease assets
+        if: github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: master-nightly
+          name: master-nightly (auto)
+          draft: true
+          prerelease: true
+          files: |
+            aegis-app/build/bin/aegis-app-macos-arm64.zip
+          overwrite_files: true

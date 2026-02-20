@@ -103,6 +103,7 @@ jobs:
         with:
           files: |
             aegis-app/build/bin/${{ matrix.artifact_name }}.tar.gz
+          overwrite_files: true
 
       - name: Publish release assets (Windows)
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
@@ -111,3 +112,29 @@ jobs:
           files: |
             aegis-app/build/bin/${{ matrix.artifact_name }}.zip
             aegis-app/build/bin/aegis-app.exe
+          overwrite_files: true
+
+      - name: Publish draft prerelease assets (Linux)
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: master-nightly
+          name: master-nightly (auto)
+          draft: true
+          prerelease: true
+          files: |
+            aegis-app/build/bin/${{ matrix.artifact_name }}.tar.gz
+          overwrite_files: true
+
+      - name: Publish draft prerelease assets (Windows)
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: master-nightly
+          name: master-nightly (auto)
+          draft: true
+          prerelease: true
+          files: |
+            aegis-app/build/bin/${{ matrix.artifact_name }}.zip
+            aegis-app/build/bin/aegis-app.exe
+          overwrite_files: true
