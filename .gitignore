@@ -25,3 +25,6 @@ npm-debug.log*
 *.db
 *.db-shm
 *.db-wal
+
+# Local website workspace
+website/

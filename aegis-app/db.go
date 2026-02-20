@@ -3376,7 +3376,13 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 	switch message.Type {
 	case "SUB_CREATE":
 		_, err := a.upsertSub(message.SubID, message.SubTitle, message.SubDesc, message.Timestamp)
-		return err
+		if err != nil {
+			return err
+		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "subs:updated")
+		}
+		return nil
 	case "GOVERNANCE_POLICY_UPDATE":
 		trusted, trustErr := a.isTrustedAdmin(message.AdminPubkey)
 		if trustErr != nil {

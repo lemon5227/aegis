@@ -562,6 +562,19 @@ function App() {
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('subs:updated', () => {
+      void loadSubs();
+      if (identity) {
+        void loadSubscribedSubs();
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [identity, loadSubs, loadSubscribedSubs]);
+
+  useEffect(() => {
+    if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('feed:updated', () => {
       if (!identity || view !== 'feed') return;
       void loadPosts(currentSubId, sortMode);
