@@ -3411,3 +3411,61 @@ func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body
 	a.publishPayloadAsync(topic, payload, "POST_UPDATE")
 	return nil
 }
+
+func (a *App) PublishCommentUpdate(pubkey string, commentID string, body string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || commentID == "" {
+		return errors.New("pubkey and comment id are required")
+	}
+	body = strings.TrimSpace(body)
+
+	shadowBanned, err := a.isShadowBanned(pubkey)
+	if err != nil {
+		return err
+	}
+	if shadowBanned {
+		_, err = a.UpdateLocalComment(pubkey, commentID, body)
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	a.p2pMu.Unlock()
+
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
+	}
+
+	localComment, err := a.UpdateLocalComment(pubkey, commentID, body)
+	if err != nil {
+		return err
+	}
+
+	msg := IncomingMessage{
+		Type:               "COMMENT",
+		OpType:             postOpTypeUpdate,
+		OpID:               localComment.OpID,
+		SchemaVersion:      lamportSchemaV2,
+		AuthScope:          authScopeUser,
+		ID:                 localComment.ID,
+		Pubkey:             pubkey,
+		PostID:             localComment.PostID,
+		ParentID:           localComment.ParentID,
+		DisplayName:        strings.TrimSpace(profile.DisplayName),
+		AvatarURL:          strings.TrimSpace(profile.AvatarURL),
+		Body:               localComment.Body,
+		CommentAttachments: localComment.Attachments,
+		Timestamp:          localComment.Timestamp,
+		Lamport:            localComment.Lamport,
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	a.publishPayloadAsync(topic, payload, "COMMENT_UPDATE")
+	return nil
+}
