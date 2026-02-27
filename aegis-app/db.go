@@ -7476,3 +7476,92 @@ func (a *App) getLocalIdentity() (Identity, error) {
 
 	return identity, nil
 }
+
+func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body string) (ForumMessage, error) {
+	if a.db == nil {
+		return ForumMessage{}, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return ForumMessage{}, errors.New("pubkey and post id are required")
+	}
+
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	if title == "" && body == "" {
+		return ForumMessage{}, errors.New("title or body must be updated")
+	}
+
+	// Verify post exists and user is author
+	var (
+		currentTitle string
+		currentBody  string
+		currentSubID string
+		currentZone  string
+		currentAuthor string
+	)
+
+	err := a.db.QueryRow(`
+		SELECT title, body, sub_id, zone, pubkey
+		FROM messages
+		WHERE id = ?;
+	`, postID).Scan(&currentTitle, &currentBody, &currentSubID, &currentZone, &currentAuthor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ForumMessage{}, errors.New("post not found")
+	}
+	if err != nil {
+		return ForumMessage{}, err
+	}
+
+	if currentAuthor != pubkey {
+		return ForumMessage{}, errors.New("only author can update post")
+	}
+
+	if title == "" {
+		title = currentTitle
+	}
+	if body == "" {
+		body = currentBody
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return ForumMessage{}, err
+	}
+
+	updatedPost := ForumMessage{
+		ID:          postID,
+		Pubkey:      pubkey,
+		Title:       title,
+		Body:        body, // Full body
+		Timestamp:   now,
+		Lamport:     lamport,
+		Zone:        currentZone,
+		SubID:       currentSubID,
+	}
+
+	var (
+		imgCid  string
+		thbCid  string
+		imgMime string
+		imgSize int64
+		imgW    int
+		imgH    int
+	)
+	_ = a.db.QueryRow(`
+		SELECT image_cid, thumb_cid, image_mime, image_size, image_width, image_height
+		FROM messages WHERE id = ?
+	`, postID).Scan(&imgCid, &thbCid, &imgMime, &imgSize, &imgW, &imgH)
+
+	updatedPost.ImageCID = imgCid
+	updatedPost.ThumbCID = thbCid
+	updatedPost.ImageMIME = imgMime
+	updatedPost.ImageSize = imgSize
+	updatedPost.ImageWidth = imgW
+	updatedPost.ImageHeight = imgH
+
+	return a.insertMessage(updatedPost)
+}

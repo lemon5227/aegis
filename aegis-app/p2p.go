@@ -3341,3 +3341,73 @@ func (a *App) isPeerBlocked(peerID string) (bool, string) {
 
 	return true, "greylist"
 }
+
+func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	postID = strings.TrimSpace(postID)
+	if pubkey == "" || postID == "" {
+		return errors.New("pubkey and post id are required")
+	}
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	if title == "" && body == "" {
+		return errors.New("title or body must be updated")
+	}
+
+	shadowBanned, err := a.isShadowBanned(pubkey)
+	if err != nil {
+		return err
+	}
+	if shadowBanned {
+		_, err = a.UpdateLocalPost(pubkey, postID, title, body)
+		return err
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	a.p2pMu.Unlock()
+
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
+	}
+
+	localPost, err := a.UpdateLocalPost(pubkey, postID, title, body)
+	if err != nil {
+		return err
+	}
+
+	msg := IncomingMessage{
+		Type:          "POST",
+		OpType:        postOpTypeUpdate,
+		OpID:          localPost.OpID,
+		SchemaVersion: lamportSchemaV2,
+		AuthScope:     authScopeUser,
+		ID:            localPost.ID,
+		Pubkey:        pubkey,
+		DisplayName:   strings.TrimSpace(profile.DisplayName),
+		AvatarURL:     strings.TrimSpace(profile.AvatarURL),
+		Title:         localPost.Title,
+		Body:          localPost.Body,
+		ContentCID:    localPost.ContentCID,
+		ImageCID:      localPost.ImageCID,
+		ThumbCID:      localPost.ThumbCID,
+		ImageMIME:     localPost.ImageMIME,
+		ImageSize:     localPost.ImageSize,
+		ImageWidth:    localPost.ImageWidth,
+		ImageHeight:   localPost.ImageHeight,
+		Content:       "",
+		SubID:         normalizeSubID(localPost.SubID),
+		Timestamp:     localPost.Timestamp,
+		Lamport:       localPost.Lamport,
+		Signature:     "",
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	a.publishPayloadAsync(topic, payload, "POST_UPDATE")
+	return nil
+}
