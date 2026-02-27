@@ -19,6 +19,8 @@ import (
 	"github.com/tyler-smith/go-bip39"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/singleflight"
+	"time"
+	"fmt"
 )
 
 var (
@@ -344,4 +346,238 @@ func isTCPPortAvailable(port int) bool {
 	}
 	_ = listener.Close()
 	return true
+}
+
+
+func (a *App) SubmitReport(targetID string, targetType string, reason string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	targetID = strings.TrimSpace(targetID)
+	targetType = strings.ToLower(strings.TrimSpace(targetType))
+	reason = strings.TrimSpace(reason)
+
+	if targetID == "" || reason == "" {
+		return errors.New("target id and reason are required")
+	}
+	if targetType != "post" && targetType != "comment" {
+		return errors.New("invalid target type")
+	}
+
+	identity, err := a.getLocalIdentity()
+	if err != nil {
+		return err
+	}
+	reporterPubkey := identity.PublicKey
+
+	now := time.Now().Unix()
+	reportID := buildMessageID(reporterPubkey, fmt.Sprintf("report|%s|%s|%d", targetID, reason, now), now)
+
+	_, err = a.db.Exec(`
+		INSERT INTO reports (id, target_id, target_type, reason, reporter_pubkey, timestamp, status)
+		VALUES (?, ?, ?, ?, ?, ?, 'pending')
+		ON CONFLICT(id) DO NOTHING;
+	`, reportID, targetID, targetType, reason, reporterPubkey, now)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (a *App) GetReports(limit int, status string) ([]Report, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+    status = strings.TrimSpace(strings.ToLower(status))
+
+    query := `
+		SELECT id, target_id, target_type, reason, reporter_pubkey, timestamp, status
+		FROM reports
+    `
+    args := []interface{}{}
+
+    if status != "" && status != "all" {
+        query += " WHERE status = ?"
+        args = append(args, status)
+    }
+
+    query += " ORDER BY timestamp DESC LIMIT ?;"
+    args = append(args, limit)
+
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]Report, 0)
+	for rows.Next() {
+		var item Report
+		if err := rows.Scan(
+			&item.ID,
+			&item.TargetID,
+			&item.TargetType,
+			&item.Reason,
+			&item.ReporterPubkey,
+			&item.Timestamp,
+			&item.Status,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) UpdateReportStatus(reportID string, status string) error {
+    if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+    status = strings.ToLower(strings.TrimSpace(status))
+    if status != "pending" && status != "resolved" && status != "ignored" {
+        return errors.New("invalid status")
+    }
+
+    _, err := a.db.Exec("UPDATE reports SET status = ? WHERE id = ?", status, reportID)
+    return err
+}
+
+
+func (a *App) GetNotifications(limit int) ([]Notification, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	rows, err := a.db.Query(`
+		SELECT id, type, title, body, target_id, from_pubkey, created_at, read_at
+		FROM notifications
+		ORDER BY created_at DESC
+		LIMIT ?;
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]Notification, 0)
+	for rows.Next() {
+		var item Notification
+		if err := rows.Scan(
+			&item.ID,
+			&item.Type,
+			&item.Title,
+			&item.Body,
+			&item.TargetID,
+			&item.FromPubkey,
+			&item.CreatedAt,
+			&item.ReadAt,
+		); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+
+	return result, rows.Err()
+}
+
+func (a *App) MarkNotificationRead(id string) error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("notification id is required")
+	}
+
+	now := time.Now().Unix()
+	_, err := a.db.Exec("UPDATE notifications SET read_at = ? WHERE id = ? AND read_at = 0", now, id)
+	return err
+}
+
+func (a *App) MarkAllNotificationsRead() error {
+	if a.db == nil {
+		return errors.New("database not initialized")
+	}
+
+	now := time.Now().Unix()
+	_, err := a.db.Exec("UPDATE notifications SET read_at = ? WHERE read_at = 0", now)
+	return err
+}
+
+func (a *App) checkAndCreateNotification(comment Comment) {
+    // This function checks if a comment should trigger a notification for the local user.
+    // It should be called after a comment is successfully inserted.
+
+    if a.db == nil {
+        return
+    }
+
+    identity, err := a.getLocalIdentity()
+    if err != nil {
+        return
+    }
+    localPubkey := identity.PublicKey
+
+    // Don't notify for own comments
+    if comment.Pubkey == localPubkey {
+        return
+    }
+
+    // Check if it's a reply to a post or comment authored by local user
+    var parentAuthor string
+    var notifType string
+    var title string
+
+    // First, check direct parent (comment)
+    if comment.ParentID != "" {
+        err := a.db.QueryRow("SELECT pubkey FROM comments WHERE id = ?", comment.ParentID).Scan(&parentAuthor)
+        if err == nil && parentAuthor == localPubkey {
+            notifType = "reply"
+            title = "New reply to your comment"
+        }
+    }
+
+    // If not a reply to a comment, or parent not found, check post author
+    if notifType == "" {
+        err := a.db.QueryRow("SELECT pubkey, title FROM messages WHERE id = ?", comment.PostID).Scan(&parentAuthor, &title)
+        if err == nil && parentAuthor == localPubkey {
+            notifType = "reply"
+            if title == "" {
+                title = "New reply to your post"
+            } else {
+                title = "Reply: " + title
+            }
+        }
+    }
+
+    // TODO: Mentions parsing (e.g. regex for @User)
+
+    if notifType != "" {
+        now := time.Now().Unix()
+        id := buildMessageID(localPubkey, fmt.Sprintf("notif|%s|%d", comment.ID, now), now)
+
+        _, err = a.db.Exec(`
+            INSERT INTO notifications (id, type, title, body, target_id, from_pubkey, created_at, read_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(id) DO NOTHING;
+        `, id, notifType, title, comment.Body, comment.ID, comment.Pubkey, now)
+
+        if err == nil && a.ctx != nil {
+             runtime.EventsEmit(a.ctx, "notifications:new")
+        }
+    }
 }

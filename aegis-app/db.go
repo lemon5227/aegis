@@ -355,6 +355,28 @@ type IncomingMessage struct {
 	HideHistoryOnShadowBan bool                `json:"hide_history_on_shadowban"`
 }
 
+
+type Report struct {
+	ID             string `json:"id"`
+	TargetID       string `json:"targetId"`
+	TargetType     string `json:"targetType"` // 'post' or 'comment'
+	Reason         string `json:"reason"`
+	ReporterPubkey string `json:"reporterPubkey"`
+	Timestamp      int64  `json:"timestamp"`
+	Status         string `json:"status"` // 'pending', 'resolved', 'ignored'
+}
+
+type Notification struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"` // 'reply', 'mention', 'system'
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	TargetID  string `json:"targetId"` // ID of post or comment
+	FromPubkey string `json:"fromPubkey"`
+	CreatedAt int64  `json:"createdAt"`
+	ReadAt    int64  `json:"readAt"`
+}
+
 type KnownPeerExchange struct {
 	PeerID          string   `json:"peer_id"`
 	Addrs           []string `json:"addrs"`
@@ -1102,7 +1124,32 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			pubkey TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
-		`CREATE TABLE IF NOT EXISTS logical_clock (
+
+		`CREATE TABLE IF NOT EXISTS reports (
+			id TEXT PRIMARY KEY,
+			target_id TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			reporter_pubkey TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending'
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_timestamp ON reports(timestamp DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_id);`,
+
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			body TEXT NOT NULL DEFAULT '',
+			target_id TEXT NOT NULL,
+			from_pubkey TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			read_at INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);`,
+`CREATE TABLE IF NOT EXISTS logical_clock (
 			scope TEXT PRIMARY KEY,
 			value INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -4195,7 +4242,10 @@ func (a *App) ResetLocalTestData() error {
 		`DELETE FROM identity_state;`,
 		`DELETE FROM profiles;`,
 		`DELETE FROM profile_details;`,
-		`DELETE FROM logical_clock;`,
+
+		`DELETE FROM notifications;`,
+		`DELETE FROM reports;`,
+`DELETE FROM logical_clock;`,
 	}
 
 	for _, statement := range statements {

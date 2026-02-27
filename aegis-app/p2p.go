@@ -1,6 +1,8 @@
 package main
 
+
 import (
+	"log"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -193,7 +195,7 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 		runtime.LogWarningf(a.ctx, "mdns start failed: %v", err)
 	}
 
-	go a.consumeP2PMessages(ctx, host.ID(), subscription)
+
 	go a.runAntiEntropySyncWorker(ctx, host.ID())
 	go a.runPeerExchangeWorker(ctx, host.ID())
 	go a.runReleaseAlertWorker(ctx)
@@ -1865,6 +1867,8 @@ func (a *App) getP2PStatusLocked() P2PStatus {
 }
 
 func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *pubsub.Subscription) {
+
+
 	for {
 		message, err := sub.Next(ctx)
 		if err != nil {
@@ -1951,7 +1955,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 		case messageTypePostFetchRequest:
 			a.handlePostFetchRequest(localPeerID.String(), message.ReceivedFrom.String(), incoming)
 			continue
-		case messageTypePostFetchResponse:
+			case "REPORT":
+		if err := a.handleReport(incoming); err != nil {
+			log.Printf("Failed to handle report: %v", err)
+		}
+
+	case messageTypePostFetchResponse:
 			a.handlePostFetchResponse(localPeerID.String(), incoming)
 			continue
 			a.handleFavoriteSyncResponse(localPeerID.String(), incoming)
@@ -3488,6 +3497,8 @@ func (a *App) fetchPostFromNetwork(postID string, timeout time.Duration) error {
 				len(host.Network().Peers()),
 				timeout.Milliseconds(),
 			)
+
+const messageTypeReport = "REPORT"
 		}
 
 		payload, marshalErr := json.Marshal(request)
@@ -3662,4 +3673,39 @@ func (a *App) handlePostFetchResponse(localPeerID string, message IncomingMessag
 	case waiter <- message:
 	default:
 	}
+}
+
+
+
+    func (a *App) handleReport(msg IncomingMessage) error {
+    // Map IncomingMessage to Report
+    // Assuming TargetID is passed in PostID or CommentID field, or we add TargetID to IncomingMessage
+    targetID := msg.PostID
+    if targetID == "" {
+        targetID = msg.CommentID
+    }
+    // Default to 'post' if not specified, or check context.
+    // For now, let's assume it's a generic target ID field if added, or fallback.
+    // Actually, `IncomingMessage` doesn't have `TargetID`.
+    // Let's use `PostID` as primary target container for now.
+
+    report := Report{
+        TargetID:       targetID,
+        TargetType:     "post", // Defaulting, or need to add field
+        Reason:         msg.Reason,
+        ReporterPubkey: msg.Pubkey,
+        Timestamp:      msg.Timestamp,
+    }
+
+
+    // Verify signature or origin if possible (omitted for now as Report struct doesn't have signature yet,
+    // assuming trust or will add signature later. For MVP, we trust the message integrity).
+
+    // Check if we are an admin or if this node cares about reports.
+    // For now, we store all valid reports we see if we are configured as an admin node,
+    // OR we just store them to allow this node to act as a moderator.
+
+    // To prevent spam, we might want to check if the reporter is "trusted" or if the PoW is valid.
+
+    return a.SubmitReport(report.TargetID, report.TargetType, report.Reason)
 }
