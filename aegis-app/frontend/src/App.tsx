@@ -38,6 +38,9 @@ import {
   PublishDeletePost,
   PublishDeleteComment,
   IsDevMode,
+  GetFavoritePostIDs,
+  AddFavorite,
+  RemoveFavorite,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -125,6 +128,16 @@ function App() {
     }
   }, []);
 
+  const loadFavorites = useCallback(async () => {
+    if (!hasWailsRuntime()) return;
+    try {
+      const ids = await GetFavoritePostIDs();
+      setFavoritePostIds(new Set(ids));
+    } catch (e) {
+      console.error('Failed to load favorites:', e);
+    }
+  }, []);
+
   const loadIdentity = useCallback(async () => {
     if (!hasWailsRuntime()) return;
     try {
@@ -135,11 +148,12 @@ function App() {
         setProfile(p);
         setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
         await loadGovernanceData(id.publicKey);
+        await loadFavorites();
       }
     } catch (e) {
       console.log('No saved identity');
     }
-  }, [loadGovernanceData]);
+  }, [loadGovernanceData, loadFavorites]);
 
   const loadSubs = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -169,10 +183,11 @@ function App() {
       setProfile(p);
       setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
       await loadGovernanceData(id.publicKey);
+      await loadFavorites();
     }
     await loadSubs();
     await loadSubscribedSubs();
-  }, [loadGovernanceData, loadSubs, loadSubscribedSubs]);
+  }, [loadGovernanceData, loadSubs, loadSubscribedSubs, loadFavorites]);
 
   const loadRecommendedFeed = useCallback(async () => {
     if (!hasWailsRuntime()) return;
@@ -212,7 +227,7 @@ function App() {
     }
     try {
       const feed = await GetFeedIndexBySubSorted(subId, mode);
-      const mapped: Post[] = (feed as any[]).map((item) => ({
+      const mapped = (feed as any[]).map((item) => ({
         id: item.id,
         pubkey: item.pubkey,
         title: item.title,
@@ -410,6 +425,28 @@ function App() {
       await refreshPostScoreState(postId);
     } catch (e) {
       console.error('Failed to downvote:', e);
+    }
+  };
+
+  const handleToggleFavorite = async (postId: string) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      if (favoritePostIds.has(postId)) {
+        await RemoveFavorite(postId);
+        setFavoritePostIds((prev) => {
+          const next = new Set(prev);
+          next.delete(postId);
+          return next;
+        });
+        addToast({ title: 'Removed', message: 'Removed from favorites', type: 'info' });
+      } else {
+        await AddFavorite(postId);
+        setFavoritePostIds((prev) => new Set(prev).add(postId));
+        addToast({ title: 'Saved', message: 'Added to favorites', type: 'success' });
+      }
+    } catch (e) {
+      console.error('Failed to toggle favorite:', e);
+      addToast({ title: 'Error', message: 'Failed to update favorite', type: 'error' });
     }
   };
 
@@ -797,6 +834,17 @@ function App() {
   }, [identity, loadSubs, loadSubscribedSubs]);
 
   useEffect(() => {
+    if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('favorites:updated', (payload: { postId?: string } | undefined) => {
+      // Just reload favorited ID list
+      void loadFavorites();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [loadFavorites]);
+
+  useEffect(() => {
     if (!hasWailsRuntime() || !identity) return;
     const timer = window.setInterval(() => {
       void loadSubs();
@@ -896,12 +944,13 @@ function App() {
 
           {view === 'feed' && (
             <Feed
-              posts={posts}
+              posts={posts.map(p => ({ ...p, isFavorited: favoritePostIds.has(p.id) }))}
               sortMode={sortMode}
               profiles={profiles}
               onSortChange={setSortMode}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
+              onToggleFavorite={handleToggleFavorite}
             />
           )}
 
@@ -916,7 +965,7 @@ function App() {
 
           {view === 'post-detail' && selectedPost && (
             <PostDetail
-              post={selectedPost}
+              post={{ ...selectedPost, isFavorited: favoritePostIds.has(selectedPost.id) }}
               body={postBody}
               comments={postComments}
               profiles={profiles}
@@ -931,6 +980,7 @@ function App() {
               onDeleteComment={handleDeleteComment}
               onViewOperationTimeline={handleViewOperationTimeline}
               isDevMode={isDevMode}
+              onToggleFavorite={handleToggleFavorite}
             />
           )}
 
@@ -949,6 +999,7 @@ function App() {
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
+              onToggleFavorite={handleToggleFavorite}
             />
           )}
         </div>

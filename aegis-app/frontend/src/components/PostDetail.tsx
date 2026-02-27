@@ -1,29 +1,30 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Post, Profile, Comment } from '../types';
+import { useState, useRef, useEffect } from 'react';
+import { Post, Comment, Profile } from '../types';
 import { CommentTree } from './CommentTree';
-import { GetPostMediaByID } from '../../wailsjs/go/main/App';
+import { StoreCommentImageDataURL } from '../../wailsjs/go/main/App';
 
 interface PostDetailProps {
-  post: Post;
-  body?: string;
+  post: Post & { isFavorited?: boolean };
+  body: string;
   comments: Comment[];
   profiles: Record<string, Profile>;
   currentPubkey?: string;
   onBack: () => void;
   onUpvote: (postId: string) => void;
   onDownvote: (postId: string) => void;
-  onReply: (parentId: string, body: string, localImageDataURLs: string[], externalImageURLs: string[]) => Promise<void> | void;
+  onReply: (parentId: string, body: string, localImageDataURLs?: string[], externalImageURLs?: string[]) => Promise<void>;
   onCommentUpvote: (commentId: string) => void;
   onCommentDownvote: (commentId: string) => void;
-  onDeletePost: (postId: string) => Promise<void> | void;
-  onDeleteComment: (commentId: string) => Promise<void> | void;
-  onViewOperationTimeline?: (entityType: 'post' | 'comment', entityId: string) => void;
+  onDeletePost: (postId: string) => Promise<void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
+  onViewOperationTimeline: (entityType: 'post' | 'comment', entityId: string) => void;
   isDevMode?: boolean;
+  onToggleFavorite?: (postId: string) => void;
 }
 
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
-  const diff = now - timestamp * 1000;
+  const diff = now - timestamp;
 
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
@@ -38,6 +39,44 @@ function formatTimeAgo(timestamp: number): string {
 
 function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
+}
+
+function linkifyAndMarkdown(text: string): React.ReactNode {
+  if (!text) return null;
+  const parts = text.split(/(!\[.*?\]\(.*?\)|```[\s\S]*?```|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('![') && part.includes('](') && part.endsWith(')')) {
+      const altMatch = part.match(/^!\[(.*?)\]/);
+      const urlMatch = part.match(/\((.*?)\)$/);
+      if (altMatch && urlMatch) {
+        return (
+          <img
+            key={i}
+            src={urlMatch[1]}
+            alt={altMatch[1]}
+            className="max-w-full h-auto rounded-lg my-2 border border-warm-border dark:border-border-dark"
+            loading="lazy"
+          />
+        );
+      }
+    }
+    if (part.startsWith('```') && part.endsWith('```')) {
+      const code = part.slice(3, -3);
+      return (
+        <pre key={i} className="bg-warm-sidebar dark:bg-surface-lighter p-3 rounded-lg overflow-x-auto my-2 border border-warm-border dark:border-border-dark text-xs font-mono">
+          <code>{code}</code>
+        </pre>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code key={i} className="bg-warm-sidebar dark:bg-surface-lighter px-1.5 py-0.5 rounded text-xs font-mono border border-warm-border dark:border-border-dark">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
 }
 
 export function PostDetail({
@@ -56,361 +95,270 @@ export function PostDetail({
   onDeleteComment,
   onViewOperationTimeline,
   isDevMode,
+  onToggleFavorite,
 }: PostDetailProps) {
   const [replyContent, setReplyContent] = useState('');
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [replyBusy, setReplyBusy] = useState(false);
-  const [imageInsertBusy, setImageInsertBusy] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
-  const [deletePostArmed, setDeletePostArmed] = useState(false);
-  const [commentSort, setCommentSort] = useState<'best' | 'newest' | 'controversial'>('best');
-  const [postImageSrc, setPostImageSrc] = useState('');
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [pendingLocalImages, setPendingLocalImages] = useState<string[]>([]);
   const [pendingExternalImages, setPendingExternalImages] = useState<string[]>([]);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const [imageInsertBusy, setImageInsertBusy] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
-  const replyInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [deletePostArmed, setDeletePostArmed] = useState(false);
 
   const authorProfile = profiles[post.pubkey];
-  const authorName = authorProfile?.displayName || post.pubkey.slice(0, 8);
-  const authorAvatar = authorProfile?.avatarURL;
-  const canDeletePost = !!currentPubkey && currentPubkey === post.pubkey;
+  const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
+  const avatarUrl = authorProfile?.avatarURL;
+  const canDeletePost = currentPubkey && currentPubkey === post.pubkey;
 
-  const replyingToComment = useMemo(() => {
-    if (!replyToId) return null;
-    return comments.find((comment) => comment.id === replyToId) || null;
-  }, [comments, replyToId]);
-
-  const focusReplyInput = () => {
-    window.setTimeout(() => {
-      replyInputRef.current?.focus();
-    }, 0);
-  };
+  const replyingToComment = replyToId ? comments.find((c) => c.id === replyToId) : null;
 
   useEffect(() => {
-    let active = true;
-    const loadPostImage = async () => {
-      if (!post.imageCid) {
-        if (active) setPostImageSrc('');
-        return;
-      }
-      try {
-        const media = await GetPostMediaByID(post.id);
-        if (!active) return;
-        if (media?.dataBase64 && media?.mime) {
-          setPostImageSrc(`data:${media.mime};base64,${media.dataBase64}`);
-          return;
-        }
-        setPostImageSrc('');
-      } catch {
-        if (active) setPostImageSrc('');
-      }
-    };
-    void loadPostImage();
-    return () => {
-      active = false;
-    };
-  }, [post.id, post.imageCid]);
+    if (replyToId && replyInputRef.current) {
+      replyInputRef.current.focus();
+      // Scroll to input
+      replyInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [replyToId]);
 
   const handleSubmitReply = async () => {
-    const textPart = replyContent.trim();
-    if (!textPart && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) return;
-
+    if ((!replyContent.trim() && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) || replyBusy) return;
     setReplyBusy(true);
     setReplyMessage('');
     try {
-      await onReply(replyToId || '', textPart, pendingLocalImages, pendingExternalImages);
+      await onReply(
+        replyToId || '',
+        replyContent,
+        pendingLocalImages.length > 0 ? pendingLocalImages : undefined,
+        pendingExternalImages.length > 0 ? pendingExternalImages : undefined
+      );
       setReplyContent('');
+      setReplyToId(null);
       setPendingLocalImages([]);
       setPendingExternalImages([]);
-      setReplyToId(null);
-      setReplyMessage('Comment posted.');
-    } catch (error) {
-      console.error('Failed to post comment:', error);
-      setReplyMessage('Failed to post comment. Please retry.');
+      setReplyMessage('Reply posted!');
+      setTimeout(() => setReplyMessage(''), 3000);
+    } catch (e: any) {
+      console.error('Reply failed:', e);
+      setReplyMessage('Failed to post reply.');
     } finally {
       setReplyBusy(false);
     }
   };
 
-  const handleInsertCodeBlock = () => {
-    const addition = replyContent.trim() ? '\n\n```\n\n```' : '```\n\n```';
-    setReplyContent((prev) => `${prev}${addition}`);
-    focusReplyInput();
-  };
-
-  const addPendingLocalImage = (imageURL: string) => {
-    const normalized = imageURL.trim();
-    if (!normalized) return;
-    setPendingLocalImages((prev) => [...prev, normalized]);
-    focusReplyInput();
-  };
-
-  const addPendingExternalImage = (imageURL: string) => {
-    const normalized = imageURL.trim();
-    if (!normalized) return;
-    setPendingExternalImages((prev) => [...prev, normalized]);
-    focusReplyInput();
-  };
-
-  const readFileAsDataURL = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-      reader.onerror = () => reject(new Error('Failed to read image file'));
-      reader.readAsDataURL(file);
-    });
-  };
-
-  const loadImageFromDataURL = (dataURL: string): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('Failed to decode image'));
-      image.src = dataURL;
-    });
-  };
-
-  const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> => {
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error('Failed to convert image'));
-          return;
+  const handleSelectLocalImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setReplyMessage('Image too large (max 2MB)');
+      setTimeout(() => setReplyMessage(''), 3000);
+      return;
+    }
+    setImageInsertBusy(true);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const dataURL = ev.target?.result as string;
+      if (dataURL) {
+        try {
+          await StoreCommentImageDataURL(dataURL); // Pre-validate/upload logic if needed, or just keep as data URL for now to send with post
+          setPendingLocalImages((prev) => [...prev, dataURL]);
+          setReplyMessage('Image attached');
+          setTimeout(() => setReplyMessage(''), 2000);
+        } catch (err: any) {
+          setReplyMessage(`Failed to attach image: ${err.message}`);
         }
-        resolve(blob);
-      }, type, quality);
-    });
-  };
-
-  const compressCommentImage = async (file: File): Promise<string> => {
-    const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
-    const MAX_OUTPUT_BYTES = 180 * 1024;
-    const MAX_DIMENSION = 960;
-
-    if (file.size > MAX_SOURCE_BYTES) {
-      throw new Error('Selected image is too large (>10MB). Try a smaller image.');
-    }
-
-    const sourceDataURL = await readFileAsDataURL(file);
-    const image = await loadImageFromDataURL(sourceDataURL);
-
-    const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
-    const targetWidth = Math.max(1, Math.round(image.width * scale));
-    const targetHeight = Math.max(1, Math.round(image.height * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('Canvas unavailable');
-    }
-    context.drawImage(image, 0, 0, targetWidth, targetHeight);
-
-    const qualityCandidates = [0.9, 0.82, 0.74, 0.66, 0.58, 0.5, 0.42, 0.34, 0.26];
-    for (const quality of qualityCandidates) {
-      const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
-      if (blob.size <= MAX_OUTPUT_BYTES) {
-        return await readFileAsDataURL(new File([blob], 'comment.jpg', { type: 'image/jpeg' }));
       }
-    }
-
-    throw new Error('Image is still too large after compression. Try a smaller source image.');
+      setImageInsertBusy(false);
+      if (imageFileInputRef.current) imageFileInputRef.current.value = '';
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleInsertImageURL = () => {
-    const input = window.prompt('Paste image URL (https://...)');
-    if (!input) return;
-    try {
-      const parsed = new URL(input.trim());
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        setReplyMessage('Only http/https image URLs are supported.');
-        return;
-      }
-      addPendingExternalImage(parsed.toString());
-      setReplyMessage('Image URL attached to this comment.');
-    } catch {
-      setReplyMessage('Invalid image URL.');
-    }
-  };
-
-  const handleSelectLocalImage = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setReplyMessage('Please select an image file.');
-      event.target.value = '';
-      return;
-    }
-
-    try {
-      setImageInsertBusy(true);
-      setReplyMessage('Processing image...');
-      const dataURL = await compressCommentImage(file);
-      if (!dataURL) {
-        setReplyMessage('Failed to read image file.');
+    const url = prompt('Enter image URL:');
+    if (url) {
+      if (url.match(/^https?:\/\/.+/)) {
+        setPendingExternalImages((prev) => [...prev, url]);
       } else {
-        addPendingLocalImage(dataURL);
-        setReplyMessage('Image attached to this comment.');
+        alert('Invalid URL');
       }
-    } catch (error: any) {
-      setReplyMessage(error?.message || 'Failed to insert local image.');
-    } finally {
-      setImageInsertBusy(false);
-      event.target.value = '';
     }
   };
 
-  const renderRichText = (raw: string) => {
-    const text = raw || '';
-    const lines = text.split('\n');
-    return lines.map((line, index) => {
-      const imageMatch = line.trim().match(/^!\[[^\]]*\]\(([^)]+)\)$/);
-      if (imageMatch && imageMatch[1]) {
-        const src = imageMatch[1].trim();
-        return (
-          <img
-            key={`img-${index}`}
-            src={src}
-            alt="comment image"
-            className="max-h-80 w-auto rounded-lg border border-warm-border dark:border-border-dark cursor-zoom-in"
-            onClick={() => setPreviewImageSrc(src)}
-          />
-        );
-      }
-      return (
-        <p key={`txt-${index}`} className="whitespace-pre-wrap break-words">
-          {line}
-        </p>
-      );
-    });
+  const handleInsertCodeBlock = () => {
+    const start = replyInputRef.current?.selectionStart || 0;
+    const end = replyInputRef.current?.selectionEnd || 0;
+    const text = replyContent;
+    const before = text.substring(0, start);
+    const selected = text.substring(start, end);
+    const after = text.substring(end);
+    const insertion = selected ? `\`${selected}\`` : '```\ncode\n```';
+    setReplyContent(before + insertion + after);
+    setTimeout(() => {
+      replyInputRef.current?.focus();
+      const newCursorPos = before.length + insertion.length;
+      replyInputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
+  };
+
+  const focusReplyInput = () => {
+    if (replyInputRef.current) {
+      replyInputRef.current.focus();
+      replyInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-8">
-      <div className="max-w-4xl mx-auto pb-20">
-        <article className="bg-warm-surface dark:bg-surface-dark rounded-2xl shadow-soft border border-warm-border/60 dark:border-border-dark/60 overflow-hidden mb-8">
-          <div className="p-6 md:p-8 pb-4">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                {authorAvatar ? (
-                  <img
-                    className="w-12 h-12 rounded-full ring-2 ring-warm-accent/20"
-                    src={authorAvatar}
-                    alt={authorName}
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-warm-accent flex items-center justify-center text-white font-bold ring-2 ring-warm-accent/20">
-                    {getInitials(authorName)}
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-bold text-warm-text-primary dark:text-white">
-                      @{authorName}
-                    </h4>
-                  </div>
-                  <p className="text-xs text-warm-text-secondary dark:text-slate-400">
-                    Posted {formatTimeAgo(post.timestamp)}
-                  </p>
+    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-warm-bg dark:bg-background-dark">
+      <div className="max-w-4xl mx-auto">
+        <button
+          onClick={onBack}
+          className="mb-4 flex items-center text-sm font-medium text-warm-text-secondary hover:text-warm-text-primary transition-colors"
+        >
+          <span className="material-icons text-lg mr-1">arrow_back</span>
+          Back to Feed
+        </button>
+
+        <article className="bg-warm-card dark:bg-surface-dark rounded-xl p-6 shadow-soft border border-warm-border dark:border-border-dark mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              {avatarUrl ? (
+                <img
+                  className="w-10 h-10 rounded-full object-cover ring-2 ring-warm-bg dark:ring-border-dark"
+                  src={avatarUrl}
+                  alt={displayName}
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-warm-accent flex items-center justify-center text-white font-bold ring-2 ring-warm-bg dark:ring-border-dark">
+                  {getInitials(displayName)}
+                </div>
+              )}
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-warm-text-primary dark:text-white hover:underline cursor-pointer">
+                    {displayName}
+                  </span>
+                  <span className="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium border border-warm-border dark:border-slate-700">
+                    #{post.subId}
+                  </span>
+                </div>
+                <div className="text-xs text-warm-text-secondary dark:text-slate-400 flex items-center gap-1">
+                  <span>{formatTimeAgo(post.timestamp)}</span>
+                  {isDevMode && (
+                    <>
+                      <span>•</span>
+                      <button
+                        onClick={() => onViewOperationTimeline('post', post.id)}
+                        className="hover:text-warm-accent underline"
+                        title="View operation timeline"
+                      >
+                        {post.id.slice(0, 8)}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button className="p-2 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent hover:bg-warm-accent/10 rounded-full transition-colors">
-                  <span className="material-icons">bookmark_border</span>
-                </button>
-                {canDeletePost && (
-                  <button
-                    onClick={() => setDeletePostArmed(true)}
-                    className="p-2 rounded-full transition-colors text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent hover:bg-warm-accent/10"
-                    title="Delete post"
-                  >
-                    <span className="material-icons">delete</span>
-                  </button>
-                )}
-              </div>
             </div>
-
-            <h1 className="text-2xl md:text-3xl font-bold text-warm-text-primary dark:text-white mb-6 leading-tight">
-              {post.title}
-            </h1>
-
-            <div className="prose max-w-none text-warm-text-secondary dark:text-slate-300 leading-relaxed space-y-4">
-              {renderRichText(body || post.bodyPreview || 'No content')}
-            </div>
-            {postImageSrc && (
-              <div className="mt-5">
-                <img
-                  src={postImageSrc}
-                  alt="Post media"
-                  className="max-h-[520px] w-auto rounded-xl border border-warm-border dark:border-border-dark cursor-zoom-in"
-                  onClick={() => setPreviewImageSrc(postImageSrc)}
-                />
-              </div>
+            {canDeletePost && (
+              <button
+                onClick={() => setDeletePostArmed(true)}
+                className="text-warm-text-secondary hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20"
+                title="Delete Post"
+              >
+                <span className="material-icons text-xl">delete_outline</span>
+              </button>
             )}
           </div>
 
-          <div className="bg-warm-bg/40 dark:bg-background-dark/40 px-6 py-4 border-t border-warm-border/60 dark:border-border-dark/60 flex items-center justify-between">
-            <div className="flex items-center gap-1 bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-lg p-1">
+          <h1 className="text-2xl md:text-3xl font-bold text-warm-text-primary dark:text-white mb-4 leading-tight">
+            {post.title}
+          </h1>
+
+          <div className="prose dark:prose-invert max-w-none mb-6 text-warm-text-secondary dark:text-slate-300 leading-relaxed text-base break-words">
+            {post.imageCid && (
+              <div className="mb-4 rounded-xl overflow-hidden border border-warm-border dark:border-border-dark bg-black/5">
+                <img
+                  src={`http://127.0.0.1:36660/blob/${post.imageCid}`}
+                  alt="Post content"
+                  className="w-full h-auto max-h-[600px] object-contain mx-auto"
+                  loading="lazy"
+                  onClick={() => setPreviewImageSrc(`http://127.0.0.1:36660/blob/${post.imageCid}`)}
+                  style={{ cursor: 'zoom-in' }}
+                />
+              </div>
+            )}
+            {linkifyAndMarkdown(body)}
+          </div>
+
+          <div className="flex items-center justify-between border-t border-warm-border/50 dark:border-border-dark pt-4">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center bg-warm-sidebar dark:bg-surface-lighter rounded-lg border border-warm-border dark:border-border-dark overflow-hidden">
+                <button
+                  onClick={() => onUpvote(post.id)}
+                  className="px-3 py-1.5 hover:bg-warm-bg dark:hover:bg-border-dark text-warm-text-secondary hover:text-warm-accent transition-colors border-r border-warm-border/50 dark:border-border-dark"
+                >
+                  <span className="material-icons-round text-lg">arrow_upward</span>
+                </button>
+                <span className="px-3 text-sm font-bold text-warm-text-primary dark:text-white tabular-nums">
+                  {post.score || 0}
+                </span>
+                <button
+                  onClick={() => onDownvote(post.id)}
+                  className="px-3 py-1.5 hover:bg-warm-bg dark:hover:bg-border-dark text-warm-text-secondary hover:text-warm-accent transition-colors border-l border-warm-border/50 dark:border-border-dark"
+                >
+                  <span className="material-icons-round text-lg">arrow_downward</span>
+                </button>
+              </div>
+
               <button
-                onClick={() => onUpvote(post.id)}
-                className="p-1 px-2 rounded hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-accent transition-colors flex items-center gap-1"
+                onClick={() => focusReplyInput()}
+                className="flex items-center gap-2 text-sm font-medium text-warm-text-secondary hover:text-warm-text-primary px-3 py-1.5 rounded-lg hover:bg-warm-sidebar dark:hover:bg-surface-lighter transition-colors"
               >
-                <span className="material-icons text-lg">arrow_upward</span>
-                <span className="text-sm font-bold">{post.score || 0}</span>
+                <span className="material-icons-outlined text-lg">chat_bubble_outline</span>
+                {comments.length} Comments
               </button>
-              <div className="w-px h-4 bg-warm-border dark:bg-border-dark"></div>
+
+              <button className="flex items-center gap-2 text-sm font-medium text-warm-text-secondary hover:text-warm-text-primary px-3 py-1.5 rounded-lg hover:bg-warm-sidebar dark:hover:bg-surface-lighter transition-colors">
+                <span className="material-icons-outlined text-lg">share</span>
+                Share
+              </button>
+
               <button
-                onClick={() => onDownvote(post.id)}
-                className="p-1 px-2 rounded hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 hover:text-red-500 transition-colors"
+                onClick={() => {
+                  if (onToggleFavorite) onToggleFavorite(post.id);
+                }}
+                className={`flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors ${
+                  post.isFavorited
+                    ? 'text-warm-accent bg-warm-accent/10 hover:bg-warm-accent/20'
+                    : 'text-warm-text-secondary hover:text-warm-text-primary hover:bg-warm-sidebar dark:hover:bg-surface-lighter'
+                }`}
               >
-                <span className="material-icons text-lg">arrow_downward</span>
+                <span className="material-icons-outlined text-lg">
+                  {post.isFavorited ? 'bookmark' : 'bookmark_border'}
+                </span>
+                {post.isFavorited ? 'Saved' : 'Save'}
               </button>
             </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setReplyToId(null);
-                  setReplyMessage('');
-                  focusReplyInput();
-                }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-warm-accent/10 hover:bg-warm-accent/20 text-warm-accent transition-colors"
-              >
-                <span className="material-icons text-lg">reply</span>
-                <span className="text-sm font-medium">Reply</span>
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 transition-colors">
-                <span className="material-icons text-lg">share</span>
-                <span className="text-sm font-medium">Share</span>
-              </button>
-              {isDevMode && (
-                <button
-                  onClick={() => onViewOperationTimeline?.('post', post.id)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 transition-colors"
-                  title="View operation timeline"
-                >
-                  <span className="material-icons text-lg">timeline</span>
-                  <span className="text-sm font-medium">Timeline</span>
-                </button>
-              )}
+            <div className="text-xs text-warm-text-secondary dark:text-slate-400 font-mono">
+              ID: {post.id.slice(0, 8)}
             </div>
           </div>
         </article>
 
-        <div className="mt-8">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-bold text-warm-text-primary dark:text-white">
-              Discussion <span className="text-warm-text-secondary dark:text-slate-400 text-base font-normal">({comments.length} comments)</span>
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-warm-text-primary dark:text-white">
+              Comments <span className="text-warm-text-secondary dark:text-slate-400 text-sm font-normal">({comments.length})</span>
             </h3>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-warm-text-secondary dark:text-slate-400 font-medium">Sort by:</span>
-              <div className="relative inline-block">
+              <span className="text-xs font-medium text-warm-text-secondary dark:text-slate-400 uppercase tracking-wide">Sort by:</span>
+              <div className="relative">
                 <select
-                  value={commentSort}
-                  onChange={(e) => setCommentSort(e.target.value as any)}
-                  className="appearance-none bg-warm-bg hover:bg-warm-border/30 dark:bg-surface-dark dark:hover:bg-surface-lighter border border-warm-border dark:border-border-dark text-sm font-bold text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent cursor-pointer py-1.5 pl-3 pr-8 rounded-lg outline-none transition-colors"
+                  className="appearance-none bg-warm-card dark:bg-surface-dark border border-warm-border dark:border-border-dark text-sm font-bold text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent cursor-pointer py-1.5 pl-3 pr-8 rounded-lg outline-none transition-colors"
                 >
                   <option value="best">Best</option>
                   <option value="newest">Newest</option>
