@@ -6,6 +6,7 @@ interface PostCardProps {
   authorProfile?: Profile;
   onUpvote: (postId: string) => void;
   onClick: (post: Post) => void;
+  isRecommended?: boolean;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -27,7 +28,7 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function PostCard({ post, authorProfile, onUpvote, onClick }: PostCardProps) {
+export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended }: PostCardProps) {
   const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const avatarUrl = authorProfile?.avatarURL;
 
@@ -75,6 +76,12 @@ export function PostCard({ post, authorProfile, onUpvote, onClick }: PostCardPro
             <span className="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium ml-2 border border-warm-border dark:border-slate-700">
               #{post.subId}
             </span>
+            {isRecommended && (
+              <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-[10px] px-2 py-0.5 rounded-full font-medium border border-yellow-200 dark:border-yellow-800 flex items-center gap-1">
+                <span className="material-icons-round text-[10px]">auto_awesome</span>
+                Recommended
+              </span>
+            )}
           </div>
           
           <h2 className="text-lg font-bold text-warm-text-primary dark:text-white mb-2 group-hover:text-warm-accent transition-colors">
