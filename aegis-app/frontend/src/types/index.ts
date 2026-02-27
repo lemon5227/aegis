@@ -143,3 +143,16 @@ export interface Post extends PostIndex {
 
 export type SortMode = 'hot' | 'new';
 export type Theme = 'light' | 'dark';
+
+export interface FeedStreamItem {
+  post: ForumMessage;
+  reason: string;
+  isSubscribed: boolean;
+  recommendationScore: number;
+}
+
+export interface FeedStream {
+  items: FeedStreamItem[];
+  algorithm: string;
+  generatedAt: number;
+}

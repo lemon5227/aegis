@@ -2,7 +2,7 @@ import { Post, SortMode, Profile } from '../types';
 import { PostCard } from './PostCard';
 
 interface FeedProps {
-  posts: Post[];
+  posts: Array<Post & { reason?: string; isSubscribed?: boolean }>;
   sortMode: SortMode;
   profiles: Record<string, Profile>;
   onSortChange: (mode: SortMode) => void;
@@ -51,6 +51,7 @@ export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPost
             authorProfile={profiles[post.pubkey]}
             onUpvote={onUpvote}
             onClick={onPostClick}
+            isRecommended={!!(post.reason && post.reason.includes('recommended') && !post.isSubscribed)}
           />
         ))
       )}

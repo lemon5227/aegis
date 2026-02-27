@@ -51,6 +51,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { CreateSubModal } from './components/CreateSubModal';
 import { CreatePostModal } from './components/CreatePostModal';
 import { LoginModal } from './components/LoginModal';
+import { ToastContainer, useToasts } from './components/Toast';
 import { Sub, Profile, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState } from './types';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -72,7 +73,7 @@ function App() {
   const [currentSubId, setCurrentSubId] = useState<string>('general');
   const [view, setView] = useState<ViewMode>('feed');
   const [sortMode, setSortMode] = useState<SortMode>('hot');
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<Array<Post & { reason?: string; isSubscribed?: boolean }>>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [isDark, setIsDark] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -83,6 +84,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<{ subs: Sub[]; posts: any[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [unreadSubs, setUnreadSubs] = useState<Set<string>>(new Set());
 
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [postBody, setPostBody] = useState<string>('');
@@ -92,6 +94,8 @@ function App() {
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
   const [isDevMode, setIsDevMode] = useState(false);
+
+  const { toasts, addToast, removeToast } = useToasts();
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -174,7 +178,7 @@ function App() {
     if (!hasWailsRuntime()) return;
     try {
       const stream = await GetFeedStream(50);
-      const mapped: Post[] = stream.items.map((item: any) => ({
+      const mapped = stream.items.map((item: any) => ({
         id: item.post.id,
         pubkey: item.post.pubkey,
         title: item.post.title,
@@ -191,6 +195,8 @@ function App() {
         zone: (item.post.zone || 'public') as 'private' | 'public',
         subId: item.post.subId || 'general',
         visibility: item.post.visibility || 'normal',
+        reason: item.reason,
+        isSubscribed: item.isSubscribed,
       }));
       setPosts(mapped);
     } catch (e) {
@@ -225,6 +231,12 @@ function App() {
         visibility: item.visibility || 'normal',
       }));
       setPosts(mapped);
+      // Clear unread status when loading the sub
+      setUnreadSubs((prev) => {
+        const next = new Set(prev);
+        next.delete(subId);
+        return next;
+      });
     } catch (e) {
       console.error('Failed to load posts:', e);
     }
@@ -298,8 +310,18 @@ function App() {
       await PublishCreateSub(id, title, description);
       await loadSubs();
       setCurrentSubId(id);
+      addToast({
+        title: 'Sub Created',
+        message: `Successfully created sub ${id}`,
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to create sub:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to create sub',
+        type: 'error',
+      });
     }
   };
 
@@ -325,8 +347,18 @@ function App() {
         await PublishPostStructuredToSub(identity.publicKey, trimmedTitle, finalBody, targetSubId);
       }
       await loadPosts(currentSubId, sortMode);
+      addToast({
+        title: 'Post Created',
+        message: 'Your post has been published',
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to create post:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to create post',
+        type: 'error',
+      });
       throw e;
     }
   };
@@ -430,6 +462,11 @@ function App() {
           return next;
         });
         setSubscribedSubs((prev) => prev.filter((s) => s.id !== subId));
+        addToast({
+          title: 'Unsubscribed',
+          message: `You have unsubscribed from ${subId}`,
+          type: 'info',
+        });
       } else {
         await SubscribeSub(subId);
         const sub = subs.find((s) => s.id === subId);
@@ -437,13 +474,23 @@ function App() {
           setSubscribedSubs((prev) => [...prev, sub]);
           setSubscribedSubIds((prev) => new Set(prev).add(subId));
         }
+        addToast({
+          title: 'Subscribed',
+          message: `You are now subscribed to ${subId}`,
+          type: 'success',
+        });
       }
     } catch (e) {
       console.error('Failed to toggle subscription:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to update subscription',
+        type: 'error',
+      });
     }
   };
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = async (query: string, scope?: string) => {
     setSearchQuery(query);
     if (!query.trim()) {
       setSearchResults(null);
@@ -452,8 +499,8 @@ function App() {
     if (!hasWailsRuntime()) return;
     try {
       const [subResults, postResults] = await Promise.all([
-        SearchSubs(query, 10),
-        SearchPosts(query, '', 10),
+        scope ? Promise.resolve([]) : SearchSubs(query, 10),
+        SearchPosts(query, scope || '', 10),
       ]);
       setSearchResults({ subs: subResults, posts: postResults });
     } catch (e) {
@@ -501,8 +548,18 @@ function App() {
     try {
       await PublishCommentWithAttachments(identity.publicKey, selectedPost.id, parentId, body, localImageDataURLs, externalImageURLs);
       void refreshCommentsForSelectedPost(selectedPost.id);
+      addToast({
+        title: 'Reply Sent',
+        message: 'Your reply has been posted',
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to post comment:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to post reply',
+        type: 'error',
+      });
       throw e;
     }
   };
@@ -515,6 +572,11 @@ function App() {
     setPostComments([]);
     setView('feed');
     await loadPosts(currentSubId, sortMode);
+    addToast({
+      title: 'Post Deleted',
+      message: 'Post has been deleted',
+      type: 'info',
+    });
   };
 
   const handleDeleteComment = async (commentId: string) => {
@@ -522,6 +584,11 @@ function App() {
     await PublishDeleteComment(identity.publicKey, commentId);
     const comments = await GetCommentsByPost(selectedPost.id);
     setPostComments(comments);
+    addToast({
+      title: 'Comment Deleted',
+      message: 'Comment has been deleted',
+      type: 'info',
+    });
   };
 
   const handleCommentUpvote = async (commentId: string) => {
@@ -552,8 +619,18 @@ function App() {
       if (p.pubkey) {
         setProfiles((prev) => ({ ...prev, [p.pubkey]: p }));
       }
+      addToast({
+        title: 'Profile Saved',
+        message: 'Your profile has been updated locally',
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to save profile:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to save profile',
+        type: 'error',
+      });
       throw e;
     }
   };
@@ -562,8 +639,18 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishProfileUpdate(identity.publicKey, displayName, avatarURL);
+      addToast({
+        title: 'Profile Published',
+        message: 'Your profile update has been broadcasted',
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to publish profile:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to publish profile',
+        type: 'error',
+      });
       throw e;
     }
   };
@@ -573,8 +660,18 @@ function App() {
     try {
       await PublishShadowBan(targetPubkey, identity.publicKey, reason);
       await loadGovernanceData(identity.publicKey);
+      addToast({
+        title: 'User Banned',
+        message: 'Shadow ban has been applied',
+        type: 'warning',
+      });
     } catch (e) {
       console.error('Failed to ban user:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to ban user',
+        type: 'error',
+      });
     }
   };
 
@@ -583,8 +680,18 @@ function App() {
     try {
       await PublishUnban(targetPubkey, identity.publicKey, reason);
       await loadGovernanceData(identity.publicKey);
+      addToast({
+        title: 'User Unbanned',
+        message: 'Ban has been lifted',
+        type: 'success',
+      });
     } catch (e) {
       console.error('Failed to unban user:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to unban user',
+        type: 'error',
+      });
     }
   };
 
@@ -648,6 +755,36 @@ function App() {
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('sub:updated', (payload: any) => {
+      if (payload && payload.subId && subscribedSubIds.has(payload.subId)) {
+        // Mark as unread if not currently viewing it
+        if (payload.subId !== currentSubId) {
+          setUnreadSubs((prev) => new Set(prev).add(payload.subId));
+        }
+
+        // Don't show toast for own posts to avoid redundancy
+        if (payload.pubkey !== identity?.publicKey) {
+          addToast({
+            title: `New Post in ${payload.subId}`,
+            message: payload.title || 'New content available',
+            type: 'info',
+            duration: 6000,
+            onClick: () => {
+              if (currentSubId !== payload.subId) {
+                setCurrentSubId(payload.subId);
+              } else {
+                void loadPosts(payload.subId, sortMode);
+              }
+            }
+          });
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [identity, subscribedSubIds, currentSubId, sortMode, addToast, loadPosts]);
+
+  useEffect(() => {
+    if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('subs:updated', () => {
       void loadSubs();
       if (identity) {
@@ -682,7 +819,8 @@ function App() {
   }, [identity, view, currentSubId, sortMode, loadPosts]);
 
   useEffect(() => {
-    if (!hasWailsRuntime() || !identity) {
+    if (!hasWailsRuntime()) return;
+    if (!identity) {
       setOnlineCount(0);
       return;
     }
@@ -732,6 +870,7 @@ function App() {
           onSelectSub={handleSubSelect}
           onDiscoverClick={handleDiscoverClick}
           onCreateSub={() => setShowCreateSubModal(true)}
+          unreadSubs={unreadSubs}
         />
 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -861,6 +1000,8 @@ function App() {
         onClose={() => setShowCreatePostModal(false)}
         onCreate={handleCreatePost}
       />
+
+      <ToastContainer toasts={toasts} onClose={removeToast} />
     </div>
   );
 }
