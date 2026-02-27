@@ -53,6 +53,8 @@ type App struct {
 	contentFetchWaiters map[string]chan IncomingMessage
 	mediaFetchGroup     singleflight.Group
 	mediaFetchWaiters   map[string]chan IncomingMessage
+	postFetchGroup      singleflight.Group
+	postFetchWaiters    map[string]chan IncomingMessage
 
 	antiEntropyMu      sync.Mutex
 	antiEntropyStats   AntiEntropyStats
@@ -95,6 +97,7 @@ func NewApp() *App {
 		dbPath:              databasePath,
 		contentFetchWaiters: make(map[string]chan IncomingMessage),
 		mediaFetchWaiters:   make(map[string]chan IncomingMessage),
+		postFetchWaiters:    make(map[string]chan IncomingMessage),
 		fetchRateState:      make(map[string]fetchRateWindow),
 		peerBlacklist:       make(map[string]struct{}),
 		peerGreylist:        make(map[string]int64),

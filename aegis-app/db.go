@@ -1892,13 +1892,57 @@ func (a *App) GetPostIndexByID(postID string) (PostIndex, error) {
 		&item.SubID,
 		&item.Visibility,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PostIndex{}, errors.New("post not found")
+
+	if err == nil {
+		return item, nil
 	}
-	if err != nil {
+
+	if !errors.Is(err, sql.ErrNoRows) {
 		return PostIndex{}, err
 	}
 
+	// Try fetching from network
+	status := a.GetP2PStatus()
+	if !status.Started {
+		return PostIndex{}, errors.New("post not found")
+	}
+
+	fetchErr := a.fetchPostFromNetwork(postID, 5*time.Second)
+	if fetchErr != nil {
+		return PostIndex{}, fetchErr
+	}
+
+	// Retry local fetch after successful network fetch
+	err = a.db.QueryRow(`
+		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
+		FROM messages
+		WHERE id = ?
+		  AND (
+			(zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')))
+			OR (zone = 'private' AND pubkey = ?)
+		  )
+		LIMIT 1;
+	`, postID, viewerPubkey, viewerPubkey).Scan(
+		&item.ID,
+		&item.Pubkey,
+		&item.Title,
+		&item.BodyPreview,
+		&item.ContentCID,
+		&item.ImageCID,
+		&item.ThumbCID,
+		&item.ImageMIME,
+		&item.ImageSize,
+		&item.ImageWidth,
+		&item.ImageHeight,
+		&item.Score,
+		&item.Timestamp,
+		&item.Zone,
+		&item.SubID,
+		&item.Visibility,
+	)
+	if err != nil {
+		return PostIndex{}, err
+	}
 	return item, nil
 }
 
@@ -2799,31 +2843,54 @@ func (a *App) listPublicCommentDigestsByPostSince(postID string, sinceTimestamp 
 	return result, rows.Err()
 }
 
+func (a *App) getPublicPostDigest(postID string) (SyncPostDigest, error) {
+	if a.db == nil {
+		return SyncPostDigest{}, errors.New("database not initialized")
+	}
+
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return SyncPostDigest{}, errors.New("post id is required")
+	}
+
+	var digest SyncPostDigest
+	var visibility string
+	err := a.db.QueryRow(`
+		SELECT id, pubkey, current_op_id, visibility, deleted_at_lamport, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, lamport, sub_id
+		FROM messages
+		WHERE id = ? AND zone = 'public'
+		LIMIT 1;
+	`, postID).Scan(&digest.ID, &digest.Pubkey, &digest.OpID, &visibility, &digest.DeletedAtLamport, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID)
+
+	if err != nil {
+		return SyncPostDigest{}, err
+	}
+
+	digest.Deleted = strings.EqualFold(strings.TrimSpace(visibility), "deleted")
+	if digest.Deleted {
+		digest.OpType = postOpTypeDelete
+		digest.ContentCID = ""
+	} else {
+		digest.OpType = postOpTypeCreate
+	}
+
+	return digest, nil
+}
+
 func (a *App) getLatestFavoriteOpTimestamp(pubkey string) (int64, error) {
 	if a.db == nil {
 		return 0, errors.New("database not initialized")
 	}
 
-	pubkey = strings.TrimSpace(pubkey)
-	if pubkey == "" {
-		return 0, nil
-	}
-
 	var latest sql.NullInt64
-	if err := a.db.QueryRow(`
-		SELECT MAX(created_at)
-		FROM post_favorite_ops
-		WHERE pubkey = ?;
-	`, pubkey).Scan(&latest); err != nil {
+	if err := a.db.QueryRow("SELECT MAX(created_at) FROM post_favorite_ops WHERE pubkey = ?", pubkey).Scan(&latest); err != nil {
 		return 0, err
 	}
 	if !latest.Valid {
 		return 0, nil
 	}
-
 	return latest.Int64, nil
 }
-
 func (a *App) listFavoriteOpsSince(pubkey string, sinceTimestamp int64, limit int) ([]FavoriteOpRecord, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")

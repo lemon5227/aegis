@@ -41,6 +41,8 @@ const (
 	messageTypeFavoriteSyncResponse   = "FAVORITE_SYNC_RESPONSE"
 	messageTypePeerExchangeRequest    = "PEER_EXCHANGE_REQUEST"
 	messageTypePeerExchangeResponse   = "PEER_EXCHANGE_RESPONSE"
+	messageTypePostFetchRequest       = "POST_FETCH_REQUEST"
+	messageTypePostFetchResponse      = "POST_FETCH_RESPONSE"
 )
 
 var (
@@ -54,6 +56,9 @@ var (
 	errCommentSyncNoPeers    = errors.New("comment sync no peers")
 	errGovernanceSyncNoPeers = errors.New("governance sync no peers")
 	errFavoriteSyncNoPeers   = errors.New("favorite sync no peers")
+	errPostFetchNoPeers      = errors.New("post fetch no peers")
+	errPostFetchTimeout      = errors.New("post fetch timeout")
+	errPostFetchNotFound     = errors.New("post fetch not found")
 )
 
 type fetchRateWindow struct {
@@ -1943,6 +1948,12 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 			a.handleFavoriteSyncRequest(localPeerID.String(), incoming)
 			continue
 		case messageTypeFavoriteSyncResponse:
+		case messageTypePostFetchRequest:
+			a.handlePostFetchRequest(localPeerID.String(), message.ReceivedFrom.String(), incoming)
+			continue
+		case messageTypePostFetchResponse:
+			a.handlePostFetchResponse(localPeerID.String(), incoming)
+			continue
 			a.handleFavoriteSyncResponse(localPeerID.String(), incoming)
 			continue
 		}
@@ -3063,6 +3074,19 @@ func (a *App) handleFavoriteSyncResponse(localPeerID string, message IncomingMes
 		runtime.LogInfof(a.ctx, "favorite_sync.response applied request_id=%s received=%d applied=%d", strings.TrimSpace(message.RequestID), len(ops), applied)
 	}
 	if applied > 0 {
+		go func(records []FavoriteOpRecord) {
+			for _, op := range records {
+				if strings.TrimSpace(op.Op) != "ADD" {
+					continue
+				}
+				exists, _ := a.postExists(op.PostID)
+				if !exists {
+					_ = a.fetchPostFromNetwork(op.PostID, 6*time.Second)
+				}
+			}
+		}(ops)
+	}
+	if applied > 0 {
 		a.emitFavoritesUpdated("")
 	}
 }
@@ -3410,4 +3434,232 @@ func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body
 
 	a.publishPayloadAsync(topic, payload, "POST_UPDATE")
 	return nil
+}
+
+func (a *App) fetchPostFromNetwork(postID string, timeout time.Duration) error {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return errors.New("post id is required")
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	_, err, _ := a.postFetchGroup.Do("post:"+postID, func() (any, error) {
+		a.p2pMu.Lock()
+		topic := a.p2pTopic
+		ctx := a.p2pCtx
+		host := a.p2pHost
+		a.p2pMu.Unlock()
+
+		if topic == nil || ctx == nil || host == nil {
+			return nil, errors.New("p2p not started")
+		}
+		if len(host.Network().Peers()) == 0 {
+			return nil, errPostFetchNoPeers
+		}
+
+		requestID := buildMessageID(host.ID().String(), "post:"+postID, time.Now().UnixNano())
+		responseCh := make(chan IncomingMessage, 1)
+
+		a.p2pMu.Lock()
+		a.postFetchWaiters[requestID] = responseCh
+		a.p2pMu.Unlock()
+
+		defer func() {
+			a.p2pMu.Lock()
+			delete(a.postFetchWaiters, requestID)
+			a.p2pMu.Unlock()
+		}()
+
+		request := IncomingMessage{
+			Type:            messageTypePostFetchRequest,
+			RequestID:       requestID,
+			RequesterPeerID: host.ID().String(),
+			PostID:          postID,
+			Timestamp:       time.Now().Unix(),
+		}
+		if a.ctx != nil {
+			runtime.LogInfof(
+				a.ctx,
+				"post_fetch.request request_id=%s post_id=%s peer_count=%d timeout_ms=%d",
+				requestID,
+				postID,
+				len(host.Network().Peers()),
+				timeout.Milliseconds(),
+			)
+		}
+
+		payload, marshalErr := json.Marshal(request)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+
+		if publishErr := topic.Publish(ctx, payload); publishErr != nil {
+			return nil, publishErr
+		}
+
+		deadline := time.Now().Add(timeout)
+		notFoundCount := 0
+		peerCount := len(host.Network().Peers())
+		for {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				if notFoundCount > 0 {
+					return nil, errPostFetchNotFound
+				}
+				return nil, errPostFetchTimeout
+			}
+
+			select {
+			case response := <-responseCh:
+				if !response.Found {
+					notFoundCount += 1
+					if peerCount > 0 && notFoundCount >= peerCount {
+						return nil, errPostFetchNotFound
+					}
+					continue
+				}
+
+				if len(response.Summaries) == 0 {
+					return nil, errPostFetchNotFound
+				}
+
+				digest := response.Summaries[0]
+				_, err := a.upsertPublicPostIndexFromDigest(digest)
+				if err != nil {
+					return nil, err
+				}
+
+				// Automatically trigger body fetch if needed
+				if !digest.Deleted && digest.ContentCID != "" {
+					go func() {
+						_ = a.fetchContentBlobFromNetwork(digest.ContentCID, 4*time.Second)
+					}()
+				}
+
+				return nil, nil
+			case <-time.After(remaining):
+				if notFoundCount > 0 {
+					return nil, errPostFetchNotFound
+				}
+				return nil, errPostFetchTimeout
+			}
+		}
+	})
+
+	if a.ctx != nil {
+		if err != nil {
+			runtime.LogWarningf(a.ctx, "post_fetch.result post_id=%s success=false error=%v", postID, err)
+		} else {
+			runtime.LogInfof(a.ctx, "post_fetch.result post_id=%s success=true", postID)
+		}
+	}
+
+	return err
+}
+
+func (a *App) handlePostFetchRequest(localPeerID string, remotePeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(remotePeerID)
+	postID := strings.TrimSpace(message.PostID)
+	requestID := strings.TrimSpace(message.RequestID)
+	if requester == "" || postID == "" || requestID == "" {
+		return
+	}
+	if requester == localPeerID {
+		return
+	}
+	if !a.allowFetchRequest(requester, "post") {
+		return
+	}
+
+	digest, err := a.getPublicPostDigest(postID)
+	if err != nil {
+		a.publishPostFetchNotFound(localPeerID, requester, requestID, postID)
+		return
+	}
+
+	// Check if we should serve this post (e.g. shadow ban policy)
+	viewerPubkey := "" // In P2P context, we don't know the requester's pubkey identity easily here, so we apply general policy
+	allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
+	if allowErr != nil || !allowed {
+		if a.ctx != nil && allowErr == nil {
+			runtime.LogInfof(a.ctx, "post_fetch.policy_block request_id=%s post_id=%s requester=%s", requestID, postID, requester)
+		}
+		a.publishPostFetchNotFound(localPeerID, requester, requestID, postID)
+		return
+	}
+
+	response := IncomingMessage{
+		Type:            messageTypePostFetchResponse,
+		RequestID:       requestID,
+		RequesterPeerID: requester,
+		ResponderPeerID: localPeerID,
+		PostID:          postID,
+		Summaries:       []SyncPostDigest{digest},
+		Found:           true,
+		Timestamp:       time.Now().Unix(),
+	}
+
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+}
+
+func (a *App) publishPostFetchNotFound(localPeerID string, requester string, requestID string, postID string) {
+	a.p2pMu.Lock()
+	topic := a.p2pTopic
+	ctx := a.p2pCtx
+	a.p2pMu.Unlock()
+	if topic == nil || ctx == nil {
+		return
+	}
+
+	response := IncomingMessage{
+		Type:            messageTypePostFetchResponse,
+		RequestID:       requestID,
+		RequesterPeerID: requester,
+		ResponderPeerID: localPeerID,
+		PostID:          postID,
+		Found:           false,
+		Timestamp:       time.Now().Unix(),
+	}
+	payload, marshalErr := json.Marshal(response)
+	if marshalErr != nil {
+		return
+	}
+	_ = topic.Publish(ctx, payload)
+}
+
+func (a *App) handlePostFetchResponse(localPeerID string, message IncomingMessage) {
+	requester := strings.TrimSpace(message.RequesterPeerID)
+	if requester == "" || requester != localPeerID {
+		return
+	}
+	requestID := strings.TrimSpace(message.RequestID)
+	if requestID == "" {
+		return
+	}
+
+	a.p2pMu.Lock()
+	waiter, ok := a.postFetchWaiters[requestID]
+	a.p2pMu.Unlock()
+	if !ok {
+		return
+	}
+
+	select {
+	case waiter <- message:
+	default:
+	}
 }
