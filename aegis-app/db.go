@@ -7565,3 +7565,76 @@ func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body s
 
 	return a.insertMessage(updatedPost)
 }
+
+func (a *App) UpdateLocalComment(pubkey string, commentID string, body string) (Comment, error) {
+	if a.db == nil {
+		return Comment{}, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || commentID == "" {
+		return Comment{}, errors.New("pubkey and comment id are required")
+	}
+
+	body = strings.TrimSpace(body)
+	if body == "" {
+		// If body is empty, we might want to check attachments.
+		// For now, let's assume we update the text body.
+		// But insertComment validates body+attachments non-empty.
+		// If user clears body, attachments must persist.
+	}
+
+	var (
+		currentBody        string
+		currentAuthor      string
+		currentPostID      string
+		currentParentID    string
+		currentAttachments string
+	)
+
+	err := a.db.QueryRow(`
+		SELECT body, pubkey, post_id, parent_id, attachments_json
+		FROM comments
+		WHERE id = ?;
+	`, commentID).Scan(&currentBody, &currentAuthor, &currentPostID, &currentParentID, &currentAttachments)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Comment{}, errors.New("comment not found")
+	}
+	if err != nil {
+		return Comment{}, err
+	}
+
+	if currentAuthor != pubkey {
+		return Comment{}, errors.New("only author can update comment")
+	}
+
+	if body == "" {
+		// If body passed is empty, and user meant to keep existing?
+		// Or user meant to clear it?
+		// insertComment checks: if body == "" && len(attachments) == 0 -> invalid.
+		// If we use currentAttachments, it might be valid.
+		// Let's assume passed body is the NEW body.
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return Comment{}, err
+	}
+
+	attachments := decodeCommentAttachmentsJSON(currentAttachments)
+
+	updatedComment := Comment{
+		ID:          commentID,
+		PostID:      currentPostID,
+		ParentID:    currentParentID,
+		Pubkey:      pubkey,
+		Body:        body,
+		Attachments: attachments, // Preserve attachments
+		Timestamp:   now,
+		Lamport:     lamport,
+	}
+
+	return a.insertComment(updatedComment)
+}
