@@ -1149,6 +1149,51 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications(read_at);`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			title,
+			body,
+			content,
+			content_rowid UNINDEXED
+		);`,
+		`CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, title, body, content, content_rowid)
+			VALUES (new.rowid, new.title, new.body, new.content, new.rowid);
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+			DELETE FROM messages_fts WHERE content_rowid = old.rowid;
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+			DELETE FROM messages_fts WHERE rowid = old.rowid;
+			INSERT INTO messages_fts(rowid, title, body, content, content_rowid)
+			VALUES (new.rowid, new.title, new.body, new.content, new.rowid);
+		END;`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS comments_fts USING fts5(
+			body,
+			content_rowid UNINDEXED
+		);`,
+		`CREATE TRIGGER IF NOT EXISTS comments_ai AFTER INSERT ON comments BEGIN
+			INSERT INTO comments_fts(rowid, body, content_rowid)
+			VALUES (new.rowid, new.body, new.rowid);
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS comments_ad AFTER DELETE ON comments BEGIN
+			DELETE FROM comments_fts WHERE content_rowid = old.rowid;
+		END;`,
+		`CREATE TRIGGER IF NOT EXISTS comments_au AFTER UPDATE ON comments BEGIN
+			DELETE FROM comments_fts WHERE rowid = old.rowid;
+			INSERT INTO comments_fts(rowid, body, content_rowid)
+			VALUES (new.rowid, new.body, new.rowid);
+		END;`,
+
+        `CREATE TABLE IF NOT EXISTS hashtags (
+            tag TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            PRIMARY KEY (tag, target_id)
+        );`,
+        `CREATE INDEX IF NOT EXISTS idx_hashtags_tag_timestamp ON hashtags(tag, timestamp DESC);`,
 `CREATE TABLE IF NOT EXISTS logical_clock (
 			scope TEXT PRIMARY KEY,
 			value INTEGER NOT NULL,
@@ -1691,7 +1736,131 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	return messages, nil
 }
 
+func (a *App) GetFeedStream(limit int) (FeedStream, error) {
+	return a.GetFeedStreamWithStrategy(limit, "hot-v1")
+}
 
+func (a *App) GetFeedStreamWithStrategy(limit int, algorithm string) (FeedStream, error) {
+	if a.db == nil {
+		return FeedStream{}, errors.New("database not initialized")
+	}
+
+	now := time.Now().Unix()
+	limit = normalizeFeedStreamLimit(limit)
+	algorithm = normalizeFeedStreamAlgorithm(algorithm)
+
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	subscribedSubIDs, err := a.listSubscribedSubIDs()
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	subscribedQuota := int(math.Ceil(float64(limit) * 0.7))
+	if subscribedQuota < 1 {
+		subscribedQuota = 1
+	}
+	recommendedQuota := limit - subscribedQuota
+	if recommendedQuota < 0 {
+		recommendedQuota = 0
+	}
+
+	subscribedPosts := make([]ForumMessage, 0)
+	if len(subscribedSubIDs) > 0 {
+		subscribedPosts, err = a.queryPostsBySubSet(viewerPubkey, subscribedSubIDs, subscribedQuota*3)
+		if err != nil {
+			return FeedStream{}, err
+		}
+	}
+
+	recommendedPosts, err := a.queryRecommendedPosts(viewerPubkey, subscribedSubIDs, max(limit*4, 40))
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	items := make([]FeedStreamItem, 0, limit)
+	seen := make(map[string]struct{}, limit)
+
+	si := 0
+	ri := 0
+	for len(items) < limit && (si < len(subscribedPosts) || ri < len(recommendedPosts)) {
+		appendedSubscribed := 0
+		for appendedSubscribed < 2 && si < len(subscribedPosts) && len(items) < limit && countFeedItemsByReason(items, "subscribed") < subscribedQuota {
+			post := subscribedPosts[si]
+			si++
+			if _, exists := seen[post.ID]; exists {
+				continue
+			}
+			seen[post.ID] = struct{}{}
+			items = append(items, FeedStreamItem{
+				Post:                post,
+				Reason:              "subscribed",
+				IsSubscribed:        true,
+				RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+			})
+			appendedSubscribed++
+		}
+
+		for ri < len(recommendedPosts) && len(items) < limit && countFeedItemsByReason(items, "recommended_hot") < recommendedQuota {
+			post := recommendedPosts[ri]
+			ri++
+			if _, exists := seen[post.ID]; exists {
+				continue
+			}
+			seen[post.ID] = struct{}{}
+			items = append(items, FeedStreamItem{
+				Post:                post,
+				Reason:              "recommended_hot",
+				IsSubscribed:        false,
+				RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+			})
+			break
+		}
+
+		if si >= len(subscribedPosts) && ri < len(recommendedPosts) {
+			for ri < len(recommendedPosts) && len(items) < limit {
+				post := recommendedPosts[ri]
+				ri++
+				if _, exists := seen[post.ID]; exists {
+					continue
+				}
+				seen[post.ID] = struct{}{}
+				items = append(items, FeedStreamItem{
+					Post:                post,
+					Reason:              "recommended_hot",
+					IsSubscribed:        false,
+					RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+				})
+			}
+		}
+
+		if ri >= len(recommendedPosts) && si < len(subscribedPosts) {
+			for si < len(subscribedPosts) && len(items) < limit {
+				post := subscribedPosts[si]
+				si++
+				if _, exists := seen[post.ID]; exists {
+					continue
+				}
+				seen[post.ID] = struct{}{}
+				items = append(items, FeedStreamItem{
+					Post:                post,
+					Reason:              "subscribed",
+					IsSubscribed:        true,
+					RecommendationScore: scoreFeedRecommendation(post, now, algorithm),
+				})
+			}
+		}
+	}
+
+	return FeedStream{
+		Items:       items,
+		Algorithm:   algorithm,
+		GeneratedAt: now,
+	}, nil
+}
 
 func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostIndex, error) {
 	if a.db == nil {
@@ -3399,90 +3568,7 @@ func (a *App) SearchSubs(keyword string, limit int) ([]Sub, error) {
 	return result, rows.Err()
 }
 
-func (a *App) SearchPosts(keyword string, subID string, limit int) ([]ForumMessage, error) {
-	if a.db == nil {
-		return nil, errors.New("database not initialized")
-	}
 
-	keyword = strings.TrimSpace(keyword)
-	if keyword == "" {
-		return []ForumMessage{}, nil
-	}
-	limit = normalizeSearchLimit(limit)
-
-	viewerPubkey := ""
-	if identity, err := a.getLocalIdentity(); err == nil {
-		viewerPubkey = strings.TrimSpace(identity.PublicKey)
-	}
-
-	lowerKeyword := strings.ToLower(keyword)
-	pattern := "%" + lowerKeyword + "%"
-
-	subID = strings.TrimSpace(subID)
-	var rows *sql.Rows
-	var err error
-	if subID != "" {
-		rows, err = a.db.Query(`
-			SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id, m.is_protected, m.visibility
-			FROM messages m
-			LEFT JOIN content_blobs cb ON cb.content_cid = m.content_cid
-			WHERE m.zone = 'public'
-			  AND (m.visibility = 'normal' OR m.pubkey = ?)
-			  AND m.sub_id = ?
-			  AND (
-				LOWER(m.title) LIKE ?
-				OR LOWER(m.body) LIKE ?
-				OR LOWER(COALESCE(cb.body, '')) LIKE ?
-			  )
-			ORDER BY m.timestamp DESC
-			LIMIT ?;
-		`, viewerPubkey, normalizeSubID(subID), pattern, pattern, pattern, limit)
-	} else {
-		rows, err = a.db.Query(`
-			SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id, m.is_protected, m.visibility
-			FROM messages m
-			LEFT JOIN content_blobs cb ON cb.content_cid = m.content_cid
-			WHERE m.zone = 'public'
-			  AND (m.visibility = 'normal' OR m.pubkey = ?)
-			  AND (
-				LOWER(m.title) LIKE ?
-				OR LOWER(m.body) LIKE ?
-				OR LOWER(COALESCE(cb.body, '')) LIKE ?
-			  )
-			ORDER BY m.timestamp DESC
-			LIMIT ?;
-		`, viewerPubkey, pattern, pattern, pattern, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make([]ForumMessage, 0, limit)
-	for rows.Next() {
-		var message ForumMessage
-		if err := rows.Scan(
-			&message.ID,
-			&message.Pubkey,
-			&message.Title,
-			&message.Body,
-			&message.ContentCID,
-			&message.Content,
-			&message.Score,
-			&message.Timestamp,
-			&message.SizeBytes,
-			&message.Zone,
-			&message.SubID,
-			&message.IsProtected,
-			&message.Visibility,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, message)
-	}
-
-	return result, rows.Err()
-}
 
 func (a *App) UpdateProfile(displayName string, avatarURL string) (Profile, error) {
 	if a.db == nil {
@@ -4121,6 +4207,10 @@ func (a *App) ResetLocalTestData() error {
 
 		`DELETE FROM notifications;`,
 		`DELETE FROM reports;`,
+
+		`DELETE FROM messages_fts;`,
+		`DELETE FROM comments_fts;`,
+		`DELETE FROM hashtags;`,
 `DELETE FROM logical_clock;`,
 	}
 
@@ -7557,77 +7647,4 @@ func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body s
 	updatedPost.ImageHeight = imgH
 
 	return a.insertMessage(updatedPost)
-}
-
-func (a *App) UpdateLocalComment(pubkey string, commentID string, body string) (Comment, error) {
-	if a.db == nil {
-		return Comment{}, errors.New("database not initialized")
-	}
-
-	pubkey = strings.TrimSpace(pubkey)
-	commentID = strings.TrimSpace(commentID)
-	if pubkey == "" || commentID == "" {
-		return Comment{}, errors.New("pubkey and comment id are required")
-	}
-
-	body = strings.TrimSpace(body)
-	if body == "" {
-		// If body is empty, we might want to check attachments.
-		// For now, let's assume we update the text body.
-		// But insertComment validates body+attachments non-empty.
-		// If user clears body, attachments must persist.
-	}
-
-	var (
-		currentBody        string
-		currentAuthor      string
-		currentPostID      string
-		currentParentID    string
-		currentAttachments string
-	)
-
-	err := a.db.QueryRow(`
-		SELECT body, pubkey, post_id, parent_id, attachments_json
-		FROM comments
-		WHERE id = ?;
-	`, commentID).Scan(&currentBody, &currentAuthor, &currentPostID, &currentParentID, &currentAttachments)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Comment{}, errors.New("comment not found")
-	}
-	if err != nil {
-		return Comment{}, err
-	}
-
-	if currentAuthor != pubkey {
-		return Comment{}, errors.New("only author can update comment")
-	}
-
-	if body == "" {
-		// If body passed is empty, and user meant to keep existing?
-		// Or user meant to clear it?
-		// insertComment checks: if body == "" && len(attachments) == 0 -> invalid.
-		// If we use currentAttachments, it might be valid.
-		// Let's assume passed body is the NEW body.
-	}
-
-	now := time.Now().Unix()
-	lamport, err := a.nextLamport()
-	if err != nil {
-		return Comment{}, err
-	}
-
-	attachments := decodeCommentAttachmentsJSON(currentAttachments)
-
-	updatedComment := Comment{
-		ID:          commentID,
-		PostID:      currentPostID,
-		ParentID:    currentParentID,
-		Pubkey:      pubkey,
-		Body:        body,
-		Attachments: attachments, // Preserve attachments
-		Timestamp:   now,
-		Lamport:     lamport,
-	}
-
-	return a.insertComment(updatedComment)
 }
