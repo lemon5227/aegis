@@ -7,8 +7,6 @@ interface PostCardProps {
   onUpvote: (postId: string) => void;
   onClick: (post: Post) => void;
   isRecommended?: boolean;
-  isFavorited?: boolean;
-  onToggleFavorite?: (postId: string) => void;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -30,7 +28,7 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended, isFavorited, onToggleFavorite }: PostCardProps) {
+export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended }: PostCardProps) {
   const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const avatarUrl = authorProfile?.avatarURL;
 
