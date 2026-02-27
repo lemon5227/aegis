@@ -7,9 +7,10 @@ interface SidebarProps {
   onSelectSub: (subId: string) => void;
   onDiscoverClick: () => void;
   onCreateSub: () => void;
+  unreadSubs?: Set<string>;
 }
 
-export function Sidebar({ subs, subscribedSubs, currentSubId, onSelectSub, onDiscoverClick, onCreateSub }: SidebarProps) {
+export function Sidebar({ subs, subscribedSubs, currentSubId, onSelectSub, onDiscoverClick, onCreateSub, unreadSubs }: SidebarProps) {
   const isSelected = (subId: string) => currentSubId === subId;
 
   return (
@@ -43,14 +44,19 @@ export function Sidebar({ subs, subscribedSubs, currentSubId, onSelectSub, onDis
               <button
                 key={sub.id}
                 onClick={() => onSelectSub(sub.id)}
-                className={`group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors w-full text-left ${
+                className={`group flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-lg transition-colors w-full text-left ${
                   isSelected(sub.id)
                     ? 'bg-warm-accent/10 text-warm-accent border border-warm-accent/20'
                     : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-card dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-white'
                 }`}
               >
-                <span className="material-icons-outlined mr-3 text-lg text-green-600">check_circle</span>
-                {sub.id}
+                <div className="flex items-center truncate">
+                  <span className="material-icons-outlined mr-3 text-lg text-green-600">check_circle</span>
+                  <span className="truncate">{sub.id}</span>
+                </div>
+                {unreadSubs && unreadSubs.has(sub.id) && !isSelected(sub.id) && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 ml-2 shrink-0"></span>
+                )}
               </button>
             ))}
           </>

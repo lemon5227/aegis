@@ -13,7 +13,7 @@ interface HeaderProps {
   onThemeToggle: () => void;
   searchQuery: string;
   searchResults: { subs: Sub[]; posts: ForumMessage[] } | null;
-  onSearch: (query: string) => void;
+  onSearch: (query: string, scope?: string) => void;
   onSearchResultClick: (type: 'sub' | 'post', id: string) => void;
   onSearchClear: () => void;
 }
@@ -40,6 +40,7 @@ export function Header({
 }: HeaderProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [searchScope, setSearchScope] = useState<'global' | 'sub'>('global');
   const searchRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,6 +71,22 @@ export function Header({
     setShowUserMenu(false);
   };
 
+  const handleSearchInput = (value: string) => {
+    const scope = searchScope === 'sub' && currentSubId !== 'recommended' ? currentSubId : undefined;
+    onSearch(value, scope);
+  };
+
+  const toggleSearchScope = () => {
+    const newScope = searchScope === 'global' ? 'sub' : 'global';
+    setSearchScope(newScope);
+    if (searchQuery.trim()) {
+      const scope = newScope === 'sub' && currentSubId !== 'recommended' ? currentSubId : undefined;
+      onSearch(searchQuery, scope);
+    }
+  };
+
+  const isScopeAvailable = currentSubId !== 'recommended';
+
   return (
     <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-warm-bg dark:bg-background-dark sticky top-0 z-50 border-b border-warm-border dark:border-border-dark shrink-0">
       <div className="flex items-center gap-3 min-w-0">
@@ -89,30 +106,50 @@ export function Header({
       </div>
       
       <div className="flex items-center gap-2 lg:gap-3">
-        <div className="relative" ref={searchRef} style={{ width: '200px' }}>
-          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-warm-text-secondary dark:text-slate-400">
-            <span className="material-icons-outlined text-lg">search</span>
-          </span>
-          <input 
-            ref={inputRef}
-            className="w-full bg-warm-sidebar dark:bg-surface-dark text-sm rounded-lg py-2 pl-9 pr-8 text-warm-text-primary dark:text-white placeholder-warm-text-secondary dark:placeholder-slate-400 border-none focus:ring-1 focus:ring-warm-accent focus:bg-warm-card dark:focus:bg-surface-lighter transition-all"
-            placeholder="Search..." 
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearch(e.target.value)}
-            onFocus={() => searchQuery.trim() && searchResults && setShowDropdown(true)}
-          />
-          {searchQuery && (
-            <button 
-              onClick={onSearchClear}
-              className="absolute inset-y-0 right-0 flex items-center pr-2 text-warm-text-secondary hover:text-warm-text-primary"
+        <div className="relative flex items-center" ref={searchRef}>
+          {isScopeAvailable && (
+            <button
+              onClick={toggleSearchScope}
+              className={`flex items-center justify-center h-9 px-2 rounded-l-lg border-y border-l border-warm-border dark:border-border-dark text-xs font-medium transition-colors ${
+                searchScope === 'sub'
+                  ? 'bg-warm-accent text-white border-warm-accent'
+                  : 'bg-warm-sidebar dark:bg-surface-dark text-warm-text-secondary dark:text-slate-400 hover:text-warm-text-primary dark:hover:text-white'
+              }`}
+              title={searchScope === 'sub' ? `Searching in ${currentSubId}` : 'Searching everywhere'}
             >
-              <span className="material-icons text-sm">close</span>
+              {searchScope === 'sub' ? currentSubId.slice(0, 3).toUpperCase() : 'ALL'}
             </button>
           )}
           
+          <div className="relative w-48 sm:w-64">
+            <span className={`absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none ${
+              isScopeAvailable ? '' : ''
+            } text-warm-text-secondary dark:text-slate-400`}>
+              <span className="material-icons-outlined text-lg">search</span>
+            </span>
+            <input
+              ref={inputRef}
+              className={`w-full bg-warm-sidebar dark:bg-surface-dark text-sm py-2 pl-9 pr-8 text-warm-text-primary dark:text-white placeholder-warm-text-secondary dark:placeholder-slate-400 border border-warm-border dark:border-border-dark focus:ring-1 focus:ring-warm-accent focus:border-warm-accent transition-all ${
+                isScopeAvailable ? 'rounded-r-lg border-l-0' : 'rounded-lg'
+              }`}
+              placeholder={searchScope === 'sub' && isScopeAvailable ? `Search in ${currentSubId}...` : "Search..."}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              onFocus={() => searchQuery.trim() && searchResults && setShowDropdown(true)}
+            />
+            {searchQuery && (
+              <button
+                onClick={onSearchClear}
+                className="absolute inset-y-0 right-0 flex items-center pr-2 text-warm-text-secondary hover:text-warm-text-primary"
+              >
+                <span className="material-icons text-sm">close</span>
+              </button>
+            )}
+          </div>
+
           {showDropdown && searchResults && (
-            <div className="absolute top-full left-0 right-0 mt-2 bg-warm-card dark:bg-surface-dark rounded-lg shadow-lg border border-warm-border dark:border-border-dark overflow-hidden z-50 max-h-80 overflow-y-auto">
+            <div className="absolute top-full right-0 left-auto mt-2 w-72 bg-warm-card dark:bg-surface-dark rounded-lg shadow-lg border border-warm-border dark:border-border-dark overflow-hidden z-50 max-h-96 overflow-y-auto">
               {searchResults.subs.length > 0 && (
                 <div className="p-2 border-b border-warm-border dark:border-border-dark">
                   <div className="text-xs font-semibold text-warm-text-secondary dark:text-slate-400 uppercase mb-1 px-1">
@@ -128,7 +165,10 @@ export function Header({
                       className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-warm-sidebar dark:hover:bg-surface-lighter rounded-lg transition-colors text-left"
                     >
                       <span className="material-icons-outlined text-base text-warm-accent">forum</span>
-                      <span className="text-sm text-warm-text-primary dark:text-white">{sub.id}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-warm-text-primary dark:text-white truncate">{sub.id}</div>
+                        <div className="text-xs text-warm-text-secondary dark:text-slate-400 truncate">{sub.title}</div>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -139,25 +179,28 @@ export function Header({
                   <div className="text-xs font-semibold text-warm-text-secondary dark:text-slate-400 uppercase mb-1 px-1">
                     Posts
                   </div>
-                  {searchResults.posts.slice(0, 3).map((post) => (
+                  {searchResults.posts.map((post) => (
                     <button
                       key={post.id}
                       onClick={() => {
                         onSearchResultClick('post', post.id);
                         setShowDropdown(false);
                       }}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-warm-sidebar dark:hover:bg-surface-lighter rounded-lg transition-colors text-left"
+                      className="w-full flex items-start gap-2 px-2 py-2 hover:bg-warm-sidebar dark:hover:bg-surface-lighter rounded-lg transition-colors text-left"
                     >
-                      <span className="material-icons-outlined text-base text-warm-text-secondary">article</span>
-                      <span className="text-sm text-warm-text-primary dark:text-white truncate">{post.title}</span>
+                      <span className="material-icons-outlined text-base text-warm-text-secondary mt-0.5">article</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-warm-text-primary dark:text-white truncate">{post.title}</div>
+                        <div className="text-xs text-warm-text-secondary dark:text-slate-400 truncate">{post.body}</div>
+                      </div>
                     </button>
                   ))}
                 </div>
               )}
               
               {searchResults.subs.length === 0 && searchResults.posts.length === 0 && (
-                <div className="p-3 text-center text-warm-text-secondary dark:text-slate-400 text-xs">
-                  No results
+                <div className="p-4 text-center text-warm-text-secondary dark:text-slate-400 text-sm">
+                  No results found
                 </div>
               )}
             </div>
@@ -215,11 +258,11 @@ export function Header({
                       {profile?.displayName ? getInitials(profile.displayName) : '?'}
                     </div>
                   )}
-                  <div>
-                    <div className="font-medium text-warm-text-primary dark:text-white text-sm">
+                  <div className="min-w-0">
+                    <div className="font-medium text-warm-text-primary dark:text-white text-sm truncate">
                       {profile?.displayName || 'User'}
                     </div>
-                    <div className="text-xs text-warm-text-secondary dark:text-slate-400">
+                    <div className="text-xs text-warm-text-secondary dark:text-slate-400 truncate">
                       {profile?.pubkey?.slice(0, 8)}...
                     </div>
                   </div>
