@@ -1,40 +1,67 @@
 import { useState, useEffect } from 'react';
 import { Post, Profile } from '../types';
 import { PostCard } from './PostCard';
+import { GetFavorites, RemoveFavorite } from '../../wailsjs/go/main/App';
 
 interface FavoritesProps {
-  allPosts: Post[];
+  allPosts: Post[]; // Kept for interface compatibility but we fetch real favorites now
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
+  onToggleFavorite?: (postId: string) => void;
 }
 
-export function Favorites({ allPosts, profiles, onUpvote, onPostClick }: FavoritesProps) {
-  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
+export function Favorites({ profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
   const [favoritePosts, setFavoritePosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('favorites');
-    if (stored) {
-      try {
-        const ids = JSON.parse(stored);
-        setFavoriteIds(ids);
-        // 从 allPosts 中筛选收藏的帖子
-        const favorites = allPosts.filter(p => ids.includes(p.id));
-        setFavoritePosts(favorites);
-      } catch (e) {
-        console.error('Failed to parse favorites:', e);
-      }
-    }
-    setLoading(false);
-  }, [allPosts]);
+  const loadFavorites = async () => {
+    setLoading(true);
+    try {
+      // Fetch favorites from backend
+      // Using a reasonable limit for now, pagination can be added later
+      const page = await GetFavorites(50, "");
 
-  const handleRemoveFavorite = (postId: string) => {
-    const newIds = favoriteIds.filter(id => id !== postId);
-    setFavoriteIds(newIds);
-    localStorage.setItem('favorites', JSON.stringify(newIds));
-    setFavoritePosts(prev => prev.filter(p => p.id !== postId));
+      // Map PostIndex to Post
+      const mapped: Post[] = page.items.map((item: any) => ({
+        id: item.id,
+        pubkey: item.pubkey,
+        title: item.title,
+        bodyPreview: item.bodyPreview || '',
+        contentCid: item.contentCid || '',
+        imageCid: item.imageCid || '',
+        thumbCid: item.thumbCid || '',
+        imageMime: item.imageMime || '',
+        imageSize: item.imageSize || 0,
+        imageWidth: item.imageWidth || 0,
+        imageHeight: item.imageHeight || 0,
+        score: item.score || 0,
+        timestamp: item.timestamp || 0,
+        zone: (item.zone || 'public') as 'private' | 'public',
+        subId: item.subId || 'general',
+        visibility: item.visibility || 'normal',
+      }));
+
+      setFavoritePosts(mapped);
+    } catch (e) {
+      console.error('Failed to load favorites:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadFavorites();
+  }, []);
+
+  const handleRemoveFavorite = async (postId: string) => {
+    try {
+      await RemoveFavorite(postId);
+      setFavoritePosts(prev => prev.filter(p => p.id !== postId));
+      if (onToggleFavorite) onToggleFavorite(postId); // Notify parent to update global state
+    } catch (e) {
+      console.error('Failed to remove favorite:', e);
+    }
   };
 
   if (loading) {
@@ -43,7 +70,8 @@ export function Favorites({ allPosts, profiles, onUpvote, onPostClick }: Favorit
         <div className="max-w-2xl mx-auto">
           <h1 className="text-2xl font-bold text-warm-text-primary dark:text-white mb-6">Favorites</h1>
           <div className="text-center py-12 text-warm-text-secondary dark:text-slate-400">
-            Loading...
+            <span className="material-icons animate-spin text-2xl mb-2">refresh</span>
+            <p>Loading favorites...</p>
           </div>
         </div>
       </div>
@@ -70,14 +98,9 @@ export function Favorites({ allPosts, profiles, onUpvote, onPostClick }: Favorit
                   authorProfile={profiles[post.pubkey]}
                   onUpvote={onUpvote}
                   onClick={onPostClick}
+                  isFavorited={true}
+                  onToggleFavorite={() => handleRemoveFavorite(post.id)}
                 />
-                <button
-                  onClick={() => handleRemoveFavorite(post.id)}
-                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-warm-accent/80 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Remove from favorites"
-                >
-                  <span className="material-icons text-sm">star</span>
-                </button>
               </div>
             ))}
           </div>

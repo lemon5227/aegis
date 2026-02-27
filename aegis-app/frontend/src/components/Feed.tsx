@@ -2,15 +2,16 @@ import { Post, SortMode, Profile } from '../types';
 import { PostCard } from './PostCard';
 
 interface FeedProps {
-  posts: Array<Post & { reason?: string; isSubscribed?: boolean }>;
+  posts: Array<Post & { reason?: string; isSubscribed?: boolean; isFavorited?: boolean }>;
   sortMode: SortMode;
   profiles: Record<string, Profile>;
   onSortChange: (mode: SortMode) => void;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
+  onToggleFavorite?: (postId: string) => void;
 }
 
-export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPostClick }: FeedProps) {
+export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPostClick, onToggleFavorite }: FeedProps) {
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
       <div className="flex items-center justify-between mb-2">
@@ -52,6 +53,8 @@ export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPost
             onUpvote={onUpvote}
             onClick={onPostClick}
             isRecommended={!!(post.reason && post.reason.includes('recommended') && !post.isSubscribed)}
+            isFavorited={post.isFavorited}
+            onToggleFavorite={onToggleFavorite}
           />
         ))
       )}

@@ -7,6 +7,8 @@ interface PostCardProps {
   onUpvote: (postId: string) => void;
   onClick: (post: Post) => void;
   isRecommended?: boolean;
+  isFavorited?: boolean;
+  onToggleFavorite?: (postId: string) => void;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -28,7 +30,7 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended }: PostCardProps) {
+export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended, isFavorited, onToggleFavorite }: PostCardProps) {
   const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const avatarUrl = authorProfile?.avatarURL;
 
@@ -107,11 +109,20 @@ export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended
               Share
             </button>
             <button 
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onToggleFavorite) onToggleFavorite(post.id);
+              }}
+              className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded transition-colors ${
+                isFavorited
+                  ? 'text-warm-accent bg-warm-accent/10'
+                  : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter'
+              }`}
             >
-              <span className="material-icons-outlined text-base">bookmark_border</span>
-              Save
+              <span className="material-icons-outlined text-base">
+                {isFavorited ? 'bookmark' : 'bookmark_border'}
+              </span>
+              {isFavorited ? 'Saved' : 'Save'}
             </button>
           </div>
         </div>
