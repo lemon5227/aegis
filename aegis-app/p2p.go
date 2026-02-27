@@ -3445,267 +3445,60 @@ func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body
 	return nil
 }
 
-func (a *App) fetchPostFromNetwork(postID string, timeout time.Duration) error {
-	postID = strings.TrimSpace(postID)
-	if postID == "" {
-		return errors.New("post id is required")
+func (a *App) PublishCommentUpdate(pubkey string, commentID string, body string) error {
+	pubkey = strings.TrimSpace(pubkey)
+	commentID = strings.TrimSpace(commentID)
+	if pubkey == "" || commentID == "" {
+		return errors.New("pubkey and comment id are required")
 	}
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
+	body = strings.TrimSpace(body)
 
-	_, err, _ := a.postFetchGroup.Do("post:"+postID, func() (any, error) {
-		a.p2pMu.Lock()
-		topic := a.p2pTopic
-		ctx := a.p2pCtx
-		host := a.p2pHost
-		a.p2pMu.Unlock()
-
-		if topic == nil || ctx == nil || host == nil {
-			return nil, errors.New("p2p not started")
-		}
-		if len(host.Network().Peers()) == 0 {
-			return nil, errPostFetchNoPeers
-		}
-
-		requestID := buildMessageID(host.ID().String(), "post:"+postID, time.Now().UnixNano())
-		responseCh := make(chan IncomingMessage, 1)
-
-		a.p2pMu.Lock()
-		a.postFetchWaiters[requestID] = responseCh
-		a.p2pMu.Unlock()
-
-		defer func() {
-			a.p2pMu.Lock()
-			delete(a.postFetchWaiters, requestID)
-			a.p2pMu.Unlock()
-		}()
-
-		request := IncomingMessage{
-			Type:            messageTypePostFetchRequest,
-			RequestID:       requestID,
-			RequesterPeerID: host.ID().String(),
-			PostID:          postID,
-			Timestamp:       time.Now().Unix(),
-		}
-		if a.ctx != nil {
-			runtime.LogInfof(
-				a.ctx,
-				"post_fetch.request request_id=%s post_id=%s peer_count=%d timeout_ms=%d",
-				requestID,
-				postID,
-				len(host.Network().Peers()),
-				timeout.Milliseconds(),
-			)
-
-const messageTypeReport = "REPORT"
-		}
-
-		payload, marshalErr := json.Marshal(request)
-		if marshalErr != nil {
-			return nil, marshalErr
-		}
-
-		if publishErr := topic.Publish(ctx, payload); publishErr != nil {
-			return nil, publishErr
-		}
-
-		deadline := time.Now().Add(timeout)
-		notFoundCount := 0
-		peerCount := len(host.Network().Peers())
-		for {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				if notFoundCount > 0 {
-					return nil, errPostFetchNotFound
-				}
-				return nil, errPostFetchTimeout
-			}
-
-			select {
-			case response := <-responseCh:
-				if !response.Found {
-					notFoundCount += 1
-					if peerCount > 0 && notFoundCount >= peerCount {
-						return nil, errPostFetchNotFound
-					}
-					continue
-				}
-
-				if len(response.Summaries) == 0 {
-					return nil, errPostFetchNotFound
-				}
-
-				digest := response.Summaries[0]
-				_, err := a.upsertPublicPostIndexFromDigest(digest)
-				if err != nil {
-					return nil, err
-				}
-
-				// Automatically trigger body fetch if needed
-				if !digest.Deleted && digest.ContentCID != "" {
-					go func() {
-						_ = a.fetchContentBlobFromNetwork(digest.ContentCID, 4*time.Second)
-					}()
-				}
-
-				return nil, nil
-			case <-time.After(remaining):
-				if notFoundCount > 0 {
-					return nil, errPostFetchNotFound
-				}
-				return nil, errPostFetchTimeout
-			}
-		}
-	})
-
-	if a.ctx != nil {
-		if err != nil {
-			runtime.LogWarningf(a.ctx, "post_fetch.result post_id=%s success=false error=%v", postID, err)
-		} else {
-			runtime.LogInfof(a.ctx, "post_fetch.result post_id=%s success=true", postID)
-		}
-	}
-
-	return err
-}
-
-func (a *App) handlePostFetchRequest(localPeerID string, remotePeerID string, message IncomingMessage) {
-	requester := strings.TrimSpace(remotePeerID)
-	postID := strings.TrimSpace(message.PostID)
-	requestID := strings.TrimSpace(message.RequestID)
-	if requester == "" || postID == "" || requestID == "" {
-		return
-	}
-	if requester == localPeerID {
-		return
-	}
-	if !a.allowFetchRequest(requester, "post") {
-		return
-	}
-
-	digest, err := a.getPublicPostDigest(postID)
+	shadowBanned, err := a.isShadowBanned(pubkey)
 	if err != nil {
-		a.publishPostFetchNotFound(localPeerID, requester, requestID, postID)
-		return
+		return err
 	}
-
-	// Check if we should serve this post (e.g. shadow ban policy)
-	viewerPubkey := "" // In P2P context, we don't know the requester's pubkey identity easily here, so we apply general policy
-	allowed, allowErr := a.shouldAcceptPublicContent(digest.Pubkey, digest.Lamport, digest.Timestamp, digest.ID, viewerPubkey)
-	if allowErr != nil || !allowed {
-		if a.ctx != nil && allowErr == nil {
-			runtime.LogInfof(a.ctx, "post_fetch.policy_block request_id=%s post_id=%s requester=%s", requestID, postID, requester)
-		}
-		a.publishPostFetchNotFound(localPeerID, requester, requestID, postID)
-		return
-	}
-
-	response := IncomingMessage{
-		Type:            messageTypePostFetchResponse,
-		RequestID:       requestID,
-		RequesterPeerID: requester,
-		ResponderPeerID: localPeerID,
-		PostID:          postID,
-		Summaries:       []SyncPostDigest{digest},
-		Found:           true,
-		Timestamp:       time.Now().Unix(),
+	if shadowBanned {
+		_, err = a.UpdateLocalComment(pubkey, commentID, body)
+		return err
 	}
 
 	a.p2pMu.Lock()
 	topic := a.p2pTopic
-	ctx := a.p2pCtx
 	a.p2pMu.Unlock()
-	if topic == nil || ctx == nil {
-		return
+
+	profile, profileErr := a.GetProfile(pubkey)
+	if profileErr != nil {
+		profile = Profile{}
 	}
 
-	payload, marshalErr := json.Marshal(response)
-	if marshalErr != nil {
-		return
-	}
-	_ = topic.Publish(ctx, payload)
-}
-
-func (a *App) publishPostFetchNotFound(localPeerID string, requester string, requestID string, postID string) {
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-	if topic == nil || ctx == nil {
-		return
+	localComment, err := a.UpdateLocalComment(pubkey, commentID, body)
+	if err != nil {
+		return err
 	}
 
-	response := IncomingMessage{
-		Type:            messageTypePostFetchResponse,
-		RequestID:       requestID,
-		RequesterPeerID: requester,
-		ResponderPeerID: localPeerID,
-		PostID:          postID,
-		Found:           false,
-		Timestamp:       time.Now().Unix(),
-	}
-	payload, marshalErr := json.Marshal(response)
-	if marshalErr != nil {
-		return
-	}
-	_ = topic.Publish(ctx, payload)
-}
-
-func (a *App) handlePostFetchResponse(localPeerID string, message IncomingMessage) {
-	requester := strings.TrimSpace(message.RequesterPeerID)
-	if requester == "" || requester != localPeerID {
-		return
-	}
-	requestID := strings.TrimSpace(message.RequestID)
-	if requestID == "" {
-		return
+	msg := IncomingMessage{
+		Type:               "COMMENT",
+		OpType:             postOpTypeUpdate,
+		OpID:               localComment.OpID,
+		SchemaVersion:      lamportSchemaV2,
+		AuthScope:          authScopeUser,
+		ID:                 localComment.ID,
+		Pubkey:             pubkey,
+		PostID:             localComment.PostID,
+		ParentID:           localComment.ParentID,
+		DisplayName:        strings.TrimSpace(profile.DisplayName),
+		AvatarURL:          strings.TrimSpace(profile.AvatarURL),
+		Body:               localComment.Body,
+		CommentAttachments: localComment.Attachments,
+		Timestamp:          localComment.Timestamp,
+		Lamport:            localComment.Lamport,
 	}
 
-	a.p2pMu.Lock()
-	waiter, ok := a.postFetchWaiters[requestID]
-	a.p2pMu.Unlock()
-	if !ok {
-		return
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return err
 	}
 
-	select {
-	case waiter <- message:
-	default:
-	}
-}
-
-
-
-    func (a *App) handleReport(msg IncomingMessage) error {
-    // Map IncomingMessage to Report
-    // Assuming TargetID is passed in PostID or CommentID field, or we add TargetID to IncomingMessage
-    targetID := msg.PostID
-    if targetID == "" {
-        targetID = msg.CommentID
-    }
-    // Default to 'post' if not specified, or check context.
-    // For now, let's assume it's a generic target ID field if added, or fallback.
-    // Actually, `IncomingMessage` doesn't have `TargetID`.
-    // Let's use `PostID` as primary target container for now.
-
-    report := Report{
-        TargetID:       targetID,
-        TargetType:     "post", // Defaulting, or need to add field
-        Reason:         msg.Reason,
-        ReporterPubkey: msg.Pubkey,
-        Timestamp:      msg.Timestamp,
-    }
-
-
-    // Verify signature or origin if possible (omitted for now as Report struct doesn't have signature yet,
-    // assuming trust or will add signature later. For MVP, we trust the message integrity).
-
-    // Check if we are an admin or if this node cares about reports.
-    // For now, we store all valid reports we see if we are configured as an admin node,
-    // OR we just store them to allow this node to act as a moderator.
-
-    // To prevent spam, we might want to check if the reporter is "trusted" or if the PoW is valid.
-
-    return a.SubmitReport(report.TargetID, report.TargetType, report.Reason)
+	a.publishPayloadAsync(topic, payload, "COMMENT_UPDATE")
+	return nil
 }

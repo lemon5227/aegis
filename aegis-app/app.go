@@ -7,12 +7,15 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"math"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -67,6 +70,8 @@ type App struct {
 	releaseAlertActive map[string]ReleaseAlert
 	voteBroadcastMu    sync.Mutex
 	voteBroadcastSeq   map[string]int64
+
+	defaultRecStrategy string
 }
 
 type AntiEntropyStats struct {
@@ -95,6 +100,11 @@ func NewApp() *App {
 		databasePath = "aegis_node.db"
 	}
 
+	defaultStrategy := strings.TrimSpace(os.Getenv("AEGIS_DEFAULT_REC_STRATEGY"))
+	if defaultStrategy == "" {
+		defaultStrategy = "hot-v1"
+	}
+
 	return &App{
 		dbPath:              databasePath,
 		contentFetchWaiters: make(map[string]chan IncomingMessage),
@@ -106,6 +116,7 @@ func NewApp() *App {
 		releaseAlertState:   make(map[string]int64),
 		releaseAlertActive:  make(map[string]ReleaseAlert),
 		voteBroadcastSeq:    make(map[string]int64),
+		defaultRecStrategy:  defaultStrategy,
 	}
 }
 
@@ -348,236 +359,200 @@ func isTCPPortAvailable(port int) bool {
 	return true
 }
 
+func (a *App) GetFeedStream(limit int) (FeedStream, error) {
+	return a.GetFeedStreamWithStrategy(limit, a.defaultRecStrategy)
+}
 
-func (a *App) SubmitReport(targetID string, targetType string, reason string) error {
+func (a *App) GetFeedStreamWithStrategy(limit int, algorithm string) (FeedStream, error) {
 	if a.db == nil {
-		return errors.New("database not initialized")
+		return FeedStream{}, errors.New("database not initialized")
 	}
-
-	targetID = strings.TrimSpace(targetID)
-	targetType = strings.ToLower(strings.TrimSpace(targetType))
-	reason = strings.TrimSpace(reason)
-
-	if targetID == "" || reason == "" {
-		return errors.New("target id and reason are required")
-	}
-	if targetType != "post" && targetType != "comment" {
-		return errors.New("invalid target type")
-	}
-
-	identity, err := a.getLocalIdentity()
-	if err != nil {
-		return err
-	}
-	reporterPubkey := identity.PublicKey
 
 	now := time.Now().Unix()
-	reportID := buildMessageID(reporterPubkey, fmt.Sprintf("report|%s|%s|%d", targetID, reason, now), now)
+	limit = normalizeFeedStreamLimit(limit)
+	algorithm = normalizeFeedStreamAlgorithm(algorithm)
+	if algorithm == "" {
+		algorithm = a.defaultRecStrategy
+	}
 
-	_, err = a.db.Exec(`
-		INSERT INTO reports (id, target_id, target_type, reason, reporter_pubkey, timestamp, status)
-		VALUES (?, ?, ?, ?, ?, ?, 'pending')
-		ON CONFLICT(id) DO NOTHING;
-	`, reportID, targetID, targetType, reason, reporterPubkey, now)
+	strategy, err := GetStrategy(algorithm)
 	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (a *App) GetReports(limit int, status string) ([]Report, error) {
-	if a.db == nil {
-		return nil, errors.New("database not initialized")
-	}
-
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-
-    status = strings.TrimSpace(strings.ToLower(status))
-
-    query := `
-		SELECT id, target_id, target_type, reason, reporter_pubkey, timestamp, status
-		FROM reports
-    `
-    args := []interface{}{}
-
-    if status != "" && status != "all" {
-        query += " WHERE status = ?"
-        args = append(args, status)
-    }
-
-    query += " ORDER BY timestamp DESC LIMIT ?;"
-    args = append(args, limit)
-
-	rows, err := a.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make([]Report, 0)
-	for rows.Next() {
-		var item Report
-		if err := rows.Scan(
-			&item.ID,
-			&item.TargetID,
-			&item.TargetType,
-			&item.Reason,
-			&item.ReporterPubkey,
-			&item.Timestamp,
-			&item.Status,
-		); err != nil {
-			return nil, err
+		// Try fallback to hot-v1
+		strategy, err = GetStrategy("hot-v1")
+		if err != nil {
+			return FeedStream{}, err
 		}
-		result = append(result, item)
+		algorithm = "hot-v1"
 	}
 
-	return result, rows.Err()
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	subscribedSubIDs, err := a.listSubscribedSubIDs()
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	subscribedQuota := int(math.Ceil(float64(limit) * 0.7))
+	if subscribedQuota < 1 {
+		subscribedQuota = 1
+	}
+	recommendedQuota := limit - subscribedQuota
+	if recommendedQuota < 0 {
+		recommendedQuota = 0
+	}
+
+	subscribedPosts := make([]ForumMessage, 0)
+	if len(subscribedSubIDs) > 0 {
+		subscribedPosts, err = a.queryPostsBySubSet(viewerPubkey, subscribedSubIDs, subscribedQuota*3)
+		if err != nil {
+			return FeedStream{}, err
+		}
+	}
+
+	// Strategy ranks recommended posts
+	// We fetch candidates first. Strategy interface might need to fetch itself or we fetch generic candidates?
+	// For now, let's fetch a large pool of candidates and let the strategy sort them.
+	// Current queryRecommendedPosts uses hot score logic inside SQL for ordering.
+	// To be truly pluggable, we should fetch candidates (e.g. recent posts) and let strategy sort.
+	// However, fetching ALL posts is expensive.
+	// Compromise: Fetch recent posts (e.g. last 7 days) up to a larger limit, then let strategy rank.
+	// Or, if strategy is just "hot-v1", use optimized SQL.
+	// For N2 MVP, we can keep using SQL for candidates, but apply strategy logic for re-ranking/scoring.
+
+	// Fetching raw candidates (latest 200 from non-subscribed subs)
+	candidatePosts, err := a.queryRecommendedCandidates(viewerPubkey, subscribedSubIDs, max(limit*4, 100))
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	rankedRecommendations, err := strategy.Rank(candidatePosts, viewerPubkey, now)
+	if err != nil {
+		return FeedStream{}, err
+	}
+
+	items := make([]FeedStreamItem, 0, limit)
+	seen := make(map[string]struct{}, limit)
+
+	// Interleave subscribed and recommended
+	// We re-rank subscribed posts using the same strategy?
+	// Usually subscribed posts are chronological or also hot.
+	// For now, keep subscribed posts as they come from DB (hot/time sorted),
+	// and interleave with strategy-ranked recommendations.
+
+	// Wrap subscribed posts
+	subscribedItems := make([]FeedStreamItem, 0, len(subscribedPosts))
+	for _, p := range subscribedPosts {
+		// Use strategy to score them too for consistency if desired, or just use 0/timestamp
+		// Let's rely on DB order for subscribed for now (hot)
+		score := computeHotScore(p.Score, p.Timestamp, now)
+		subscribedItems = append(subscribedItems, FeedStreamItem{
+			Post:                p,
+			Reason:              "subscribed",
+			IsSubscribed:        true,
+			RecommendationScore: score,
+		})
+	}
+
+	si := 0
+	ri := 0
+
+	for len(items) < limit && (si < len(subscribedItems) || ri < len(rankedRecommendations)) {
+		// Add 2 subscribed
+		addedSub := 0
+		for addedSub < 2 && si < len(subscribedItems) && len(items) < limit && countFeedItemsByReason(items, "subscribed") < subscribedQuota {
+			item := subscribedItems[si]
+			si++
+			if _, exists := seen[item.Post.ID]; exists {
+				continue
+			}
+			seen[item.Post.ID] = struct{}{}
+			items = append(items, item)
+			addedSub++
+		}
+
+		// Add 1 recommended
+		for ri < len(rankedRecommendations) && len(items) < limit && countFeedItemsByReason(items, "recommended_" + algorithm) < recommendedQuota {
+			item := rankedRecommendations[ri]
+			ri++
+			if _, exists := seen[item.Post.ID]; exists {
+				continue
+			}
+			seen[item.Post.ID] = struct{}{}
+			item.Reason = "recommended_" + algorithm // Override reason to include algo name
+			items = append(items, item)
+			break
+		}
+
+		// Fill remaining
+		if si >= len(subscribedItems) && ri < len(rankedRecommendations) {
+			for ri < len(rankedRecommendations) && len(items) < limit {
+				item := rankedRecommendations[ri]
+				ri++
+				if _, exists := seen[item.Post.ID]; exists {
+					continue
+				}
+				seen[item.Post.ID] = struct{}{}
+				item.Reason = "recommended_" + algorithm
+				items = append(items, item)
+			}
+		}
+
+		if ri >= len(rankedRecommendations) && si < len(subscribedItems) {
+			for si < len(subscribedItems) && len(items) < limit {
+				item := subscribedItems[si]
+				si++
+				if _, exists := seen[item.Post.ID]; exists {
+					continue
+				}
+				seen[item.Post.ID] = struct{}{}
+				items = append(items, item)
+			}
+		}
+	}
+
+	return FeedStream{
+		Items:       items,
+		Algorithm:   algorithm,
+		GeneratedAt: now,
+	}, nil
 }
 
-func (a *App) UpdateReportStatus(reportID string, status string) error {
-    if a.db == nil {
-		return errors.New("database not initialized")
+func (a *App) queryRecommendedCandidates(viewerPubkey string, subscribedSubIDs []string, limit int) ([]ForumMessage, error) {
+	if limit <= 0 {
+		limit = 100
 	}
 
-    status = strings.ToLower(strings.TrimSpace(status))
-    if status != "pending" && status != "resolved" && status != "ignored" {
-        return errors.New("invalid status")
-    }
-
-    _, err := a.db.Exec("UPDATE reports SET status = ? WHERE id = ?", status, reportID)
-    return err
-}
-
-
-func (a *App) GetNotifications(limit int) ([]Notification, error) {
-	if a.db == nil {
-		return nil, errors.New("database not initialized")
+	if len(subscribedSubIDs) == 0 {
+		return a.queryForumMessages(`
+			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+			FROM messages
+			WHERE zone = 'public'
+			  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
+			ORDER BY timestamp DESC
+			LIMIT ?;
+		`, viewerPubkey, limit)
 	}
 
-	if limit <= 0 || limit > 100 {
-		limit = 20
+	placeholders := makeSQLPlaceholders(len(subscribedSubIDs))
+	args := make([]interface{}, 0, len(subscribedSubIDs)+2)
+	args = append(args, viewerPubkey)
+	for _, subID := range subscribedSubIDs {
+		args = append(args, normalizeSubID(subID))
 	}
+	args = append(args, limit)
 
-	rows, err := a.db.Query(`
-		SELECT id, type, title, body, target_id, from_pubkey, created_at, read_at
-		FROM notifications
-		ORDER BY created_at DESC
+	query := fmt.Sprintf(`
+		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
+		FROM messages
+		WHERE zone = 'public'
+		  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
+		  AND sub_id NOT IN (%s)
+		ORDER BY timestamp DESC
 		LIMIT ?;
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	`, placeholders)
 
-	result := make([]Notification, 0)
-	for rows.Next() {
-		var item Notification
-		if err := rows.Scan(
-			&item.ID,
-			&item.Type,
-			&item.Title,
-			&item.Body,
-			&item.TargetID,
-			&item.FromPubkey,
-			&item.CreatedAt,
-			&item.ReadAt,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, item)
-	}
-
-	return result, rows.Err()
-}
-
-func (a *App) MarkNotificationRead(id string) error {
-	if a.db == nil {
-		return errors.New("database not initialized")
-	}
-
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return errors.New("notification id is required")
-	}
-
-	now := time.Now().Unix()
-	_, err := a.db.Exec("UPDATE notifications SET read_at = ? WHERE id = ? AND read_at = 0", now, id)
-	return err
-}
-
-func (a *App) MarkAllNotificationsRead() error {
-	if a.db == nil {
-		return errors.New("database not initialized")
-	}
-
-	now := time.Now().Unix()
-	_, err := a.db.Exec("UPDATE notifications SET read_at = ? WHERE read_at = 0", now)
-	return err
-}
-
-func (a *App) checkAndCreateNotification(comment Comment) {
-    // This function checks if a comment should trigger a notification for the local user.
-    // It should be called after a comment is successfully inserted.
-
-    if a.db == nil {
-        return
-    }
-
-    identity, err := a.getLocalIdentity()
-    if err != nil {
-        return
-    }
-    localPubkey := identity.PublicKey
-
-    // Don't notify for own comments
-    if comment.Pubkey == localPubkey {
-        return
-    }
-
-    // Check if it's a reply to a post or comment authored by local user
-    var parentAuthor string
-    var notifType string
-    var title string
-
-    // First, check direct parent (comment)
-    if comment.ParentID != "" {
-        err := a.db.QueryRow("SELECT pubkey FROM comments WHERE id = ?", comment.ParentID).Scan(&parentAuthor)
-        if err == nil && parentAuthor == localPubkey {
-            notifType = "reply"
-            title = "New reply to your comment"
-        }
-    }
-
-    // If not a reply to a comment, or parent not found, check post author
-    if notifType == "" {
-        err := a.db.QueryRow("SELECT pubkey, title FROM messages WHERE id = ?", comment.PostID).Scan(&parentAuthor, &title)
-        if err == nil && parentAuthor == localPubkey {
-            notifType = "reply"
-            if title == "" {
-                title = "New reply to your post"
-            } else {
-                title = "Reply: " + title
-            }
-        }
-    }
-
-    // TODO: Mentions parsing (e.g. regex for @User)
-
-    if notifType != "" {
-        now := time.Now().Unix()
-        id := buildMessageID(localPubkey, fmt.Sprintf("notif|%s|%d", comment.ID, now), now)
-
-        _, err = a.db.Exec(`
-            INSERT INTO notifications (id, type, title, body, target_id, from_pubkey, created_at, read_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-            ON CONFLICT(id) DO NOTHING;
-        `, id, notifType, title, comment.Body, comment.ID, comment.Pubkey, now)
-
-        if err == nil && a.ctx != nil {
-             runtime.EventsEmit(a.ctx, "notifications:new")
-        }
-    }
+	return a.queryForumMessages(query, args...)
 }
