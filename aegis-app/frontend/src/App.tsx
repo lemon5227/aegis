@@ -76,7 +76,7 @@ function App() {
   const [currentSubId, setCurrentSubId] = useState<string>('general');
   const [view, setView] = useState<ViewMode>('feed');
   const [sortMode, setSortMode] = useState<SortMode>('hot');
-  const [posts, setPosts] = useState<Array<Post & { reason?: string; isSubscribed?: boolean }>>([]);
+  const [posts, setPosts] = useState<Array<Post & { reason?: string; isSubscribed?: boolean; isFavorited?: boolean }>>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [isDark, setIsDark] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -88,6 +88,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<{ subs: Sub[]; posts: any[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [unreadSubs, setUnreadSubs] = useState<Set<string>>(new Set());
+  const [favoritePostIds, setFavoritePostIds] = useState<Set<string>>(new Set());
 
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [postBody, setPostBody] = useState<string>('');
