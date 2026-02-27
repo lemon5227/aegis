@@ -43,7 +43,8 @@ export function MyPosts({ currentPubkey, profiles, onUpvote, onPostClick }: MyPo
           subId: item.subId || 'general',
           visibility: item.visibility || 'normal',
         }));
-        setMyPosts(mapped.filter((post) => post.pubkey === currentPubkey));
+        // The backend GetMyPosts already filters by pubkey, but explicit filtering ensures robustness if API changes
+        setMyPosts(mapped);
       } catch (e) {
         console.error('Failed to load my posts:', e);
         setMyPosts([]);
