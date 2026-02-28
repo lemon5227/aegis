@@ -66,6 +66,16 @@ type ConsistencyFocus = {
   nonce: number;
 };
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
+}
+
 function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -331,12 +341,14 @@ function App() {
         type: 'success',
       });
     } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to create sub');
       console.error('Failed to create sub:', e);
       addToast({
         title: 'Error',
-        message: 'Failed to create sub',
+        message: detail,
         type: 'error',
       });
+      throw new Error(detail);
     }
   };
 
@@ -368,13 +380,14 @@ function App() {
         type: 'success',
       });
     } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to create post');
       console.error('Failed to create post:', e);
       addToast({
         title: 'Error',
-        message: 'Failed to create post',
+        message: detail,
         type: 'error',
       });
-      throw e;
+      throw new Error(detail);
     }
   };
 
@@ -591,41 +604,56 @@ function App() {
         type: 'success',
       });
     } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to post reply');
       console.error('Failed to post comment:', e);
       addToast({
         title: 'Error',
-        message: 'Failed to post reply',
+        message: detail,
         type: 'error',
       });
-      throw e;
+      throw new Error(detail);
     }
   };
 
   const handleDeletePost = async (postId: string) => {
     if (!hasWailsRuntime() || !identity) return;
-    await PublishDeletePost(identity.publicKey, postId);
-    setSelectedPost(null);
-    setPostBody('');
-    setPostComments([]);
-    setView('feed');
-    await loadPosts(currentSubId, sortMode);
-    addToast({
-      title: 'Post Deleted',
-      message: 'Post has been deleted',
-      type: 'info',
-    });
+    try {
+      await PublishDeletePost(identity.publicKey, postId);
+      setSelectedPost(null);
+      setPostBody('');
+      setPostComments([]);
+      setView('feed');
+      await loadPosts(currentSubId, sortMode);
+      addToast({
+        title: 'Post Deleted',
+        message: 'Post has been deleted',
+        type: 'info',
+      });
+    } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to delete post');
+      console.error('Failed to delete post:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
   };
 
   const handleDeleteComment = async (commentId: string) => {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
-    await PublishDeleteComment(identity.publicKey, commentId);
-    const comments = await GetCommentsByPost(selectedPost.id);
-    setPostComments(comments);
-    addToast({
-      title: 'Comment Deleted',
-      message: 'Comment has been deleted',
-      type: 'info',
-    });
+    try {
+      await PublishDeleteComment(identity.publicKey, commentId);
+      const comments = await GetCommentsByPost(selectedPost.id);
+      setPostComments(comments);
+      addToast({
+        title: 'Comment Deleted',
+        message: 'Comment has been deleted',
+        type: 'info',
+      });
+    } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to delete comment');
+      console.error('Failed to delete comment:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
   };
 
   const handleCommentUpvote = async (commentId: string) => {

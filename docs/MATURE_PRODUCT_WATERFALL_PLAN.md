@@ -211,8 +211,8 @@ git push origin master
 
 ### Phase 1 执行拆分（顺序）
 
-1. P1-S1 基线代码完整性修复（先消除阻塞性前端重复模块问题）
-2. P1-S2 发布/评论反馈统一（loading/success/error）
+1. P1-S1 基线代码完整性修复（Done）
+2. P1-S2 发布/评论反馈统一（loading/success/error）（Done）
 3. P1-S3 列表-详情状态一致性收敛
 4. P1-S4 高频视图切换体验优化
 
@@ -223,3 +223,9 @@ git push origin master
   - 修复设置页资料发布参数调用不一致问题（`SettingsPanel`）。
   - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
   - 影响：恢复可持续迭代的前端基线，为后续 Phase 1 体验优化提供稳定起点。
+
+- 2026-02-28 / P1-S2 Done
+  - 统一发布与回复错误反馈：创建 Sub、创建 Post、回复评论、删除帖/评在失败时展示明确错误信息。
+  - 为创建 Sub 补充提交中状态（按钮禁用与 `Creating...`）、失败信息展示，避免重复点击和无反馈。
+  - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
+  - 影响：高频操作的异常可读性与交互确定性明显提升，减少“点击了但不知道发生什么”的体验问题。

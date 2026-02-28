@@ -141,9 +141,10 @@ export function PostDetail({
       setPendingExternalImages([]);
       setReplyMessage('Reply posted!');
       setTimeout(() => setReplyMessage(''), 3000);
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const detail = e instanceof Error && e.message ? e.message : 'Failed to post reply.';
       console.error('Reply failed:', e);
-      setReplyMessage('Failed to post reply.');
+      setReplyMessage(detail);
     } finally {
       setReplyBusy(false);
     }
