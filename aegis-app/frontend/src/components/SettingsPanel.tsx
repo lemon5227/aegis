@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import { AntiEntropyStats, EntityOpRecord, GovernanceAdmin, ModerationLog, ModerationState, Profile, TombstoneGCResult } from '../types';
-import { CheckForUpdates, GetAntiEntropyStats, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ListEntityOps, ResetLocalTestData, RunTombstoneGC, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P, UpdateProfileDetails, PublishProfileUpdate } from '../../wailsjs/go/main/App';
+import { CheckForUpdates, GetAntiEntropyStats, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ListEntityOps, ResetLocalTestData, RunTombstoneGC, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P, UpdateProfileDetails } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface SettingsPanelProps {
@@ -401,13 +401,10 @@ export function SettingsPanel({
     setAccountBusy(true);
     setAccountMessage('');
     try {
-      // Use the provided onSaveProfile if it matches signature, but better to call API directly if possible or update prop
-      // Since we want to use the new UpdateProfileDetails API, we should use it here directly if not exposed via prop
       await UpdateProfileDetails(displayName, avatarURL, bio);
-      await PublishProfileUpdate(displayName, avatarURL);
+      await onPublishProfile(displayName, avatarURL);
       showAccountToast('success', 'Profile updated successfully.');
 
-      // Also call parent handler if needed for state update
       onSaveProfile(displayName, avatarURL, bio);
     } catch (error) {
       console.error('Failed to save profile:', error);
