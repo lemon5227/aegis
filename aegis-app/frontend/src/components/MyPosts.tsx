@@ -3,6 +3,8 @@ import { Post, Profile } from '../types';
 import { PostCard } from './PostCard';
 import { GetMyPosts } from '../../wailsjs/go/main/App';
 
+const myPostsCache = new Map<string, Post[]>();
+
 interface MyPostsProps {
   currentPubkey: string;
   refreshToken?: number;
@@ -12,8 +14,9 @@ interface MyPostsProps {
 }
 
 export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, onPostClick }: MyPostsProps) {
-  const [myPosts, setMyPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = currentPubkey.trim();
+  const [myPosts, setMyPosts] = useState<Post[]>(() => myPostsCache.get(cacheKey) || []);
+  const [loading, setLoading] = useState(() => !myPostsCache.has(cacheKey));
 
   useEffect(() => {
     const hasWailsRuntime = !!(window as any)?.go?.main?.App;
@@ -22,8 +25,16 @@ export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, o
       return;
     }
 
-    const loadMyPosts = async () => {
+    let alive = true;
+    const cached = myPostsCache.get(cacheKey);
+    if (cached) {
+      setMyPosts(cached);
+      setLoading(false);
+    } else {
       setLoading(true);
+    }
+
+    const loadMyPosts = async () => {
       try {
         const page = await GetMyPosts(100, '');
         const mapped: Post[] = (page.items || []).map((item: any) => ({
@@ -44,18 +55,24 @@ export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, o
           subId: item.subId || 'general',
           visibility: item.visibility || 'normal',
         }));
-        // The backend GetMyPosts already filters by pubkey, but explicit filtering ensures robustness if API changes
+        if (!alive) return;
+        myPostsCache.set(cacheKey, mapped);
         setMyPosts(mapped);
       } catch (e) {
+        if (!alive) return;
         console.error('Failed to load my posts:', e);
-        setMyPosts([]);
+        setMyPosts(cached || []);
       } finally {
+        if (!alive) return;
         setLoading(false);
       }
     };
 
     void loadMyPosts();
-  }, [currentPubkey, refreshToken]);
+    return () => {
+      alive = false;
+    };
+  }, [cacheKey, refreshToken]);
 
   if (loading) {
     return (

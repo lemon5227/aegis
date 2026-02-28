@@ -1036,6 +1036,7 @@ function App() {
             <Favorites
               allPosts={posts}
               refreshToken={viewSyncToken}
+              currentPubkey={identity?.publicKey}
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}

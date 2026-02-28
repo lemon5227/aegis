@@ -200,7 +200,7 @@ git push origin master
 
 ## 4. 当前状态
 
-- Phase 1: In Progress
+- Phase 1: Done
 - Phase 2: Pending
 - Phase 3: Pending
 - Phase 4: Pending
@@ -214,7 +214,7 @@ git push origin master
 1. P1-S1 基线代码完整性修复（Done）
 2. P1-S2 发布/评论反馈统一（loading/success/error）（Done）
 3. P1-S3 列表-详情状态一致性收敛（Done）
-4. P1-S4 高频视图切换体验优化
+4. P1-S4 高频视图切换体验优化（Done）
 
 ### Phase 1 进展记录
 
@@ -235,3 +235,9 @@ git push origin master
   - `MyPosts` 与 `Favorites` 增加 `refreshToken` 驱动的重新拉取，避免详情操作后列表残留旧状态。
   - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
   - 影响：跨视图（Feed/My Posts/Favorites/Post Detail）状态更新更加一致，减少“详情变了但列表没变”的错位。
+
+- 2026-02-28 / P1-S4 Done
+  - 为 `MyPosts` 与 `Favorites` 增加按用户缓存与快速回显机制，减少高频视图切换时的重复加载闪烁。
+  - 保留 `refreshToken` 驱动增量刷新，确保缓存命中时仍能在数据变更后及时收敛。
+  - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
+  - 影响：Feed/My Posts/Favorites 之间切换更顺滑，交互感知延迟降低。

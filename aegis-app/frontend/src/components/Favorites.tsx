@@ -3,27 +3,33 @@ import { Post, Profile } from '../types';
 import { PostCard } from './PostCard';
 import { GetFavorites, RemoveFavorite } from '../../wailsjs/go/main/App';
 
+const favoritesCache = new Map<string, Post[]>();
+
 interface FavoritesProps {
   allPosts: Post[]; // Kept for interface compatibility but we fetch real favorites now
   refreshToken?: number;
+  currentPubkey?: string;
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
   onToggleFavorite?: (postId: string) => void;
 }
 
-export function Favorites({ refreshToken = 0, profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
-  const [favoritePosts, setFavoritePosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
+  const cacheKey = currentPubkey.trim() || 'anonymous';
+  const [favoritePosts, setFavoritePosts] = useState<Post[]>(() => favoritesCache.get(cacheKey) || []);
+  const [loading, setLoading] = useState(() => !favoritesCache.has(cacheKey));
 
   const loadFavorites = async () => {
-    setLoading(true);
+    const cached = favoritesCache.get(cacheKey);
+    if (cached) {
+      setFavoritePosts(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
-      // Fetch favorites from backend
-      // Using a reasonable limit for now, pagination can be added later
-      const page = await GetFavorites(50, "");
-
-      // Map PostIndex to Post
+      const page = await GetFavorites(50, '');
       const mapped: Post[] = page.items.map((item: any) => ({
         id: item.id,
         pubkey: item.pubkey,
@@ -43,22 +49,28 @@ export function Favorites({ refreshToken = 0, profiles, onUpvote, onPostClick, o
         visibility: item.visibility || 'normal',
       }));
 
+      favoritesCache.set(cacheKey, mapped);
       setFavoritePosts(mapped);
     } catch (e) {
       console.error('Failed to load favorites:', e);
+      setFavoritePosts(cached || []);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadFavorites();
-  }, [refreshToken]);
+    void loadFavorites();
+  }, [refreshToken, cacheKey]);
 
   const handleRemoveFavorite = async (postId: string) => {
     try {
       await RemoveFavorite(postId);
-      setFavoritePosts(prev => prev.filter(p => p.id !== postId));
+      setFavoritePosts((prev) => {
+        const next = prev.filter((p) => p.id !== postId);
+        favoritesCache.set(cacheKey, next);
+        return next;
+      });
       if (onToggleFavorite) onToggleFavorite(postId); // Notify parent to update global state
     } catch (e) {
       console.error('Failed to remove favorite:', e);
