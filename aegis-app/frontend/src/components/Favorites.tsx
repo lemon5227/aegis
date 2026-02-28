@@ -5,13 +5,14 @@ import { GetFavorites, RemoveFavorite } from '../../wailsjs/go/main/App';
 
 interface FavoritesProps {
   allPosts: Post[]; // Kept for interface compatibility but we fetch real favorites now
+  refreshToken?: number;
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
   onToggleFavorite?: (postId: string) => void;
 }
 
-export function Favorites({ profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
+export function Favorites({ refreshToken = 0, profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
   const [favoritePosts, setFavoritePosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -52,7 +53,7 @@ export function Favorites({ profiles, onUpvote, onPostClick, onToggleFavorite }:
 
   useEffect(() => {
     loadFavorites();
-  }, []);
+  }, [refreshToken]);
 
   const handleRemoveFavorite = async (postId: string) => {
     try {

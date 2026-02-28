@@ -213,7 +213,7 @@ git push origin master
 
 1. P1-S1 基线代码完整性修复（Done）
 2. P1-S2 发布/评论反馈统一（loading/success/error）（Done）
-3. P1-S3 列表-详情状态一致性收敛
+3. P1-S3 列表-详情状态一致性收敛（Done）
 4. P1-S4 高频视图切换体验优化
 
 ### Phase 1 进展记录
@@ -229,3 +229,9 @@ git push origin master
   - 为创建 Sub 补充提交中状态（按钮禁用与 `Creating...`）、失败信息展示，避免重复点击和无反馈。
   - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
   - 影响：高频操作的异常可读性与交互确定性明显提升，减少“点击了但不知道发生什么”的体验问题。
+
+- 2026-02-28 / P1-S3 Done
+  - 新增 `viewSyncToken` 作为列表与详情状态一致性同步令牌，覆盖创建、删除、投票、收藏和远端 `feed/favorites` 事件。
+  - `MyPosts` 与 `Favorites` 增加 `refreshToken` 驱动的重新拉取，避免详情操作后列表残留旧状态。
+  - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
+  - 影响：跨视图（Feed/My Posts/Favorites/Post Detail）状态更新更加一致，减少“详情变了但列表没变”的错位。

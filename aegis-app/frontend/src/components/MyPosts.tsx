@@ -5,12 +5,13 @@ import { GetMyPosts } from '../../wailsjs/go/main/App';
 
 interface MyPostsProps {
   currentPubkey: string;
+  refreshToken?: number;
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
 }
 
-export function MyPosts({ currentPubkey, profiles, onUpvote, onPostClick }: MyPostsProps) {
+export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, onPostClick }: MyPostsProps) {
   const [myPosts, setMyPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,7 +55,7 @@ export function MyPosts({ currentPubkey, profiles, onUpvote, onPostClick }: MyPo
     };
 
     void loadMyPosts();
-  }, [currentPubkey]);
+  }, [currentPubkey, refreshToken]);
 
   if (loading) {
     return (

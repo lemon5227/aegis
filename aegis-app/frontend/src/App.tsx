@@ -108,6 +108,7 @@ function App() {
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
   const [isDevMode, setIsDevMode] = useState(false);
+  const [viewSyncToken, setViewSyncToken] = useState(0);
 
   const { toasts, addToast, removeToast } = useToasts();
 
@@ -119,6 +120,10 @@ function App() {
   const hasWailsRuntime = () => {
     return !!(window as any)?.go?.main?.App;
   };
+
+  const bumpViewSyncToken = useCallback(() => {
+    setViewSyncToken((prev) => prev + 1);
+  }, []);
 
   const loadGovernanceData = useCallback(async (publicKey?: string) => {
     if (!hasWailsRuntime()) return;
@@ -374,6 +379,7 @@ function App() {
         await PublishPostStructuredToSub(identity.publicKey, trimmedTitle, finalBody, targetSubId);
       }
       await loadPosts(currentSubId, sortMode);
+      bumpViewSyncToken();
       addToast({
         title: 'Post Created',
         message: 'Your post has been published',
@@ -426,6 +432,7 @@ function App() {
     try {
       await PublishPostUpvote(identity.publicKey, postId);
       await refreshPostScoreState(postId);
+      bumpViewSyncToken();
     } catch (e) {
       console.error('Failed to upvote:', e);
     }
@@ -436,6 +443,7 @@ function App() {
     try {
       await PublishPostDownvote(identity.publicKey, postId);
       await refreshPostScoreState(postId);
+      bumpViewSyncToken();
     } catch (e) {
       console.error('Failed to downvote:', e);
     }
@@ -457,6 +465,7 @@ function App() {
         setFavoritePostIds((prev) => new Set(prev).add(postId));
         addToast({ title: 'Saved', message: 'Added to favorites', type: 'success' });
       }
+      bumpViewSyncToken();
     } catch (e) {
       console.error('Failed to toggle favorite:', e);
       addToast({ title: 'Error', message: 'Failed to update favorite', type: 'error' });
@@ -624,6 +633,7 @@ function App() {
       setPostComments([]);
       setView('feed');
       await loadPosts(currentSubId, sortMode);
+      bumpViewSyncToken();
       addToast({
         title: 'Post Deleted',
         message: 'Post has been deleted',
@@ -643,6 +653,7 @@ function App() {
       await PublishDeleteComment(identity.publicKey, commentId);
       const comments = await GetCommentsByPost(selectedPost.id);
       setPostComments(comments);
+      bumpViewSyncToken();
       addToast({
         title: 'Comment Deleted',
         message: 'Comment has been deleted',
@@ -863,11 +874,12 @@ function App() {
     if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('favorites:updated', (payload: { postId?: string } | undefined) => {
       void loadFavorites();
+      bumpViewSyncToken();
     });
     return () => {
       unsubscribe();
     };
-  }, [loadFavorites]);
+  }, [loadFavorites, bumpViewSyncToken]);
 
   useEffect(() => {
     if (!hasWailsRuntime() || !identity) return;
@@ -883,13 +895,14 @@ function App() {
   useEffect(() => {
     if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('feed:updated', () => {
+      bumpViewSyncToken();
       if (!identity || view !== 'feed') return;
       void loadPosts(currentSubId, sortMode);
     });
     return () => {
       unsubscribe();
     };
-  }, [identity, view, currentSubId, sortMode, loadPosts]);
+  }, [identity, view, currentSubId, sortMode, loadPosts, bumpViewSyncToken]);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -1012,6 +1025,7 @@ function App() {
           {view === 'my-posts' && identity && (
             <MyPosts
               currentPubkey={identity.publicKey}
+              refreshToken={viewSyncToken}
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
@@ -1021,6 +1035,7 @@ function App() {
           {view === 'favorites' && (
             <Favorites
               allPosts={posts}
+              refreshToken={viewSyncToken}
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
