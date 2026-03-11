@@ -8,6 +8,9 @@ const (
 	publicQuotaBytes  int64 = 80 * 1024 * 1024
 )
 
+// Default sub ID.
+const defaultSubID = "general"
+
 // Operation type, Lamport, entity type, vote state, and default value constants.
 const (
 	postOpTypeCreate    = "CREATE"
