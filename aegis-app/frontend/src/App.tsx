@@ -19,7 +19,9 @@ import {
   GenerateIdentity,
   ImportIdentityFromMnemonic,
   GetProfileDetails,
+  GetPostsByAuthor,
   GetProfile,
+  GetSubStats,
   GetTrustedAdmins,
   GetModerationState,
   GetPostIndexByID,
@@ -35,12 +37,17 @@ import {
   GetModerationLogs,
   TriggerCommentSyncNow,
   GetP2PStatus,
+  GetAntiEntropyStats,
+  TriggerAntiEntropySyncNow,
   PublishDeletePost,
   PublishDeleteComment,
+  PublishPostUpdate,
+  PublishCommentUpdate,
   IsDevMode,
   GetFavoritePostIDs,
   AddFavorite,
   RemoveFavorite,
+  GetUnreadNotificationCount,
 } from '../wailsjs/go/main/App';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -54,12 +61,22 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { CreateSubModal } from './components/CreateSubModal';
 import { CreatePostModal } from './components/CreatePostModal';
 import { LoginModal } from './components/LoginModal';
+import { ProfileView } from './components/ProfileView';
+import { SearchResultsView } from './components/SearchResultsView';
+import { DraftsView } from './components/DraftsView';
+import { HistoryView } from './components/HistoryView';
+import { NetworkBanner } from './components/NetworkBanner';
+import { PendingSyncView } from './components/PendingSyncView';
+import { NotificationsView } from './components/NotificationsView';
 import { ToastContainer, useToasts } from './components/Toast';
-import { Sub, Profile, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState } from './types';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import { Sub, Profile, ProfileDetails, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState, SubStats, CreatePostInput, AntiEntropyStats, P2PStatus, PendingSyncAction, PendingSyncActionKind } from './types';
+import { ClipboardSetText, EventsOn } from '../wailsjs/runtime/runtime';
+import { recordRecentlyViewed } from './lib/history';
+import { deriveNetworkHealth } from './lib/networkHealth';
+import { listPendingSyncActions, recordPendingSyncAction, reconcilePendingSyncActions, removePendingSyncAction } from './lib/pendingSync';
 
-type SortMode = 'hot' | 'new';
-type ViewMode = 'feed' | 'discover' | 'post-detail' | 'my-posts' | 'favorites';
+type SortMode = 'hot' | 'new' | 'top-day' | 'top-week' | 'top-month' | 'top-all';
+type ViewMode = 'feed' | 'discover' | 'search' | 'profile' | 'post-detail' | 'my-posts' | 'favorites' | 'drafts' | 'history' | 'pending-sync' | 'notifications';
 type ConsistencyFocus = {
   entityType: 'post' | 'comment';
   entityId: string;
@@ -76,6 +93,82 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function mapPostIndexToPost(item: any): Post {
+  return {
+    id: item.id,
+    pubkey: item.pubkey,
+    title: item.title,
+    bodyPreview: item.bodyPreview || '',
+    contentCid: item.contentCid || '',
+    imageCid: item.imageCid || '',
+    thumbCid: item.thumbCid || '',
+    imageMime: item.imageMime || '',
+    imageSize: item.imageSize || 0,
+    imageWidth: item.imageWidth || 0,
+    imageHeight: item.imageHeight || 0,
+    score: item.score || 0,
+    timestamp: item.timestamp || 0,
+    zone: (item.zone || 'public') as 'private' | 'public',
+    subId: item.subId || 'general',
+    visibility: item.visibility || 'normal',
+  };
+}
+
+function mapForumMessageToPost(item: any): Post {
+  return {
+    id: item.id,
+    pubkey: item.pubkey,
+    title: item.title,
+    bodyPreview: item.body || '',
+    contentCid: item.contentCid || '',
+    imageCid: item.imageCid || '',
+    thumbCid: item.thumbCid || '',
+    imageMime: item.imageMime || '',
+    imageSize: item.imageSize || 0,
+    imageWidth: item.imageWidth || 0,
+    imageHeight: item.imageHeight || 0,
+    score: item.score || 0,
+    timestamp: item.timestamp || 0,
+    zone: (item.zone || 'public') as 'private' | 'public',
+    subId: item.subId || 'general',
+    visibility: item.visibility || 'normal',
+  };
+}
+
+function buildAppHash(route: string): string {
+  return `#${route.startsWith('/') ? route : `/${route}`}`;
+}
+
+function buildShareLink(postId: string): string {
+  return buildAppHash(`/post/${encodeURIComponent(postId)}`);
+}
+
+function buildSubShareLink(subId: string): string {
+  return buildAppHash(`/r/${encodeURIComponent(subId)}`);
+}
+
+function shouldTrackPendingSync(status: P2PStatus | null): boolean {
+  if (!status?.started) {
+    return true;
+  }
+  return (status.connectedPeers?.length || 0) === 0;
+}
+
+function getWriteFeedback(status: P2PStatus | null, onlineMessage: string, deferredMessage: string) {
+  if (shouldTrackPendingSync(status)) {
+    return {
+      title: 'Saved',
+      message: deferredMessage,
+      type: 'warning' as const,
+    };
+  }
+  return {
+    title: 'Done',
+    message: onlineMessage,
+    type: 'success' as const,
+  };
+}
+
 function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -85,11 +178,13 @@ function App() {
   const [subscribedSubIds, setSubscribedSubIds] = useState<Set<string>>(new Set());
   const [currentSubId, setCurrentSubId] = useState<string>('general');
   const [view, setView] = useState<ViewMode>('feed');
+  const [postReturnView, setPostReturnView] = useState<Exclude<ViewMode, 'post-detail'>>('feed');
   const [sortMode, setSortMode] = useState<SortMode>('hot');
   const [posts, setPosts] = useState<Array<Post & { reason?: string; isSubscribed?: boolean; isFavorited?: boolean }>>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [isDark, setIsDark] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [identityChecked, setIdentityChecked] = useState(false);
   const [showCreateSubModal, setShowCreateSubModal] = useState(false);
   const [showCreatePostModal, setShowCreatePostModal] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -97,20 +192,33 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<{ subs: Sub[]; posts: any[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchScopeSubId, setSearchScopeSubId] = useState<string | null>(null);
   const [unreadSubs, setUnreadSubs] = useState<Set<string>>(new Set());
   const [favoritePostIds, setFavoritePostIds] = useState<Set<string>>(new Set());
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [draftSyncToken, setDraftSyncToken] = useState(0);
+  const [historySyncToken, setHistorySyncToken] = useState(0);
 
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [postBody, setPostBody] = useState<string>('');
   const [postComments, setPostComments] = useState<Comment[]>([]);
+  const [hasRemotePostUpdate, setHasRemotePostUpdate] = useState(false);
+  const [selectedProfile, setSelectedProfile] = useState<ProfileDetails | null>(null);
+  const [selectedProfilePosts, setSelectedProfilePosts] = useState<Post[]>([]);
+  const [currentSubStats, setCurrentSubStats] = useState<SubStats | null>(null);
   const [governanceAdmins, setGovernanceAdmins] = useState<GovernanceAdmin[]>([]);
   const [moderationStates, setModerationStates] = useState<ModerationState[]>([]);
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
+  const [p2pStatus, setP2PStatus] = useState<P2PStatus | null>(null);
+  const [antiEntropyStats, setAntiEntropyStats] = useState<AntiEntropyStats | null>(null);
+  const [pendingSyncActions, setPendingSyncActions] = useState<PendingSyncAction[]>([]);
+  const [networkBusy, setNetworkBusy] = useState(false);
   const [isDevMode, setIsDevMode] = useState(false);
   const [viewSyncToken, setViewSyncToken] = useState(0);
 
   const { toasts, addToast, removeToast } = useToasts();
+  const networkHealth = deriveNetworkHealth(p2pStatus, antiEntropyStats);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -123,6 +231,14 @@ function App() {
 
   const bumpViewSyncToken = useCallback(() => {
     setViewSyncToken((prev) => prev + 1);
+  }, []);
+
+  const bumpDraftSyncToken = useCallback(() => {
+    setDraftSyncToken((prev) => prev + 1);
+  }, []);
+
+  const bumpHistorySyncToken = useCallback(() => {
+    setHistorySyncToken((prev) => prev + 1);
   }, []);
 
   const loadGovernanceData = useCallback(async (publicKey?: string) => {
@@ -154,20 +270,54 @@ function App() {
     }
   }, []);
 
-  const loadIdentity = useCallback(async () => {
+  const loadNetworkHealth = useCallback(async () => {
     if (!hasWailsRuntime()) return;
     try {
-      const id = await LoadSavedIdentity();
-      setIdentity(id);
-      if (id.publicKey) {
-        const p = await GetProfileDetails(id.publicKey);
-        setProfile(p);
-        setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
-        await loadGovernanceData(id.publicKey);
-        await loadFavorites();
-      }
+      const [status, stats] = await Promise.all([
+        GetP2PStatus(),
+        GetAntiEntropyStats(),
+      ]);
+      setP2PStatus(status);
+      setAntiEntropyStats(stats);
+      setPendingSyncActions(reconcilePendingSyncActions(deriveNetworkHealth(status, stats)));
+      const peers = Array.isArray(status?.connectedPeers) ? status.connectedPeers.length : 0;
+      setOnlineCount(status?.started ? peers + 1 : 0);
+    } catch (e) {
+      console.error('Failed to load network health:', e);
+      setP2PStatus(null);
+      setAntiEntropyStats(null);
+      setPendingSyncActions(listPendingSyncActions());
+      setOnlineCount(0);
+    }
+  }, []);
+
+  const loadIdentity = useCallback(async () => {
+    if (!hasWailsRuntime()) return;
+    let id: Identity | null = null;
+    try {
+      id = await LoadSavedIdentity();
     } catch (e) {
       console.log('No saved identity');
+      setIdentityChecked(true);
+      return;
+    }
+    if (!id) {
+      setIdentityChecked(true);
+      return;
+    }
+    setIdentity(id);
+    setIdentityChecked(true);
+    const pubKey = id.publicKey;
+    if (pubKey) {
+      try {
+        const p = await GetProfileDetails(pubKey);
+        setProfile(p);
+        setProfiles((prev) => ({ ...prev, [pubKey]: p }));
+      } catch (e) {
+        console.error('Failed to load profile details:', e);
+      }
+      await loadGovernanceData(pubKey);
+      await loadFavorites();
     }
   }, [loadGovernanceData, loadFavorites]);
 
@@ -192,13 +342,58 @@ function App() {
     }
   }, []);
 
+  const loadSubStats = useCallback(async (subId: string) => {
+    if (!hasWailsRuntime()) return;
+    if (!subId || subId === 'recommended') {
+      setCurrentSubStats(null);
+      return;
+    }
+    try {
+      const stats = await GetSubStats(subId);
+      setCurrentSubStats(stats);
+    } catch (e) {
+      console.error('Failed to load sub stats:', e);
+      setCurrentSubStats(null);
+    }
+  }, []);
+
+  const openProfile = useCallback(async (pubkey: string) => {
+    if (!hasWailsRuntime()) return;
+    const normalized = pubkey.trim();
+    if (!normalized) return;
+
+    try {
+      const [details, authoredPosts] = await Promise.all([
+        GetProfileDetails(normalized),
+        GetPostsByAuthor(normalized, 40),
+      ]);
+      const mappedPosts = (authoredPosts || []).map((item: any) => mapPostIndexToPost(item));
+      setSelectedProfile(details);
+      setSelectedProfilePosts(mappedPosts);
+      setProfiles((prev) => ({ ...prev, [normalized]: details }));
+      setView('profile');
+    } catch (e) {
+      console.error('Failed to open profile:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to load profile.',
+        type: 'error',
+      });
+    }
+  }, [addToast]);
+
   const activateIdentity = useCallback(async (id: Identity) => {
     setIdentity(id);
-    if (id.publicKey) {
-      const p = await GetProfileDetails(id.publicKey);
-      setProfile(p);
-      setProfiles((prev) => ({ ...prev, [id.publicKey]: p }));
-      await loadGovernanceData(id.publicKey);
+    const pubKey = id.publicKey;
+    if (pubKey) {
+      try {
+        const p = await GetProfileDetails(pubKey);
+        setProfile(p);
+        setProfiles((prev) => ({ ...prev, [pubKey]: p }));
+      } catch (e) {
+        console.error('Failed to load profile details:', e);
+      }
+      await loadGovernanceData(pubKey);
       await loadFavorites();
     }
     await loadSubs();
@@ -210,22 +405,7 @@ function App() {
     try {
       const stream = await GetFeedStream(50);
       const mapped = stream.items.map((item: any) => ({
-        id: item.post.id,
-        pubkey: item.post.pubkey,
-        title: item.post.title,
-        bodyPreview: item.post.body || '',
-        contentCid: item.post.contentCid || '',
-        imageCid: item.post.imageCid || '',
-        thumbCid: item.post.thumbCid || '',
-        imageMime: item.post.imageMime || '',
-        imageSize: item.post.imageSize || 0,
-        imageWidth: item.post.imageWidth || 0,
-        imageHeight: item.post.imageHeight || 0,
-        score: item.post.score || 0,
-        timestamp: item.post.timestamp || 0,
-        zone: (item.post.zone || 'public') as 'private' | 'public',
-        subId: item.post.subId || 'general',
-        visibility: item.post.visibility || 'normal',
+        ...mapForumMessageToPost(item.post),
         reason: item.reason,
         isSubscribed: item.isSubscribed,
       }));
@@ -243,24 +423,7 @@ function App() {
     }
     try {
       const feed = await GetFeedIndexBySubSorted(subId, mode);
-      const mapped = (feed as any[]).map((item) => ({
-        id: item.id,
-        pubkey: item.pubkey,
-        title: item.title,
-        bodyPreview: item.bodyPreview || '',
-        contentCid: item.contentCid || '',
-        imageCid: item.imageCid || '',
-        thumbCid: item.thumbCid || '',
-        imageMime: item.imageMime || '',
-        imageSize: item.imageSize || 0,
-        imageWidth: item.imageWidth || 0,
-        imageHeight: item.imageHeight || 0,
-        score: item.score || 0,
-        timestamp: item.timestamp || 0,
-        zone: (item.zone || 'public') as 'private' | 'public',
-        subId: item.subId || 'general',
-        visibility: item.visibility || 'normal',
-      }));
+      const mapped = (feed as any[]).map((item) => mapPostIndexToPost(item));
       setPosts(mapped);
       setUnreadSubs((prev) => {
         const next = new Set(prev);
@@ -357,16 +520,16 @@ function App() {
     }
   };
 
-  const handleCreatePost = async (title: string, body: string, imageBase64?: string, imageMime?: string, externalImageURL?: string) => {
+  const handleCreatePost = async (input: CreatePostInput) => {
     if (!hasWailsRuntime() || !identity) return;
     try {
       const targetSubId = currentSubId === 'recommended' ? 'general' : currentSubId;
-      const trimmedTitle = title.trim();
-      const trimmedBody = body.trim();
+      const trimmedTitle = input.title.trim();
+      const trimmedBody = input.body.trim();
       const effectiveBody = trimmedBody || trimmedTitle;
-      const trimmedImage = (imageBase64 || '').trim();
-      const trimmedMime = (imageMime || '').trim();
-      const trimmedExternalImage = (externalImageURL || '').trim();
+      const trimmedImage = (input.imageBase64 || '').trim();
+      const trimmedMime = (input.imageMime || '').trim();
+      const trimmedExternalImage = (input.externalImageURL || '').trim();
 
       if (trimmedImage && trimmedMime) {
         await PublishPostWithImageToSub(identity.publicKey, trimmedTitle, effectiveBody, trimmedImage, trimmedMime, targetSubId);
@@ -378,13 +541,10 @@ function App() {
         }
         await PublishPostStructuredToSub(identity.publicKey, trimmedTitle, finalBody, targetSubId);
       }
+      trackPendingSyncAction('post-create', trimmedTitle, `Post created in r/${targetSubId}: ${trimmedTitle}`);
       await loadPosts(currentSubId, sortMode);
       bumpViewSyncToken();
-      addToast({
-        title: 'Post Created',
-        message: 'Your post has been published',
-        type: 'success',
-      });
+      addToast(getWriteFeedback(p2pStatus, 'Your post is live.', 'Your post is saved. We will finish sending it in the background.'));
     } catch (e) {
       const detail = getErrorMessage(e, 'Failed to create post');
       console.error('Failed to create post:', e);
@@ -431,8 +591,12 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishPostUpvote(identity.publicKey, postId);
+      trackPendingSyncAction('post-vote', postId, `Post vote queued for ${postId.slice(0, 8)}`);
       await refreshPostScoreState(postId);
       bumpViewSyncToken();
+      if (shouldTrackPendingSync(p2pStatus)) {
+        addToast(getWriteFeedback(p2pStatus, '', 'Your reaction is saved and will finish in the background.'));
+      }
     } catch (e) {
       console.error('Failed to upvote:', e);
     }
@@ -442,8 +606,12 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishPostDownvote(identity.publicKey, postId);
+      trackPendingSyncAction('post-vote', postId, `Post vote queued for ${postId.slice(0, 8)}`);
       await refreshPostScoreState(postId);
       bumpViewSyncToken();
+      if (shouldTrackPendingSync(p2pStatus)) {
+        addToast(getWriteFeedback(p2pStatus, '', 'Your reaction is saved and will finish in the background.'));
+      }
     } catch (e) {
       console.error('Failed to downvote:', e);
     }
@@ -473,10 +641,119 @@ function App() {
   };
 
   const handlePostClick = async (post: Post) => {
+    if (view !== 'post-detail') {
+      setPostReturnView(view);
+    }
+    recordRecentlyViewed(post.id);
+    bumpHistorySyncToken();
+    setHasRemotePostUpdate(false);
     setSelectedPost(post);
     setView('post-detail');
     await loadPostDetail(post);
   };
+
+  const handleSharePost = useCallback(async (post: Post) => {
+    try {
+      const shareLink = buildShareLink(post.id);
+      await ClipboardSetText(shareLink);
+      addToast({
+        title: 'Link Copied',
+        message: shareLink,
+        type: 'success',
+      });
+    } catch (e) {
+      console.error('Failed to copy share link:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to copy share link',
+        type: 'error',
+      });
+    }
+  }, [addToast]);
+
+  const handleShareSub = useCallback(async (subId: string) => {
+    try {
+      const shareLink = buildSubShareLink(subId);
+      await ClipboardSetText(shareLink);
+      addToast({
+        title: 'Sub Link Copied',
+        message: shareLink,
+        type: 'success',
+      });
+    } catch (e) {
+      console.error('Failed to copy sub share link:', e);
+      addToast({
+        title: 'Error',
+        message: 'Failed to copy sub link',
+        type: 'error',
+      });
+    }
+  }, [addToast]);
+
+  const trackPendingSyncAction = useCallback((kind: PendingSyncActionKind, entityId: string, summary: string) => {
+    if (!shouldTrackPendingSync(p2pStatus)) {
+      return;
+    }
+    const next = recordPendingSyncAction(kind, entityId, summary);
+    setPendingSyncActions(next);
+  }, [p2pStatus]);
+
+  const handleDismissPendingSyncAction = useCallback((actionId: string) => {
+    setPendingSyncActions(removePendingSyncAction(actionId));
+  }, []);
+
+  const handleTriggerSyncNow = useCallback(async () => {
+    if (!hasWailsRuntime()) return;
+    setNetworkBusy(true);
+    try {
+      await TriggerAntiEntropySyncNow();
+      await loadNetworkHealth();
+      addToast({
+        title: 'Sync Triggered',
+        message: 'Manual anti-entropy sync started.',
+        type: 'success',
+      });
+    } catch (e) {
+      console.error('Failed to trigger sync:', e);
+      addToast({
+        title: 'Sync Failed',
+        message: getErrorMessage(e, 'Could not trigger sync right now.'),
+        type: 'error',
+      });
+    } finally {
+      setNetworkBusy(false);
+    }
+  }, [addToast, loadNetworkHealth]);
+
+  const handleRepairPost = useCallback(async (postId: string) => {
+    if (!hasWailsRuntime()) return;
+    setNetworkBusy(true);
+    try {
+      await TriggerAntiEntropySyncNow();
+      const index = await GetPostIndexByID(postId);
+      const repairedPost = mapPostIndexToPost(index);
+      setPosts((prev) => prev.map((item) => (item.id === postId ? { ...item, ...repairedPost } : item)));
+      if (selectedPost?.id === postId) {
+        setSelectedPost((prev) => (prev ? { ...prev, ...repairedPost } : prev));
+        await loadPostDetail(repairedPost);
+      }
+      await loadNetworkHealth();
+      addToast({
+        title: 'Recovery Requested',
+        message: 'Your node requested content repair for this post.',
+        type: 'success',
+      });
+    } catch (e) {
+      console.error('Failed to repair post:', e);
+      addToast({
+        title: 'Recovery Failed',
+        message: getErrorMessage(e, 'Could not recover this post right now.'),
+        type: 'error',
+      });
+    } finally {
+      setNetworkBusy(false);
+    }
+  }, [addToast, loadNetworkHealth, loadPostDetail, selectedPost]);
 
   const refreshCommentsForSelectedPost = useCallback(async (postId: string) => {
     if (!hasWailsRuntime()) return;
@@ -493,8 +770,35 @@ function App() {
     setSelectedPost(null);
     setPostBody('');
     setPostComments([]);
-    setView('feed');
+    setHasRemotePostUpdate(false);
+    setView(postReturnView);
   };
+
+  const openPostById = useCallback(async (postId: string) => {
+    const index = await GetPostIndexByID(postId);
+    const post = mapPostIndexToPost(index);
+    setCurrentSubId(post.subId || 'general');
+    await handlePostClick(post);
+  }, [handlePostClick]);
+
+  const handleOpenPendingSyncAction = useCallback(async (action: PendingSyncAction) => {
+    if (action.kind.startsWith('post-') || action.kind === 'comment-create' || action.kind === 'comment-edit' || action.kind === 'comment-delete' || action.kind === 'comment-vote') {
+      await openPostById(action.entityId);
+      return;
+    }
+    if (action.kind === 'profile-publish' && identity?.publicKey) {
+      await openProfile(identity.publicKey);
+    }
+  }, [identity?.publicKey, openPostById, openProfile]);
+
+  const handleRefreshSelectedPost = useCallback(async () => {
+    if (!selectedPost) return;
+    const index = await GetPostIndexByID(selectedPost.id);
+    const updatedPost = mapPostIndexToPost(index);
+    setSelectedPost(updatedPost);
+    await loadPostDetail(updatedPost);
+    setHasRemotePostUpdate(false);
+  }, [loadPostDetail, selectedPost]);
 
   const handleSubSelect = (subId: string) => {
     if (subId === 'recommended') {
@@ -551,17 +855,45 @@ function App() {
 
   const handleSearch = async (query: string, scope?: string) => {
     setSearchQuery(query);
+    setSearchScopeSubId(scope ? scope : null);
     if (!query.trim()) {
       setSearchResults(null);
+      if (view === 'search') {
+        setView('feed');
+      }
       return;
     }
     if (!hasWailsRuntime()) return;
     try {
       const [subResults, postResults] = await Promise.all([
         scope ? Promise.resolve([]) : SearchSubs(query, 10),
-        SearchPosts(query, scope || '', 10),
+        SearchPosts(query, scope || '', 100),
       ]);
+      const uniquePubkeys = Array.from(new Set((postResults || []).map((post: any) => post.pubkey).filter(Boolean)));
+      if (uniquePubkeys.length > 0) {
+        const resolvedProfiles = await Promise.all(
+          uniquePubkeys.map(async (pk) => {
+            try {
+              const resolved = await GetProfile(pk);
+              return [pk, resolved] as const;
+            } catch {
+              return null;
+            }
+          })
+        );
+        const mergedProfiles: Record<string, Profile> = {};
+        for (const entry of resolvedProfiles) {
+          if (!entry) continue;
+          mergedProfiles[entry[0]] = entry[1];
+        }
+        if (Object.keys(mergedProfiles).length > 0) {
+          setProfiles((prev) => ({ ...prev, ...mergedProfiles }));
+        }
+      }
       setSearchResults({ subs: subResults, posts: postResults });
+      if (query.trim().length >= 2) {
+        setView('search');
+      }
     } catch (e) {
       console.error('Failed to search:', e);
     }
@@ -570,30 +902,14 @@ function App() {
   const handleSearchResultClick = async (type: 'sub' | 'post', id: string) => {
     setSearchResults(null);
     setSearchQuery('');
+    setSearchScopeSubId(null);
     if (type === 'sub') {
       setCurrentSubId(id);
       setView('feed');
     } else {
       try {
         const index = await GetPostIndexByID(id);
-        const post: Post = {
-          id: index.id,
-          pubkey: index.pubkey,
-          title: index.title,
-          bodyPreview: index.bodyPreview || '',
-          contentCid: index.contentCid || '',
-          imageCid: index.imageCid || '',
-          thumbCid: index.thumbCid || '',
-          imageMime: index.imageMime || '',
-          imageSize: index.imageSize || 0,
-          imageWidth: index.imageWidth || 0,
-          imageHeight: index.imageHeight || 0,
-          score: index.score || 0,
-          timestamp: index.timestamp || 0,
-          zone: (index.zone || 'public') as 'private' | 'public',
-          subId: index.subId || 'general',
-          visibility: index.visibility || 'normal',
-        };
+        const post: Post = mapPostIndexToPost(index);
         setCurrentSubId(post.subId || 'general');
         await handlePostClick(post);
       } catch (e) {
@@ -606,12 +922,9 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishCommentWithAttachments(identity.publicKey, selectedPost.id, parentId, body, localImageDataURLs, externalImageURLs);
+      trackPendingSyncAction('comment-create', selectedPost.id, `Comment saved locally on post ${selectedPost.id.slice(0, 8)}`);
       void refreshCommentsForSelectedPost(selectedPost.id);
-      addToast({
-        title: 'Reply Sent',
-        message: 'Your reply has been posted',
-        type: 'success',
-      });
+      addToast(getWriteFeedback(p2pStatus, 'Your reply is posted.', 'Your reply is saved. We will finish sending it in the background.'));
     } catch (e) {
       const detail = getErrorMessage(e, 'Failed to post reply');
       console.error('Failed to post comment:', e);
@@ -628,17 +941,14 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishDeletePost(identity.publicKey, postId);
+      trackPendingSyncAction('post-delete', postId, `Post delete queued for ${postId.slice(0, 8)}`);
       setSelectedPost(null);
       setPostBody('');
       setPostComments([]);
       setView('feed');
       await loadPosts(currentSubId, sortMode);
       bumpViewSyncToken();
-      addToast({
-        title: 'Post Deleted',
-        message: 'Post has been deleted',
-        type: 'info',
-      });
+      addToast(getWriteFeedback(p2pStatus, 'Post has been deleted.', 'That change is saved and will finish in the background.'));
     } catch (e) {
       const detail = getErrorMessage(e, 'Failed to delete post');
       console.error('Failed to delete post:', e);
@@ -651,17 +961,52 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishDeleteComment(identity.publicKey, commentId);
+      trackPendingSyncAction('comment-delete', selectedPost.id, `Comment delete queued for ${commentId.slice(0, 8)}`);
       const comments = await GetCommentsByPost(selectedPost.id);
       setPostComments(comments);
       bumpViewSyncToken();
-      addToast({
-        title: 'Comment Deleted',
-        message: 'Comment has been deleted',
-        type: 'info',
-      });
+      addToast(getWriteFeedback(p2pStatus, 'Comment has been deleted.', 'That change is saved and will finish in the background.'));
     } catch (e) {
       const detail = getErrorMessage(e, 'Failed to delete comment');
       console.error('Failed to delete comment:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
+  };
+
+  const handleUpdatePost = async (postId: string, title: string, body: string) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      await PublishPostUpdate(identity.publicKey, postId, title, body);
+      trackPendingSyncAction('post-edit', postId, `Post edit queued for ${postId.slice(0, 8)}`);
+      const index = await GetPostIndexByID(postId);
+      const updatedPost = mapPostIndexToPost(index);
+      setPosts((prev) => prev.map((item) => (item.id === postId ? { ...item, ...updatedPost } : item)));
+      setSelectedPost((prev) => (prev && prev.id === postId ? { ...prev, ...updatedPost } : prev));
+      const latestBody = await GetPostBodyByID(postId);
+      setPostBody(latestBody.body || body);
+      bumpViewSyncToken();
+      addToast(getWriteFeedback(p2pStatus, 'Your post has been updated.', 'Your changes are saved and will finish in the background.'));
+    } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to update post');
+      console.error('Failed to update post:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
+  };
+
+  const handleUpdateComment = async (commentId: string, body: string) => {
+    if (!hasWailsRuntime() || !identity || !selectedPost) return;
+    try {
+      await PublishCommentUpdate(identity.publicKey, commentId, body);
+      trackPendingSyncAction('comment-edit', selectedPost.id, `Comment edit queued for ${commentId.slice(0, 8)}`);
+      const comments = await GetCommentsByPost(selectedPost.id);
+      setPostComments(comments);
+      bumpViewSyncToken();
+      addToast(getWriteFeedback(p2pStatus, 'Your comment has been updated.', 'Your changes are saved and will finish in the background.'));
+    } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to update comment');
+      console.error('Failed to update comment:', e);
       addToast({ title: 'Error', message: detail, type: 'error' });
       throw new Error(detail);
     }
@@ -671,6 +1016,7 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishCommentUpvote(identity.publicKey, selectedPost.id, commentId);
+      trackPendingSyncAction('comment-vote', selectedPost.id, `Comment vote queued for ${commentId.slice(0, 8)}`);
       await refreshCommentsForSelectedPost(selectedPost.id);
     } catch (e) {
       console.error('Failed to upvote comment:', e);
@@ -681,6 +1027,7 @@ function App() {
     if (!hasWailsRuntime() || !identity || !selectedPost) return;
     try {
       await PublishCommentDownvote(identity.publicKey, selectedPost.id, commentId);
+      trackPendingSyncAction('comment-vote', selectedPost.id, `Comment vote queued for ${commentId.slice(0, 8)}`);
       await refreshCommentsForSelectedPost(selectedPost.id);
     } catch (e) {
       console.error('Failed to downvote comment:', e);
@@ -715,11 +1062,8 @@ function App() {
     if (!hasWailsRuntime() || !identity) return;
     try {
       await PublishProfileUpdate(identity.publicKey, displayName, avatarURL);
-      addToast({
-        title: 'Profile Published',
-        message: 'Your profile update has been broadcasted',
-        type: 'success',
-      });
+      trackPendingSyncAction('profile-publish', identity.publicKey, 'Profile publish queued for replication');
+      addToast(getWriteFeedback(p2pStatus, 'Your profile has been updated.', 'Your profile changes are saved and will finish in the background.'));
     } catch (e) {
       console.error('Failed to publish profile:', e);
       addToast({
@@ -774,6 +1118,9 @@ function App() {
   const handleSignOut = () => {
     setIdentity(null);
     setProfile(null);
+    setSelectedProfile(null);
+    setSelectedProfilePosts([]);
+    setCurrentSubStats(null);
     setShowLoginModal(true);
   };
 
@@ -795,7 +1142,18 @@ function App() {
   };
 
   useEffect(() => {
-    loadIdentity();
+    if (hasWailsRuntime()) {
+      loadIdentity();
+      return;
+    }
+    // Wails runtime may not be injected yet; poll until ready
+    const timer = window.setInterval(() => {
+      if (hasWailsRuntime()) {
+        window.clearInterval(timer);
+        loadIdentity();
+      }
+    }, 50);
+    return () => window.clearInterval(timer);
   }, [loadIdentity]);
 
   useEffect(() => {
@@ -812,10 +1170,15 @@ function App() {
   }, [identity, currentSubId, sortMode, loadPosts, view]);
 
   useEffect(() => {
-    if (!identity) {
+    if (!identity) return;
+    void loadSubStats(currentSubId);
+  }, [identity, currentSubId, loadSubStats]);
+
+  useEffect(() => {
+    if (identityChecked && !identity) {
       setShowLoginModal(true);
     }
-  }, [identity]);
+  }, [identity, identityChecked]);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -883,6 +1246,18 @@ function App() {
 
   useEffect(() => {
     if (!hasWailsRuntime() || !identity) return;
+    const refreshCount = () => {
+      GetUnreadNotificationCount().then((c) => setUnreadNotificationCount(c)).catch(console.error);
+    };
+    refreshCount();
+    const unsubscribe = EventsOn('notifications:updated', refreshCount);
+    return () => {
+      unsubscribe();
+    };
+  }, [identity]);
+
+  useEffect(() => {
+    if (!hasWailsRuntime() || !identity) return;
     const timer = window.setInterval(() => {
       void loadSubs();
       void loadSubscribedSubs();
@@ -896,35 +1271,32 @@ function App() {
     if (!hasWailsRuntime()) return;
     const unsubscribe = EventsOn('feed:updated', () => {
       bumpViewSyncToken();
-      if (!identity || view !== 'feed') return;
-      void loadPosts(currentSubId, sortMode);
+      if (!identity) return;
+      if (view === 'feed') {
+        void loadPosts(currentSubId, sortMode);
+      } else if (view === 'post-detail' && selectedPost) {
+        setHasRemotePostUpdate(true);
+      }
+      void loadNetworkHealth();
     });
     return () => {
       unsubscribe();
     };
-  }, [identity, view, currentSubId, sortMode, loadPosts, bumpViewSyncToken]);
+  }, [identity, view, currentSubId, sortMode, loadPosts, bumpViewSyncToken, loadNetworkHealth, selectedPost]);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
     if (!identity) {
       setOnlineCount(0);
+      setP2PStatus(null);
+      setAntiEntropyStats(null);
       return;
     }
 
     let alive = true;
     const refresh = async () => {
-      try {
-        const status = await GetP2PStatus();
-        if (!alive) return;
-        if (!status?.started) {
-          setOnlineCount(0);
-          return;
-        }
-        const peers = Array.isArray(status.connectedPeers) ? status.connectedPeers.length : 0;
-        setOnlineCount(peers + 1);
-      } catch {
-        if (alive) setOnlineCount(0);
-      }
+      if (!alive) return;
+      await loadNetworkHealth();
     };
 
     void refresh();
@@ -936,7 +1308,87 @@ function App() {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [identity]);
+  }, [identity, loadNetworkHealth]);
+
+  useEffect(() => {
+    const nextHash = (() => {
+      if (view === 'post-detail' && selectedPost) {
+        return buildAppHash(`/post/${encodeURIComponent(selectedPost.id)}`);
+      }
+      if (view === 'profile' && selectedProfile?.pubkey) {
+        return buildAppHash(`/u/${encodeURIComponent(selectedProfile.pubkey)}`);
+      }
+      if (view === 'search' && searchQuery.trim()) {
+        return buildAppHash(`/search?q=${encodeURIComponent(searchQuery.trim())}${searchScopeSubId ? `&sub=${encodeURIComponent(searchScopeSubId)}` : ''}`);
+      }
+      if (view === 'feed') {
+        return buildAppHash(`/r/${encodeURIComponent(currentSubId)}`);
+      }
+      return buildAppHash(`/${view}`);
+    })();
+
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, '', nextHash);
+    }
+  }, [currentSubId, searchQuery, searchScopeSubId, selectedPost, selectedProfile, view]);
+
+  useEffect(() => {
+    if (!identity || !hasWailsRuntime()) return;
+
+    let alive = true;
+    const applyHashRoute = async () => {
+      const hash = window.location.hash.replace(/^#/, '').trim();
+      if (!hash) return;
+
+      const [pathPart, queryString = ''] = hash.split('?');
+      const normalizedPath = pathPart.startsWith('/') ? pathPart : `/${pathPart}`;
+      const segments = normalizedPath.split('/').filter(Boolean);
+
+      try {
+        if (segments[0] === 'post' && segments[1]) {
+          const postId = decodeURIComponent(segments[1]);
+          await openPostById(postId);
+          return;
+        }
+
+        if (segments[0] === 'u' && segments[1]) {
+          const pubkey = decodeURIComponent(segments[1]);
+          await openProfile(pubkey);
+          return;
+        }
+
+        if (segments[0] === 'r' && segments[1]) {
+          const subId = decodeURIComponent(segments[1]);
+          if (!alive) return;
+          setSelectedPost(null);
+          setView('feed');
+          setCurrentSubId(subId);
+          return;
+        }
+
+        if (segments[0] === 'search') {
+          const params = new URLSearchParams(queryString);
+          const query = params.get('q') || '';
+          const scope = params.get('sub') || undefined;
+          if (query.trim()) {
+            await handleSearch(query, scope);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to resolve deep link:', error);
+      }
+    };
+
+    void applyHashRoute();
+    const onHashChange = () => {
+      void applyHashRoute();
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => {
+      alive = false;
+      window.removeEventListener('hashchange', onHashChange);
+    };
+  }, [handleSearch, identity, openPostById, openProfile]);
 
   const currentSub = currentSubId === 'recommended'
     ? { id: 'recommended', title: 'Recommended Feed', description: 'Your personalized feed based on subscriptions and trending posts' }
@@ -948,6 +1400,13 @@ function App() {
 
   return (
     <div className={`h-screen flex flex-col ${isDark ? 'dark' : ''}`}>
+      <NetworkBanner
+        health={networkHealth}
+        pendingSyncActions={pendingSyncActions}
+        busy={networkBusy}
+        onSyncNow={() => void handleTriggerSyncNow()}
+        onOpenNetworkSettings={() => setShowSettingsPanel(true)}
+      />
       <div className="flex-1 flex overflow-hidden" style={{ minWidth: '900px' }}>
         <Sidebar
           subs={subs}
@@ -965,7 +1424,21 @@ function App() {
             profile={profile || undefined}
             onCreatePost={() => setShowCreatePostModal(true)}
             onProfileClick={() => setShowSettingsPanel(true)}
+            onViewOwnProfile={() => {
+              if (identity?.publicKey) {
+                void openProfile(identity.publicKey);
+              }
+            }}
             onMyPostsClick={() => setView('my-posts')}
+            onDraftsClick={() => {
+              bumpDraftSyncToken();
+              setView('drafts');
+            }}
+            onHistoryClick={() => {
+              bumpHistorySyncToken();
+              setView('history');
+            }}
+            onPendingSyncClick={() => setView('pending-sync')}
             onFavoritesClick={() => setView('favorites')}
             onSignOut={handleSignOut}
             isDark={isDark}
@@ -977,7 +1450,13 @@ function App() {
             onSearchClear={() => {
               setSearchQuery('');
               setSearchResults(null);
+              setSearchScopeSubId(null);
+              if (view === 'search') {
+                setView('feed');
+              }
             }}
+            unreadNotificationCount={unreadNotificationCount}
+            onNotificationsClick={() => setView('notifications')}
           />
 
           {view === 'feed' && (
@@ -988,6 +1467,8 @@ function App() {
               onSortChange={setSortMode}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
+              onShare={(post) => void handleSharePost(post)}
               onToggleFavorite={handleToggleFavorite}
             />
           )}
@@ -1001,6 +1482,42 @@ function App() {
             />
           )}
 
+          {view === 'search' && (
+            <SearchResultsView
+              query={searchQuery}
+              subs={searchResults?.subs || []}
+              posts={(searchResults?.posts || []).map((post) => ({
+                ...mapForumMessageToPost(post),
+                isFavorited: favoritePostIds.has(post.id),
+              }))}
+              profiles={profiles}
+              scopeSubId={searchScopeSubId || undefined}
+              onSubClick={handleSubSelect}
+              onPostClick={handlePostClick}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
+              onShare={(post) => void handleSharePost(post)}
+              onUpvote={handleUpvote}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          )}
+
+          {view === 'profile' && (
+            <ProfileView
+              profile={selectedProfile}
+              posts={selectedProfilePosts.map((post) => ({
+                ...post,
+                isFavorited: favoritePostIds.has(post.id),
+              }))}
+              profiles={profiles}
+              isOwnProfile={selectedProfile?.pubkey === identity?.publicKey}
+              onEditProfile={() => setShowSettingsPanel(true)}
+              onPostClick={handlePostClick}
+              onUpvote={handleUpvote}
+              onShare={(post) => void handleSharePost(post)}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          )}
+
           {view === 'post-detail' && selectedPost && (
             <PostDetail
               post={{ ...selectedPost, isFavorited: favoritePostIds.has(selectedPost.id) }}
@@ -1008,14 +1525,21 @@ function App() {
               comments={postComments}
               profiles={profiles}
               currentPubkey={identity?.publicKey}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
               onBack={handleBackToFeed}
               onUpvote={handleUpvote}
               onDownvote={handleDownvote}
+              onShare={(post) => void handleSharePost(post)}
+              onRepairPost={(postId) => void handleRepairPost(postId)}
+              hasRemoteUpdate={hasRemotePostUpdate}
+              onRefreshRemoteUpdate={() => void handleRefreshSelectedPost()}
               onReply={handleCommentReply}
               onCommentUpvote={handleCommentUpvote}
               onCommentDownvote={handleCommentDownvote}
               onDeletePost={handleDeletePost}
               onDeleteComment={handleDeleteComment}
+              onEditPost={handleUpdatePost}
+              onEditComment={handleUpdateComment}
               onViewOperationTimeline={handleViewOperationTimeline}
               isDevMode={isDevMode}
               onToggleFavorite={handleToggleFavorite}
@@ -1029,6 +1553,8 @@ function App() {
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
+              onShare={(post) => void handleSharePost(post)}
             />
           )}
 
@@ -1040,7 +1566,56 @@ function App() {
               profiles={profiles}
               onUpvote={handleUpvote}
               onPostClick={handlePostClick}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
+              onShare={(post) => void handleSharePost(post)}
               onToggleFavorite={handleToggleFavorite}
+            />
+          )}
+
+          {view === 'drafts' && (
+            <DraftsView
+              authorPublicKey={identity?.publicKey}
+              refreshToken={draftSyncToken}
+              onOpenPostDraft={(subId) => {
+                setCurrentSubId(subId);
+                setView('feed');
+                setShowCreatePostModal(true);
+              }}
+              onOpenCommentDraft={(postId) => {
+                void openPostById(postId);
+              }}
+            />
+          )}
+
+          {view === 'history' && (
+            <HistoryView
+              refreshToken={historySyncToken}
+              profiles={profiles}
+              onUpvote={handleUpvote}
+              onPostClick={handlePostClick}
+              onAuthorClick={(pubkey) => void openProfile(pubkey)}
+              onShare={(post) => void handleSharePost(post)}
+            />
+          )}
+
+          {view === 'pending-sync' && (
+            <PendingSyncView
+              actions={pendingSyncActions}
+              onOpenAction={(action) => void handleOpenPendingSyncAction(action)}
+              onDismissAction={handleDismissPendingSyncAction}
+              onSyncNow={() => void handleTriggerSyncNow()}
+            />
+          )}
+
+          {view === 'notifications' && (
+            <NotificationsView
+              profiles={profiles}
+              onNavigateToPost={(postId) => void openPostById(postId)}
+              onNavigateToProfile={() => {
+                if (identity?.publicKey) {
+                  void openProfile(identity.publicKey);
+                }
+              }}
             />
           )}
         </div>
@@ -1049,8 +1624,18 @@ function App() {
           <RightPanel
             sub={currentSub}
             isSubscribed={isCurrentSubSubscribed}
+            stats={currentSubStats || undefined}
             membersCount={membersCount}
             onlineCount={onlineCount}
+            onCreatePost={() => setShowCreatePostModal(true)}
+            onShareSub={() => void handleShareSub(currentSubId)}
+            p2pStatus={p2pStatus}
+            antiEntropyStats={antiEntropyStats}
+            pendingSyncActions={pendingSyncActions}
+            networkBusy={networkBusy}
+            onSyncNow={() => void handleTriggerSyncNow()}
+            onOpenNetworkSettings={() => setShowSettingsPanel(true)}
+            onDismissPendingSyncAction={handleDismissPendingSyncAction}
             onToggleSubscription={() => handleToggleSubscription(currentSubId)}
           />
         )}
@@ -1089,7 +1674,12 @@ function App() {
 
       <CreatePostModal
         isOpen={showCreatePostModal}
-        onClose={() => setShowCreatePostModal(false)}
+        onClose={() => {
+          setShowCreatePostModal(false);
+          bumpDraftSyncToken();
+        }}
+        subId={currentSubId === 'recommended' ? 'general' : currentSubId}
+        authorPublicKey={identity?.publicKey}
         onCreate={handleCreatePost}
       />
 

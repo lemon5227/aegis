@@ -401,6 +401,64 @@ export namespace main {
 	        this.reason = source["reason"];
 	    }
 	}
+	export class Notification {
+	    id: string;
+	    type: string;
+	    sourcePubkey: string;
+	    targetEntityId: string;
+	    targetType: string;
+	    postId: string;
+	    isRead: boolean;
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Notification(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.type = source["type"];
+	        this.sourcePubkey = source["sourcePubkey"];
+	        this.targetEntityId = source["targetEntityId"];
+	        this.targetType = source["targetType"];
+	        this.postId = source["postId"];
+	        this.isRead = source["isRead"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class NotificationPage {
+	    items: Notification[];
+	    nextCursor: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NotificationPage(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.items = this.convertValues(source["items"], Notification);
+	        this.nextCursor = source["nextCursor"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class P2PConfig {
 	    listenPort: number;
 	    relayPeers: string[];
@@ -672,6 +730,28 @@ export namespace main {
 	        this.id = source["id"];
 	        this.title = source["title"];
 	        this.description = source["description"];
+	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SubStats {
+	    subId: string;
+	    subscriberCount: number;
+	    postCount: number;
+	    activeAuthors: number;
+	    recentPosts24h: number;
+	    createdAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subId = source["subId"];
+	        this.subscriberCount = source["subscriberCount"];
+	        this.postCount = source["postCount"];
+	        this.activeAuthors = source["activeAuthors"];
+	        this.recentPosts24h = source["recentPosts24h"];
 	        this.createdAt = source["createdAt"];
 	    }
 	}

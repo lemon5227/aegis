@@ -32,6 +32,10 @@ export interface Profile {
   updatedAt: number;
 }
 
+export interface ProfileDetails extends Profile {
+  bio: string;
+}
+
 export interface Identity {
   mnemonic: string;
   publicKey: string;
@@ -95,6 +99,15 @@ export interface AntiEntropyStats {
   lastObservedSyncLagSec: number;
 }
 
+export interface P2PStatus {
+  started: boolean;
+  peerId: string;
+  listenAddrs: string[];
+  announceAddrs: string[];
+  connectedPeers: string[];
+  topic: string;
+}
+
 export interface EntityOpRecord {
   opId: string;
   entityType: string;
@@ -141,7 +154,68 @@ export interface Post extends PostIndex {
   authorProfile?: Profile;
 }
 
-export type SortMode = 'hot' | 'new';
+export type PostComposerMode = 'text' | 'link';
+
+export interface CreatePostInput {
+  title: string;
+  body: string;
+  imageBase64?: string;
+  imageMime?: string;
+  externalImageURL?: string;
+  mode: PostComposerMode;
+  linkURL?: string;
+}
+
+export interface PostDraftSummary {
+  kind: 'post';
+  storageKey: string;
+  subId: string;
+  authorPublicKey: string;
+  title: string;
+  body: string;
+  linkURL: string;
+  externalImageURL: string;
+  mode: PostComposerMode;
+  updatedAt: number;
+}
+
+export interface CommentDraftSummary {
+  kind: 'comment';
+  storageKey: string;
+  postId: string;
+  authorPublicKey: string;
+  body: string;
+  replyToId: string | null;
+  updatedAt: number;
+}
+
+export type DraftSummary = PostDraftSummary | CommentDraftSummary;
+
+export interface RecentlyViewedEntry {
+  postId: string;
+  viewedAt: number;
+}
+
+export type PendingSyncActionKind =
+  | 'post-create'
+  | 'post-edit'
+  | 'post-delete'
+  | 'comment-create'
+  | 'comment-edit'
+  | 'comment-delete'
+  | 'post-vote'
+  | 'comment-vote'
+  | 'profile-publish';
+
+export interface PendingSyncAction {
+  id: string;
+  kind: PendingSyncActionKind;
+  entityId: string;
+  summary: string;
+  createdAt: number;
+}
+
+export type SortMode = 'hot' | 'new' | 'top-day' | 'top-week' | 'top-month' | 'top-all';
 export type Theme = 'light' | 'dark';
 
 export interface FeedStreamItem {
@@ -155,4 +229,29 @@ export interface FeedStream {
   items: FeedStreamItem[];
   algorithm: string;
   generatedAt: number;
+}
+
+export interface SubStats {
+  subId: string;
+  subscriberCount: number;
+  postCount: number;
+  activeAuthors: number;
+  recentPosts24h: number;
+  createdAt: number;
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  sourcePubkey: string;
+  targetEntityId: string;
+  targetType: string;
+  postId: string;
+  isRead: boolean;
+  createdAt: number;
+}
+
+export interface NotificationPage {
+  items: Notification[];
+  nextCursor: string;
 }

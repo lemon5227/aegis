@@ -8,10 +8,14 @@ interface FeedProps {
   onSortChange: (mode: SortMode) => void;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
+  onAuthorClick?: (pubkey: string) => void;
+  onShare?: (post: Post) => void;
   onToggleFavorite?: (postId: string) => void;
 }
 
-export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPostClick, onToggleFavorite }: FeedProps) {
+export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPostClick, onAuthorClick, onShare, onToggleFavorite }: FeedProps) {
+  const isTopMode = sortMode.startsWith('top-');
+
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
       <div className="flex items-center justify-between mb-2">
@@ -36,7 +40,40 @@ export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPost
           >
             New
           </button>
+          <button
+            onClick={() => onSortChange(isTopMode ? sortMode : 'top-week')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              isTopMode
+                ? 'bg-warm-accent text-white shadow-sm'
+                : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar/50 dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-slate-200'
+            }`}
+          >
+            Top
+          </button>
         </div>
+
+        {isTopMode && (
+          <div className="flex gap-2">
+            {[
+              { id: 'top-day', label: 'Day' },
+              { id: 'top-week', label: 'Week' },
+              { id: 'top-month', label: 'Month' },
+              { id: 'top-all', label: 'All' },
+            ].map((option) => (
+              <button
+                key={option.id}
+                onClick={() => onSortChange(option.id as SortMode)}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                  sortMode === option.id
+                    ? 'bg-warm-accent text-white shadow-sm'
+                    : 'text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar/50 dark:hover:bg-surface-lighter hover:text-warm-text-primary dark:hover:text-slate-200'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       
       {posts.length === 0 ? (
@@ -52,6 +89,8 @@ export function Feed({ posts, sortMode, profiles, onSortChange, onUpvote, onPost
             authorProfile={profiles[post.pubkey]}
             onUpvote={onUpvote}
             onClick={onPostClick}
+            onAuthorClick={onAuthorClick}
+            onShare={onShare}
             isRecommended={!!(post.reason && post.reason.includes('recommended') && !post.isSubscribed)}
             isFavorited={post.isFavorited}
             onToggleFavorite={onToggleFavorite}

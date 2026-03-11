@@ -12,10 +12,12 @@ interface FavoritesProps {
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
+  onAuthorClick?: (pubkey: string) => void;
+  onShare?: (post: Post) => void;
   onToggleFavorite?: (postId: string) => void;
 }
 
-export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUpvote, onPostClick, onToggleFavorite }: FavoritesProps) {
+export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUpvote, onPostClick, onAuthorClick, onShare, onToggleFavorite }: FavoritesProps) {
   const cacheKey = currentPubkey.trim() || 'anonymous';
   const [favoritePosts, setFavoritePosts] = useState<Post[]>(() => favoritesCache.get(cacheKey) || []);
   const [loading, setLoading] = useState(() => !favoritesCache.has(cacheKey));
@@ -111,6 +113,8 @@ export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUp
                   authorProfile={profiles[post.pubkey]}
                   onUpvote={onUpvote}
                   onClick={onPostClick}
+                  onAuthorClick={onAuthorClick}
+                  onShare={onShare}
                   isFavorited={true}
                   onToggleFavorite={() => handleRemoveFavorite(post.id)}
                 />

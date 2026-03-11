@@ -5,13 +5,16 @@ import { GetMediaByCID } from '../../wailsjs/go/main/App';
 interface CommentItemProps {
   comment: Comment;
   profiles: Record<string, Profile>;
-  onReply: (parentId: string) => void;
+  onReply: (comment: Comment, mode?: 'reply' | 'quote') => void;
   onUpvote: (commentId: string) => void;
   onDownvote?: (commentId: string) => void;
   onImageClick: (src: string) => void;
+  onAuthorClick?: (pubkey: string) => void;
   currentPubkey?: string;
   onDelete?: (commentId: string) => Promise<void> | void;
+  onEdit?: (commentId: string, body: string) => Promise<void> | void;
   depth?: number;
+  childCount?: number;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -59,16 +62,24 @@ function renderRichText(content: string, onImageClick: (src: string) => void) {
   });
 }
 
-export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, onImageClick, currentPubkey, onDelete, depth = 0 }: CommentItemProps) {
+export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, onImageClick, onAuthorClick, currentPubkey, onDelete, onEdit, depth = 0, childCount = 0 }: CommentItemProps) {
   const profile = profiles[comment.pubkey];
   const displayName = profile?.displayName || comment.pubkey.slice(0, 8);
   const avatarUrl = profile?.avatarURL;
   const canDelete = !!currentPubkey && currentPubkey === comment.pubkey;
   const [resolvedAttachmentImages, setResolvedAttachmentImages] = useState<string[]>([]);
   const [deleteArmed, setDeleteArmed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState(comment.body);
+  const [editBusy, setEditBusy] = useState(false);
+  const [collapsed, setCollapsed] = useState(depth > 1);
   const attachmentKey = (comment.attachments || [])
     .map((item) => `${item.kind}:${item.ref}`)
     .join('|');
+
+  useEffect(() => {
+    setEditBody(comment.body);
+  }, [comment.id, comment.body]);
 
   useEffect(() => {
     let alive = true;
@@ -142,18 +153,71 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
           <div className="bg-warm-surface dark:bg-surface-dark border border-warm-border/40 dark:border-border-dark/40 rounded-xl p-3 md:p-4 hover:border-warm-border dark:hover:border-border-dark transition-colors shadow-sm">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
-                <span className="font-bold text-sm text-warm-text-primary dark:text-white">
+                <button
+                  onClick={() => onAuthorClick?.(comment.pubkey)}
+                  className="font-bold text-sm text-warm-text-primary dark:text-white hover:underline"
+                >
                   @{displayName}
-                </span>
+                </button>
                 <span className="text-xs text-warm-text-secondary dark:text-slate-400">
                   {formatTimeAgo(comment.timestamp)}
                 </span>
+                {childCount > 0 && (
+                  <button
+                    onClick={() => setCollapsed((prev) => !prev)}
+                    className="text-xs font-medium text-warm-accent hover:underline"
+                  >
+                    {collapsed ? `Expand ${childCount} repl${childCount > 1 ? 'ies' : 'y'}` : 'Collapse thread'}
+                  </button>
+                )}
               </div>
             </div>
-            <div className="text-sm text-warm-text-secondary dark:text-slate-300 mb-3 space-y-2">
-              {renderRichText(comment.body, onImageClick)}
-            </div>
-            {resolvedAttachmentImages.length > 0 && (
+            {!collapsed && editing ? (
+              <div className="mb-3 space-y-3">
+                <textarea
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-xl border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark px-3 py-2 text-sm text-warm-text-primary dark:text-white outline-none focus:ring-2 focus:ring-warm-accent resize-y"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => {
+                      setEditing(false);
+                      setEditBody(comment.body);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-warm-border dark:border-border-dark text-xs font-medium text-warm-text-secondary dark:text-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!onEdit || editBusy || !editBody.trim()) return;
+                      setEditBusy(true);
+                      try {
+                        await onEdit(comment.id, editBody);
+                        setEditing(false);
+                      } finally {
+                        setEditBusy(false);
+                      }
+                    }}
+                    disabled={editBusy || !editBody.trim()}
+                    className="px-3 py-1.5 rounded-lg bg-warm-accent hover:bg-warm-accent-hover text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {editBusy ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : !collapsed ? (
+              <div className="text-sm text-warm-text-secondary dark:text-slate-300 mb-3 space-y-2">
+                {renderRichText(comment.body, onImageClick)}
+              </div>
+            ) : (
+              <div className="text-sm text-warm-text-secondary dark:text-slate-400 mb-3 italic">
+                Thread collapsed
+              </div>
+            )}
+            {!collapsed && resolvedAttachmentImages.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-2">
                 {resolvedAttachmentImages.map((src, index) => (
                   <img
@@ -181,12 +245,31 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
                 <span className="material-icons text-base">thumb_down_alt</span>
               </button>
               <button 
-                onClick={() => onReply(comment.id)}
+                onClick={() => onReply(comment, 'reply')}
                 className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors"
               >
                 <span className="material-icons text-base">chat_bubble_outline</span>
                 <span className="text-xs font-medium">Reply</span>
               </button>
+              <button
+                onClick={() => onReply(comment, 'quote')}
+                className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors"
+              >
+                <span className="material-icons text-base">format_quote</span>
+                <span className="text-xs font-medium">Quote</span>
+              </button>
+              {canDelete && onEdit && (
+                <button
+                  onClick={() => {
+                    setCollapsed(false);
+                    setEditing(true);
+                  }}
+                  className="flex items-center gap-1 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors"
+                >
+                  <span className="material-icons text-base">edit</span>
+                  <span className="text-xs font-medium">Edit</span>
+                </button>
+              )}
               {canDelete && onDelete && (
                 <button
                   onClick={() => {
@@ -246,15 +329,17 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
 interface CommentTreeProps {
   comments: Comment[];
   profiles: Record<string, Profile>;
-  onReply: (parentId: string) => void;
+  onReply: (comment: Comment, mode?: 'reply' | 'quote') => void;
   onUpvote: (commentId: string) => void;
   onDownvote?: (commentId: string) => void;
+  onAuthorClick?: (pubkey: string) => void;
   currentPubkey?: string;
   onDelete?: (commentId: string) => Promise<void> | void;
+  onEdit?: (commentId: string, body: string) => Promise<void> | void;
   onImageClick?: (src: string) => void;
 }
 
-export function CommentTree({ comments, profiles, onReply, onUpvote, onDownvote, currentPubkey, onDelete, onImageClick }: CommentTreeProps) {
+export function CommentTree({ comments, profiles, onReply, onUpvote, onDownvote, onAuthorClick, currentPubkey, onDelete, onEdit, onImageClick }: CommentTreeProps) {
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
 
   const handleImageClick = (src: string) => {
@@ -280,9 +365,12 @@ export function CommentTree({ comments, profiles, onReply, onUpvote, onDownvote,
           onUpvote={onUpvote}
           onDownvote={onDownvote}
           onImageClick={handleImageClick}
+          onAuthorClick={onAuthorClick}
           currentPubkey={currentPubkey}
           onDelete={onDelete}
+          onEdit={onEdit}
           depth={depth}
+          childCount={children.length}
         />
         {children.map(child => renderComment(child, depth + 1))}
       </div>

@@ -1,11 +1,15 @@
 import { Post } from '../types';
 import { Profile } from '../types';
+import { parsePostContent } from '../lib/postContent';
+import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 
 interface PostCardProps {
   post: Post;
   authorProfile?: Profile;
   onUpvote: (postId: string) => void;
   onClick: (post: Post) => void;
+  onAuthorClick?: (pubkey: string) => void;
+  onShare?: (post: Post) => void;
   isRecommended?: boolean;
   isFavorited?: boolean;
   onToggleFavorite?: (postId: string) => void;
@@ -13,7 +17,7 @@ interface PostCardProps {
 
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
-  const diff = now - timestamp;
+  const diff = now - timestamp * 1000;
   
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
@@ -30,9 +34,12 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended, isFavorited, onToggleFavorite }: PostCardProps) {
+export function PostCard({ post, authorProfile, onUpvote, onClick, onAuthorClick, onShare, isRecommended, isFavorited, onToggleFavorite }: PostCardProps) {
   const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const avatarUrl = authorProfile?.avatarURL;
+  const parsedContent = parsePostContent(post.bodyPreview, post.bodyPreview);
+  const isLinkPost = parsedContent.mode === 'link';
+  const isPartialContent = !parsedContent.preview.trim() && !!post.contentCid;
 
   return (
     <article 
@@ -68,9 +75,15 @@ export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended
                 {getInitials(displayName)}
               </div>
             )}
-            <span className="text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:underline">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAuthorClick?.(post.pubkey);
+              }}
+              className="text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:underline"
+            >
               {displayName}
-            </span>
+            </button>
             <span className="text-xs text-warm-text-secondary dark:text-slate-400">•</span>
             <span className="text-xs text-warm-text-secondary dark:text-slate-400">
               {formatTimeAgo(post.timestamp)}
@@ -84,14 +97,42 @@ export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended
                 Recommended
               </span>
             )}
+            {isPartialContent && (
+              <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-slate-200 dark:border-slate-700">
+                Syncing content
+              </span>
+            )}
           </div>
           
           <h2 className="text-lg font-bold text-warm-text-primary dark:text-white mb-2 group-hover:text-warm-accent transition-colors">
             {post.title}
           </h2>
-          <p className="text-sm text-warm-text-secondary dark:text-slate-400 leading-relaxed mb-3 line-clamp-2">
-            {post.bodyPreview}
-          </p>
+          {isLinkPost && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (parsedContent.linkURL) {
+                  BrowserOpenURL(parsedContent.linkURL);
+                }
+              }}
+              className="mb-3 flex w-full items-center justify-between gap-3 rounded-xl border border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark px-3 py-2 text-left hover:border-warm-accent/50"
+            >
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-warm-text-secondary dark:text-slate-400">
+                  External Link
+                </div>
+                <div className="truncate text-sm font-medium text-warm-text-primary dark:text-white">
+                  {parsedContent.linkHostname || parsedContent.linkURL}
+                </div>
+              </div>
+              <span className="material-icons-outlined text-base text-warm-text-secondary dark:text-slate-400">open_in_new</span>
+            </button>
+          )}
+          {parsedContent.preview && (
+            <p className="text-sm text-warm-text-secondary dark:text-slate-400 leading-relaxed mb-3 line-clamp-2">
+              {parsedContent.preview}
+            </p>
+          )}
           
           <div className="flex items-center gap-4">
             <button 
@@ -102,7 +143,10 @@ export function PostCard({ post, authorProfile, onUpvote, onClick, isRecommended
               Comments
             </button>
             <button 
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onShare?.(post);
+              }}
               className="flex items-center gap-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-400 hover:bg-warm-sidebar dark:hover:bg-surface-lighter px-2 py-1 rounded transition-colors"
             >
               <span className="material-icons-outlined text-base">share</span>

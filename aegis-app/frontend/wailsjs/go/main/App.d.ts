@@ -64,6 +64,8 @@ export function GetModerationState():Promise<Array<main.ModerationState>>;
 
 export function GetMyPosts(arg1:number,arg2:string):Promise<main.PostIndexPage>;
 
+export function GetNotifications(arg1:number,arg2:string):Promise<main.NotificationPage>;
+
 export function GetP2PConfig():Promise<main.P2PConfig>;
 
 export function GetP2PStatus():Promise<main.P2PStatus>;
@@ -75,6 +77,8 @@ export function GetPostBodyByID(arg1:string):Promise<main.PostBodyBlob>;
 export function GetPostIndexByID(arg1:string):Promise<main.PostIndex>;
 
 export function GetPostMediaByID(arg1:string):Promise<main.MediaBlob>;
+
+export function GetPostsByAuthor(arg1:string,arg2:number):Promise<Array<main.PostIndex>>;
 
 export function GetPrivacySettings():Promise<main.PrivacySettings>;
 
@@ -90,11 +94,15 @@ export function GetReleaseMetrics():Promise<main.ReleaseMetrics>;
 
 export function GetStorageUsage():Promise<main.StorageUsage>;
 
+export function GetSubStats(arg1:string):Promise<main.SubStats>;
+
 export function GetSubs():Promise<Array<main.Sub>>;
 
 export function GetSubscribedSubs():Promise<Array<main.Sub>>;
 
 export function GetTrustedAdmins():Promise<Array<main.GovernanceAdmin>>;
+
+export function GetUnreadNotificationCount():Promise<number>;
 
 export function GetVersionHistory(arg1:number):Promise<Array<main.VersionHistoryItem>>;
 
@@ -108,11 +116,17 @@ export function ListEntityOps(arg1:string,arg2:string,arg3:number):Promise<Array
 
 export function LoadSavedIdentity():Promise<main.Identity>;
 
+export function MarkAllNotificationsRead():Promise<void>;
+
+export function MarkNotificationRead(arg1:string):Promise<void>;
+
 export function ProcessIncomingMessage(arg1:Array<number>):Promise<void>;
 
 export function PublishComment(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function PublishCommentDownvote(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function PublishCommentUpdate(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function PublishCommentUpvote(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -131,6 +145,8 @@ export function PublishPostDownvote(arg1:string,arg2:string):Promise<void>;
 export function PublishPostStructured(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function PublishPostStructuredToSub(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function PublishPostUpdate(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function PublishPostUpvote(arg1:string,arg2:string):Promise<void>;
 
@@ -177,6 +193,10 @@ export function TriggerCommentSyncNow(arg1:string):Promise<void>;
 export function TriggerReleaseAlertEvaluationNow():Promise<Array<main.ReleaseAlert>>;
 
 export function UnsubscribeSub(arg1:string):Promise<void>;
+
+export function UpdateLocalComment(arg1:string,arg2:string,arg3:string):Promise<main.Comment>;
+
+export function UpdateLocalPost(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ForumMessage>;
 
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
 

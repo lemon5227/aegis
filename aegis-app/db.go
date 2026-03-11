@@ -30,358 +30,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	totalQuotaBytes   int64 = 100 * 1024 * 1024
-	privateQuotaBytes int64 = 20 * 1024 * 1024
-	publicQuotaBytes  int64 = 80 * 1024 * 1024
-)
 
-type ForumMessage struct {
-	ID          string `json:"id"`
-	Pubkey      string `json:"pubkey"`
-	OpID        string `json:"opId,omitempty"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	ContentCID  string `json:"contentCid"`
-	ImageCID    string `json:"imageCid"`
-	ThumbCID    string `json:"thumbCid"`
-	ImageMIME   string `json:"imageMime"`
-	ImageSize   int64  `json:"imageSize"`
-	ImageWidth  int    `json:"imageWidth"`
-	ImageHeight int    `json:"imageHeight"`
-	Content     string `json:"content"`
-	Score       int64  `json:"score"`
-	Timestamp   int64  `json:"timestamp"`
-	Lamport     int64  `json:"lamport"`
-	SizeBytes   int64  `json:"sizeBytes"`
-	Zone        string `json:"zone"`
-	SubID       string `json:"subId"`
-	IsProtected int    `json:"isProtected"`
-	Visibility  string `json:"visibility"`
-	DeletedAt   int64  `json:"deletedAt,omitempty"`
-	DeletedBy   string `json:"deletedBy,omitempty"`
-}
 
-type PostIndex struct {
-	ID          string `json:"id"`
-	Pubkey      string `json:"pubkey"`
-	Title       string `json:"title"`
-	BodyPreview string `json:"bodyPreview"`
-	ContentCID  string `json:"contentCid"`
-	ImageCID    string `json:"imageCid"`
-	ThumbCID    string `json:"thumbCid"`
-	ImageMIME   string `json:"imageMime"`
-	ImageSize   int64  `json:"imageSize"`
-	ImageWidth  int    `json:"imageWidth"`
-	ImageHeight int    `json:"imageHeight"`
-	Score       int64  `json:"score"`
-	Timestamp   int64  `json:"timestamp"`
-	Zone        string `json:"zone"`
-	SubID       string `json:"subId"`
-	Visibility  string `json:"visibility"`
-}
 
-type PostBodyBlob struct {
-	ContentCID string `json:"contentCid"`
-	Body       string `json:"body"`
-	SizeBytes  int64  `json:"sizeBytes"`
-}
-
-type MediaBlob struct {
-	ContentCID  string `json:"contentCid"`
-	DataBase64  string `json:"dataBase64"`
-	Mime        string `json:"mime"`
-	SizeBytes   int64  `json:"sizeBytes"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	IsThumbnail bool   `json:"isThumbnail"`
-}
-
-type Sub struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	CreatedAt   int64  `json:"createdAt"`
-}
-
-type Profile struct {
-	Pubkey      string `json:"pubkey"`
-	DisplayName string `json:"displayName"`
-	AvatarURL   string `json:"avatarURL"`
-	UpdatedAt   int64  `json:"updatedAt"`
-}
-
-type ProfileDetails struct {
-	Pubkey      string `json:"pubkey"`
-	DisplayName string `json:"displayName"`
-	AvatarURL   string `json:"avatarURL"`
-	Bio         string `json:"bio"`
-	UpdatedAt   int64  `json:"updatedAt"`
-}
-
-type Comment struct {
-	ID          string              `json:"id"`
-	PostID      string              `json:"postId"`
-	ParentID    string              `json:"parentId"`
-	Pubkey      string              `json:"pubkey"`
-	OpID        string              `json:"opId,omitempty"`
-	Body        string              `json:"body"`
-	Attachments []CommentAttachment `json:"attachments,omitempty"`
-	Score       int64               `json:"score"`
-	Timestamp   int64               `json:"timestamp"`
-	Lamport     int64               `json:"lamport"`
-	DeletedAt   int64               `json:"deletedAt,omitempty"`
-	DeletedBy   string              `json:"deletedBy,omitempty"`
-}
-
-type CommentAttachment struct {
-	Kind      string `json:"kind"`
-	Ref       string `json:"ref"`
-	Mime      string `json:"mime,omitempty"`
-	Width     int    `json:"width,omitempty"`
-	Height    int    `json:"height,omitempty"`
-	SizeBytes int64  `json:"sizeBytes,omitempty"`
-}
-
-type ModerationState struct {
-	TargetPubkey string `json:"targetPubkey"`
-	Action       string `json:"action"`
-	SourceAdmin  string `json:"sourceAdmin"`
-	Timestamp    int64  `json:"timestamp"`
-	Lamport      int64  `json:"lamport"`
-	Reason       string `json:"reason"`
-}
-
-type ModerationLog struct {
-	ID           int64  `json:"id"`
-	TargetPubkey string `json:"targetPubkey"`
-	Action       string `json:"action"`
-	SourceAdmin  string `json:"sourceAdmin"`
-	Timestamp    int64  `json:"timestamp"`
-	Lamport      int64  `json:"lamport"`
-	Reason       string `json:"reason"`
-	Result       string `json:"result"`
-}
-
-type GovernancePolicy struct {
-	HideHistoryOnShadowBan bool `json:"hideHistoryOnShadowBan"`
-}
-
-type P2PConfig struct {
-	ListenPort int      `json:"listenPort"`
-	RelayPeers []string `json:"relayPeers"`
-	AutoStart  bool     `json:"autoStart"`
-	UpdatedAt  int64    `json:"updatedAt"`
-}
-
-type PrivacySettings struct {
-	ShowOnlineStatus bool  `json:"showOnlineStatus"`
-	AllowSearch      bool  `json:"allowSearch"`
-	UpdatedAt        int64 `json:"updatedAt"`
-}
-
-type IdentityState struct {
-	Pubkey             string `json:"pubkey"`
-	State              string `json:"state"`
-	StorageCommitBytes int64  `json:"storageCommitBytes"`
-	PublicQuotaBytes   int64  `json:"publicQuotaBytes"`
-	PrivateQuotaBytes  int64  `json:"privateQuotaBytes"`
-	UpdatedAt          int64  `json:"updatedAt"`
-}
-
-type StorageUsage struct {
-	PrivateUsedBytes int64 `json:"privateUsedBytes"`
-	PublicUsedBytes  int64 `json:"publicUsedBytes"`
-	PrivateQuota     int64 `json:"privateQuota"`
-	PublicQuota      int64 `json:"publicQuota"`
-	TotalQuota       int64 `json:"totalQuota"`
-}
-
-type FeedStreamItem struct {
-	Post                ForumMessage `json:"post"`
-	Reason              string       `json:"reason"`
-	IsSubscribed        bool         `json:"isSubscribed"`
-	RecommendationScore float64      `json:"recommendationScore"`
-}
-
-type FeedStream struct {
-	Items       []FeedStreamItem `json:"items"`
-	Algorithm   string           `json:"algorithm"`
-	GeneratedAt int64            `json:"generatedAt"`
-}
-
-type PostIndexPage struct {
-	Items      []PostIndex `json:"items"`
-	NextCursor string      `json:"nextCursor"`
-}
-
-type FavoriteOpRecord struct {
-	OpID      string `json:"opId"`
-	Pubkey    string `json:"pubkey"`
-	PostID    string `json:"postId"`
-	Op        string `json:"op"`
-	CreatedAt int64  `json:"createdAt"`
-	Signature string `json:"signature"`
-}
-
-type EntityOpRecord struct {
-	OpID          string `json:"opId"`
-	EntityType    string `json:"entityType"`
-	EntityID      string `json:"entityId"`
-	OpType        string `json:"opType"`
-	AuthorPubkey  string `json:"authorPubkey"`
-	Lamport       int64  `json:"lamport"`
-	Timestamp     int64  `json:"timestamp"`
-	SchemaVersion int    `json:"schemaVersion"`
-	AuthScope     string `json:"authScope"`
-	PayloadJSON   string `json:"payloadJson"`
-}
-
-type TombstoneGCResult struct {
-	ScannedPosts    int `json:"scannedPosts"`
-	DeletedPosts    int `json:"deletedPosts"`
-	ScannedComments int `json:"scannedComments"`
-	DeletedComments int `json:"deletedComments"`
-}
-
-type GovernanceAdmin struct {
-	AdminPubkey string `json:"adminPubkey"`
-	Role        string `json:"role"`
-	Active      bool   `json:"active"`
-}
-
-type SyncPostDigest struct {
-	ID               string `json:"id"`
-	Pubkey           string `json:"pubkey"`
-	OpID             string `json:"op_id,omitempty"`
-	OpType           string `json:"op_type,omitempty"`
-	Deleted          bool   `json:"deleted,omitempty"`
-	DeletedAtLamport int64  `json:"deleted_at_lamport,omitempty"`
-	Title            string `json:"title"`
-	ContentCID       string `json:"content_cid"`
-	ImageCID         string `json:"image_cid"`
-	ThumbCID         string `json:"thumb_cid"`
-	ImageMIME        string `json:"image_mime"`
-	ImageSize        int64  `json:"image_size"`
-	ImageWidth       int    `json:"image_width"`
-	ImageHeight      int    `json:"image_height"`
-	Timestamp        int64  `json:"timestamp"`
-	Lamport          int64  `json:"lamport"`
-	SubID            string `json:"sub_id"`
-}
-
-type SyncCommentDigest struct {
-	ID               string              `json:"id"`
-	PostID           string              `json:"post_id"`
-	ParentID         string              `json:"parent_id"`
-	Pubkey           string              `json:"pubkey"`
-	OpID             string              `json:"op_id,omitempty"`
-	OpType           string              `json:"op_type,omitempty"`
-	Deleted          bool                `json:"deleted,omitempty"`
-	DeletedAtLamport int64               `json:"deleted_at_lamport,omitempty"`
-	DisplayName      string              `json:"display_name"`
-	AvatarURL        string              `json:"avatar_url"`
-	Body             string              `json:"body"`
-	Attachments      []CommentAttachment `json:"attachments,omitempty"`
-	Score            int64               `json:"score"`
-	Timestamp        int64               `json:"timestamp"`
-	Lamport          int64               `json:"lamport"`
-}
-
-type IncomingMessage struct {
-	Type                   string              `json:"type"`
-	OpType                 string              `json:"op_type,omitempty"`
-	OpID                   string              `json:"op_id,omitempty"`
-	SchemaVersion          int                 `json:"schema_version,omitempty"`
-	AuthScope              string              `json:"auth_scope,omitempty"`
-	ID                     string              `json:"id"`
-	Pubkey                 string              `json:"pubkey"`
-	VoterPubkey            string              `json:"voter_pubkey"`
-	VoteState              string              `json:"vote_state,omitempty"`
-	PostID                 string              `json:"post_id"`
-	CommentID              string              `json:"comment_id"`
-	ParentID               string              `json:"parent_id"`
-	DisplayName            string              `json:"display_name"`
-	AvatarURL              string              `json:"avatar_url"`
-	Title                  string              `json:"title"`
-	Body                   string              `json:"body"`
-	CommentAttachments     []CommentAttachment `json:"comment_attachments,omitempty"`
-	ContentCID             string              `json:"content_cid"`
-	ImageCID               string              `json:"image_cid"`
-	ThumbCID               string              `json:"thumb_cid"`
-	ImageMIME              string              `json:"image_mime"`
-	ImageSize              int64               `json:"image_size"`
-	ImageWidth             int                 `json:"image_width"`
-	ImageHeight            int                 `json:"image_height"`
-	ImageDataBase64        string              `json:"image_data_base64,omitempty"`
-	IsThumbnail            bool                `json:"is_thumbnail,omitempty"`
-	RequestID              string              `json:"request_id"`
-	RequesterPeerID        string              `json:"requester_peer_id"`
-	ResponderPeerID        string              `json:"responder_peer_id"`
-	SyncSinceTimestamp     int64               `json:"sync_since_timestamp,omitempty"`
-	SyncWindowSeconds      int64               `json:"sync_window_seconds,omitempty"`
-	SyncBatchSize          int                 `json:"sync_batch_size,omitempty"`
-	CommentSinceTs         int64               `json:"comment_since_ts,omitempty"`
-	CommentBatchSize       int                 `json:"comment_batch_size,omitempty"`
-	GovernanceSinceTs      int64               `json:"governance_since_ts,omitempty"`
-	GovernanceBatchSize    int                 `json:"governance_batch_size,omitempty"`
-	GovernanceLogSinceTs   int64               `json:"governance_log_since_ts,omitempty"`
-	GovernanceLogLimit     int                 `json:"governance_log_limit,omitempty"`
-	GovernanceStates       []ModerationState   `json:"governance_states,omitempty"`
-	GovernanceLogs         []ModerationLog     `json:"governance_logs,omitempty"`
-	FavoriteOpID           string              `json:"favorite_op_id,omitempty"`
-	FavoriteOp             string              `json:"favorite_op,omitempty"`
-	FavoriteSinceTs        int64               `json:"favorite_since_ts,omitempty"`
-	FavoriteBatchSize      int                 `json:"favorite_batch_size,omitempty"`
-	FavoriteOps            []FavoriteOpRecord  `json:"favorite_ops,omitempty"`
-	Found                  bool                `json:"found"`
-	SizeBytes              int64               `json:"size_bytes"`
-	Content                string              `json:"content"`
-	SubID                  string              `json:"sub_id"`
-	SubTitle               string              `json:"sub_title"`
-	SubDesc                string              `json:"sub_desc"`
-	Timestamp              int64               `json:"timestamp"`
-	Lamport                int64               `json:"lamport,omitempty"`
-	DeletedAtLamport       int64               `json:"deleted_at_lamport,omitempty"`
-	Signature              string              `json:"signature"`
-	TargetPubkey           string              `json:"target_pubkey"`
-	AdminPubkey            string              `json:"admin_pubkey"`
-	Reason                 string              `json:"reason"`
-	Summaries              []SyncPostDigest    `json:"summaries,omitempty"`
-	CommentSummaries       []SyncCommentDigest `json:"comment_summaries,omitempty"`
-	KnownPeers             []KnownPeerExchange `json:"known_peers,omitempty"`
-	RelayCapable           bool                `json:"relay_capable,omitempty"`
-	PublicReachable        bool                `json:"public_reachable,omitempty"`
-	HideHistoryOnShadowBan bool                `json:"hide_history_on_shadowban"`
-}
-
-type KnownPeerExchange struct {
-	PeerID          string   `json:"peer_id"`
-	Addrs           []string `json:"addrs"`
-	RelayCapable    bool     `json:"relay_capable"`
-	PublicReachable bool     `json:"public_reachable"`
-	LastSeen        int64    `json:"last_seen"`
-}
-
-type LamportVersion struct {
-	Lamport int64
-	Author  string
-	OpID    string
-}
-
-const (
-	postOpTypeCreate    = "CREATE"
-	postOpTypeUpdate    = "UPDATE"
-	postOpTypeDelete    = "DELETE"
-	lamportSchemaV2     = 2
-	authScopeUser       = "user"
-	entityTypePost      = "post"
-	entityTypeComment   = "comment"
-	voteStateNone       = "NONE"
-	voteStateUp         = "UP"
-	voteStateDown       = "DOWN"
-	defaultOpNonceBytes = 8
-)
 
 func compareLamportVersion(left LamportVersion, right LamportVersion) int {
 	if left.Lamport > right.Lamport {
@@ -1107,12 +758,53 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			value INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS message_outbox (
+			id TEXT PRIMARY KEY,
+			message_type TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			available_at INTEGER NOT NULL,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			source_pubkey TEXT NOT NULL,
+			target_entity_id TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT 'post',
+			post_id TEXT NOT NULL DEFAULT '',
+			is_read INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			UNIQUE(type, source_pubkey, target_entity_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);`,
 	}
 
 	for _, statement := range schema {
 		if _, err := db.Exec(statement); err != nil {
 			return err
 		}
+	}
+
+	// --- notifications table migrations (for DBs created before notification center) ---
+	if _, err := db.Exec(`ALTER TABLE notifications ADD COLUMN target_type TEXT NOT NULL DEFAULT 'post';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE notifications ADD COLUMN post_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE notifications ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read, created_at DESC);`); err != nil {
+		return err
 	}
 
 	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN sub_id TEXT NOT NULL DEFAULT 'general';`); err != nil {
@@ -1303,6 +995,25 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
+	}
+
+	if _, err := db.Exec(`ALTER TABLE message_outbox ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE message_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE message_outbox ADD COLUMN last_error TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_message_outbox_available_at ON message_outbox(available_at, created_at);`); err != nil {
+		return err
 	}
 
 	if _, err := db.Exec(`UPDATE messages SET sub_id = ? WHERE COALESCE(TRIM(sub_id), '') = '';`, defaultSubID); err != nil {
@@ -1524,6 +1235,31 @@ func (a *App) GetFeedBySub(subID string) ([]ForumMessage, error) {
 	return a.GetFeedBySubSorted(subID, "hot")
 }
 
+func normalizeFeedSortMode(sortMode string) string {
+	sortMode = strings.ToLower(strings.TrimSpace(sortMode))
+	switch sortMode {
+	case "", "hot":
+		return "hot"
+	case "new", "top-day", "top-week", "top-month", "top-all":
+		return sortMode
+	default:
+		return "hot"
+	}
+}
+
+func topWindowStartUnix(sortMode string, now int64) int64 {
+	switch normalizeFeedSortMode(sortMode) {
+	case "top-day":
+		return now - 24*60*60
+	case "top-week":
+		return now - 7*24*60*60
+	case "top-month":
+		return now - 30*24*60*60
+	default:
+		return 0
+	}
+}
+
 func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")
@@ -1535,17 +1271,14 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	}
 
 	subID = normalizeSubID(subID)
-	sortMode = strings.ToLower(strings.TrimSpace(sortMode))
-	if sortMode == "" {
-		sortMode = "hot"
-	}
+	sortMode = normalizeFeedSortMode(sortMode)
 
 	orderBy := "score DESC, timestamp DESC"
 	if sortMode == "new" {
 		orderBy = "timestamp DESC"
 	}
 
-	if sortMode != "hot" {
+	if sortMode == "new" {
 		query := fmt.Sprintf(`
 			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
 			FROM messages
@@ -1628,6 +1361,28 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	}
 
 	now := time.Now().Unix()
+	if strings.HasPrefix(sortMode, "top-") {
+		windowStart := topWindowStartUnix(sortMode, now)
+		if windowStart > 0 {
+			filtered := make([]ForumMessage, 0, len(messages))
+			for _, message := range messages {
+				if message.Timestamp >= windowStart {
+					filtered = append(filtered, message)
+				}
+			}
+			messages = filtered
+		}
+		sort.SliceStable(messages, func(i int, j int) bool {
+			if messages[i].Score == messages[j].Score {
+				return messages[i].Timestamp > messages[j].Timestamp
+			}
+			return messages[i].Score > messages[j].Score
+		})
+		if len(messages) > 200 {
+			messages = messages[:200]
+		}
+		return messages, nil
+	}
 	sort.SliceStable(messages, func(i int, j int) bool {
 		left := computeHotScore(messages[i].Score, messages[i].Timestamp, now)
 		right := computeHotScore(messages[j].Score, messages[j].Timestamp, now)
@@ -1644,8 +1399,6 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	return messages, nil
 }
 
-
-
 func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostIndex, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")
@@ -1657,10 +1410,7 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 	}
 
 	subID = normalizeSubID(subID)
-	sortMode = strings.ToLower(strings.TrimSpace(sortMode))
-	if sortMode == "" {
-		sortMode = "hot"
-	}
+	sortMode = normalizeFeedSortMode(sortMode)
 
 	query := `
 		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
@@ -1706,8 +1456,25 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 		return nil, err
 	}
 
-	if sortMode == "hot" {
-		now := time.Now().Unix()
+	now := time.Now().Unix()
+	if strings.HasPrefix(sortMode, "top-") {
+		windowStart := topWindowStartUnix(sortMode, now)
+		if windowStart > 0 {
+			filtered := make([]PostIndex, 0, len(items))
+			for _, item := range items {
+				if item.Timestamp >= windowStart {
+					filtered = append(filtered, item)
+				}
+			}
+			items = filtered
+		}
+		sort.SliceStable(items, func(i int, j int) bool {
+			if items[i].Score == items[j].Score {
+				return items[i].Timestamp > items[j].Timestamp
+			}
+			return items[i].Score > items[j].Score
+		})
+	} else if sortMode == "hot" {
 		sort.SliceStable(items, func(i int, j int) bool {
 			left := computeHotScore(items[i].Score, items[i].Timestamp, now)
 			right := computeHotScore(items[j].Score, items[j].Timestamp, now)
@@ -1880,6 +1647,133 @@ func (a *App) GetMyPosts(limit int, cursor string) (PostIndexPage, error) {
 
 	page.Items = append(page.Items, resultRows...)
 	return page, nil
+}
+
+func (a *App) GetPostsByAuthor(pubkey string, limit int) ([]PostIndex, error) {
+	if a.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return nil, errors.New("author pubkey is required")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+
+	viewerPubkey := ""
+	if identity, err := a.getLocalIdentity(); err == nil {
+		viewerPubkey = strings.TrimSpace(identity.PublicKey)
+	}
+
+	rows, err := a.db.Query(`
+		SELECT
+			id,
+			pubkey,
+			title,
+			SUBSTR(body, 1, 140) AS body_preview,
+			content_cid,
+			image_cid,
+			thumb_cid,
+			image_mime,
+			image_size,
+			image_width,
+			image_height,
+			score,
+			timestamp,
+			zone,
+			sub_id,
+			visibility
+		FROM messages
+		WHERE pubkey = ?
+		  AND visibility != 'deleted'
+		  AND (
+			(zone = 'public' AND (visibility = 'normal' OR pubkey = ?))
+			OR (zone = 'private' AND pubkey = ? AND pubkey = ?)
+		  )
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ?;
+	`, pubkey, viewerPubkey, viewerPubkey, pubkey, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]PostIndex, 0, limit)
+	for rows.Next() {
+		var row PostIndex
+		if err = rows.Scan(
+			&row.ID,
+			&row.Pubkey,
+			&row.Title,
+			&row.BodyPreview,
+			&row.ContentCID,
+			&row.ImageCID,
+			&row.ThumbCID,
+			&row.ImageMIME,
+			&row.ImageSize,
+			&row.ImageWidth,
+			&row.ImageHeight,
+			&row.Score,
+			&row.Timestamp,
+			&row.Zone,
+			&row.SubID,
+			&row.Visibility,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+
+	return items, rows.Err()
+}
+
+func (a *App) GetSubStats(subID string) (SubStats, error) {
+	if a.db == nil {
+		return SubStats{}, errors.New("database not initialized")
+	}
+
+	subID = normalizeSubID(subID)
+	if subID == "" {
+		return SubStats{}, errors.New("sub id is required")
+	}
+
+	stats := SubStats{SubID: subID}
+	if err := a.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM sub_subscriptions
+		WHERE sub_id = ?;
+	`, subID).Scan(&stats.SubscriberCount); err != nil {
+		return SubStats{}, err
+	}
+
+	if err := a.db.QueryRow(`
+		SELECT COUNT(m.sub_id), COUNT(DISTINCT m.pubkey), COALESCE(MAX(subs.created_at), 0)
+		FROM subs
+		LEFT JOIN (
+			SELECT sub_id, pubkey, timestamp
+			FROM messages
+			WHERE zone = 'public' AND visibility = 'normal'
+		) m ON m.sub_id = subs.id
+		WHERE subs.id = ?;
+	`, subID).Scan(&stats.PostCount, &stats.ActiveAuthors, &stats.CreatedAt); err != nil {
+		return SubStats{}, err
+	}
+
+	since := time.Now().Unix() - 24*60*60
+	if err := a.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM messages
+		WHERE sub_id = ?
+		  AND zone = 'public'
+		  AND visibility = 'normal'
+		  AND timestamp >= ?;
+	`, subID, since).Scan(&stats.RecentPosts24h); err != nil {
+		return SubStats{}, err
+	}
+
+	return stats, nil
 }
 
 func (a *App) GetPostBodyByCID(contentCID string) (PostBodyBlob, error) {
@@ -4131,6 +4025,11 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 	}
 
 	message.Type = strings.ToUpper(strings.TrimSpace(message.Type))
+	if signedIncomingMessageType(message.Type) {
+		if err := a.verifyIncomingMessageSignature(message); err != nil {
+			return err
+		}
+	}
 
 	switch message.Type {
 	case "SUB_CREATE":
@@ -4227,7 +4126,15 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid post upvote payload")
 		}
 
-		return a.applyPostUpvote(voterPubkey, message.PostID, message.OpID)
+		if err := a.applyPostUpvote(voterPubkey, message.PostID, message.OpID); err != nil {
+			return err
+		}
+		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
+				a.tryGenerateNotification(NotifTypePostUpvote, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case "POST_DOWNVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -4237,7 +4144,15 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid post downvote payload")
 		}
 
-		return a.applyPostDownvote(voterPubkey, message.PostID, message.OpID)
+		if err := a.applyPostDownvote(voterPubkey, message.PostID, message.OpID); err != nil {
+			return err
+		}
+		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
+				a.tryGenerateNotification(NotifTypePostDownvote, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case "POST_VOTE_SET":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -4246,7 +4161,19 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid post vote set payload")
 		}
-		return a.applyPostVoteState(voterPubkey, message.PostID, message.VoteState, message.OpID)
+		if err := a.applyPostVoteState(voterPubkey, message.PostID, message.VoteState, message.OpID); err != nil {
+			return err
+		}
+		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
+				notifType := NotifTypePostUpvote
+				if strings.TrimSpace(message.VoteState) == "down" {
+					notifType = NotifTypePostDownvote
+				}
+				a.tryGenerateNotification(notifType, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case "COMMENT_UPVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -4256,7 +4183,15 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid comment upvote payload")
 		}
 
-		return a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID, message.OpID)
+		if err := a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID, message.OpID); err != nil {
+			return err
+		}
+		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
+				a.tryGenerateNotification(NotifTypeCommentUpvote, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case "COMMENT_DOWNVOTE":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -4266,7 +4201,15 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return errors.New("invalid comment downvote payload")
 		}
 
-		return a.applyCommentDownvote(voterPubkey, message.CommentID, message.PostID, message.OpID)
+		if err := a.applyCommentDownvote(voterPubkey, message.CommentID, message.PostID, message.OpID); err != nil {
+			return err
+		}
+		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
+				a.tryGenerateNotification(NotifTypeCommentDownvote, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case "COMMENT_VOTE_SET":
 		voterPubkey := strings.TrimSpace(message.VoterPubkey)
 		if voterPubkey == "" {
@@ -4275,7 +4218,19 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
 			return errors.New("invalid comment vote set payload")
 		}
-		return a.applyCommentVoteState(voterPubkey, message.CommentID, message.PostID, message.VoteState, message.OpID)
+		if err := a.applyCommentVoteState(voterPubkey, message.CommentID, message.PostID, message.VoteState, message.OpID); err != nil {
+			return err
+		}
+		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
+			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
+				notifType := NotifTypeCommentUpvote
+				if strings.TrimSpace(message.VoteState) == "down" {
+					notifType = NotifTypeCommentDownvote
+				}
+				a.tryGenerateNotification(notifType, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
+			}
+		}
+		return nil
 	case messageTypeFavoriteOp:
 		localIdentity, err := a.getLocalIdentity()
 		if err != nil {
@@ -4369,6 +4324,26 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			Timestamp:   message.Timestamp,
 			Lamport:     message.Lamport,
 		})
+		if err == nil {
+			postID := strings.TrimSpace(message.PostID)
+			// Notify post author about new comment (only if post author is local user).
+			if postAuthor, paErr := a.getPostAuthor(postID); paErr == nil && postAuthor != "" {
+				localID, liErr := a.getLocalIdentity()
+				if liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
+					a.tryGenerateNotification(NotifTypePostComment, message.Pubkey, message.ID, "comment", postID, message.Timestamp)
+				}
+			}
+			// Notify parent comment author about reply (only if parent author is local user).
+			parentID := strings.TrimSpace(message.ParentID)
+			if parentID != "" {
+				if parentAuthor, pcErr := a.getCommentAuthor(parentID); pcErr == nil && parentAuthor != "" {
+					localID, liErr := a.getLocalIdentity()
+					if liErr == nil && strings.TrimSpace(localID.PublicKey) == parentAuthor {
+						a.tryGenerateNotification(NotifTypeCommentReply, message.Pubkey, message.ID, "comment", postID, message.Timestamp)
+					}
+				}
+			}
+		}
 		return err
 	case "SHADOW_BAN":
 		trusted, err := a.isTrustedAdmin(message.AdminPubkey)
@@ -4385,7 +4360,13 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if err != nil {
 			return err
 		}
-		return a.upsertModeration(message.TargetPubkey, "SHADOW_BAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason)
+		if err := a.upsertModeration(message.TargetPubkey, "SHADOW_BAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason); err != nil {
+			return err
+		}
+		if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == strings.TrimSpace(message.TargetPubkey) {
+			a.tryGenerateNotification(NotifTypeGovernance, message.AdminPubkey, strings.TrimSpace(message.TargetPubkey), "user", "", message.Timestamp)
+		}
+		return nil
 	case "UNBAN":
 		trusted, err := a.isTrustedAdmin(message.AdminPubkey)
 		if err != nil {
@@ -4401,7 +4382,13 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if err != nil {
 			return err
 		}
-		return a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason)
+		if err := a.upsertModeration(message.TargetPubkey, "UNBAN", message.AdminPubkey, message.Timestamp, lamport, message.Reason); err != nil {
+			return err
+		}
+		if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == strings.TrimSpace(message.TargetPubkey) {
+			a.tryGenerateNotification(NotifTypeGovernance, message.AdminPubkey, strings.TrimSpace(message.TargetPubkey), "user", "", message.Timestamp)
+		}
+		return nil
 	case "POST":
 		if scope := strings.TrimSpace(strings.ToLower(message.AuthScope)); scope != "" && scope != authScopeUser {
 			return errors.New("invalid post auth scope")
@@ -7372,10 +7359,10 @@ func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body s
 
 	// Verify post exists and user is author
 	var (
-		currentTitle string
-		currentBody  string
-		currentSubID string
-		currentZone  string
+		currentTitle  string
+		currentBody   string
+		currentSubID  string
+		currentZone   string
 		currentAuthor string
 	)
 
@@ -7409,14 +7396,14 @@ func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body s
 	}
 
 	updatedPost := ForumMessage{
-		ID:          postID,
-		Pubkey:      pubkey,
-		Title:       title,
-		Body:        body, // Full body
-		Timestamp:   now,
-		Lamport:     lamport,
-		Zone:        currentZone,
-		SubID:       currentSubID,
+		ID:        postID,
+		Pubkey:    pubkey,
+		Title:     title,
+		Body:      body, // Full body
+		Timestamp: now,
+		Lamport:   lamport,
+		Zone:      currentZone,
+		SubID:     currentSubID,
 	}
 
 	var (

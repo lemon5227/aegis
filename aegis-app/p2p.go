@@ -25,23 +25,7 @@ import (
 const forumTopicName = "aegis-forum-global"
 const mdnsServiceTag = "aegis-forum-mdns"
 
-const (
-	messageTypeContentFetchRequest    = "CONTENT_FETCH_REQUEST"
-	messageTypeContentFetchResponse   = "CONTENT_FETCH_RESPONSE"
-	messageTypeMediaFetchRequest      = "MEDIA_FETCH_REQUEST"
-	messageTypeMediaFetchResponse     = "MEDIA_FETCH_RESPONSE"
-	messageTypeSyncSummaryRequest     = "SYNC_SUMMARY_REQUEST"
-	messageTypeSyncSummaryResponse    = "SYNC_SUMMARY_RESPONSE"
-	messageTypeCommentSyncRequest     = "COMMENT_SYNC_REQUEST"
-	messageTypeCommentSyncResponse    = "COMMENT_SYNC_RESPONSE"
-	messageTypeGovernanceSyncRequest  = "GOVERNANCE_SYNC_REQUEST"
-	messageTypeGovernanceSyncResponse = "GOVERNANCE_SYNC_RESPONSE"
-	messageTypeFavoriteOp             = "FAVORITE_OP"
-	messageTypeFavoriteSyncRequest    = "FAVORITE_SYNC_REQUEST"
-	messageTypeFavoriteSyncResponse   = "FAVORITE_SYNC_RESPONSE"
-	messageTypePeerExchangeRequest    = "PEER_EXCHANGE_REQUEST"
-	messageTypePeerExchangeResponse   = "PEER_EXCHANGE_RESPONSE"
-)
+
 
 var (
 	errContentFetchNoPeers   = errors.New("content fetch no peers")
@@ -192,12 +176,14 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 	go a.runAntiEntropySyncWorker(ctx, host.ID())
 	go a.runPeerExchangeWorker(ctx, host.ID())
 	go a.runReleaseAlertWorker(ctx)
+	go a.runOutboxWorker(ctx)
 
 	knownBootstraps := a.getKnownPeerBootstrapAddresses(knownPeerBootstrapLimit)
 	bootstrapTargets := mergePeerAddressLists(bootstrapPeers, knownBootstraps)
 	a.connectBootstrapPeersAsync(bootstrapTargets)
 
 	a.publishLocalProfileUpdateLocked()
+	a.flushOutgoingMessagesAsync()
 
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "p2p:updated")
@@ -293,6 +279,7 @@ func (a *App) connectPeerLocked(address string) error {
 	a.rememberConnectedPeer(*info, true)
 
 	a.publishLocalProfileUpdateLocked()
+	a.flushOutgoingMessagesAsync()
 	return nil
 }
 
@@ -351,6 +338,17 @@ func (a *App) publishPayloadAsync(topic *pubsub.Topic, payload []byte, label str
 	}(baseCtx, topic, append([]byte(nil), payload...), label)
 }
 
+func (a *App) signAndQueueOutgoingMessage(messageType string, message IncomingMessage) (IncomingMessage, error) {
+	signedMessage, err := a.signIncomingMessage(message)
+	if err != nil {
+		return IncomingMessage{}, err
+	}
+	if err = a.queueOutgoingMessage(messageType, signedMessage); err != nil {
+		return IncomingMessage{}, err
+	}
+	return signedMessage, nil
+}
+
 func resolveVoteBroadcastDebounce() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("AEGIS_VOTE_BROADCAST_DEBOUNCE_MS"))
 	if raw == "" {
@@ -395,13 +393,6 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 		delete(a.voteBroadcastSeq, voteKey)
 		a.voteBroadcastMu.Unlock()
 
-		a.p2pMu.Lock()
-		topic := a.p2pTopic
-		a.p2pMu.Unlock()
-		if topic == nil {
-			return
-		}
-
 		now := time.Now().Unix()
 		if cid == "" {
 			state, err := a.getPostVoteState(pubkey, pid)
@@ -420,11 +411,9 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 				VoteState:   state,
 				Timestamp:   now,
 			}
-			payload, err := json.Marshal(msg)
-			if err != nil {
-				return
+			if _, err := a.signAndQueueOutgoingMessage(outboxMessageTypePostVoteSet, msg); err != nil && a.ctx != nil {
+				runtime.LogWarningf(a.ctx, "queue post vote state failed: %v", err)
 			}
-			a.publishPayloadAsync(topic, payload, "POST_VOTE_SET")
 			return
 		}
 
@@ -445,11 +434,9 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 			VoteState:   state,
 			Timestamp:   now,
 		}
-		payload, err := json.Marshal(msg)
-		if err != nil {
-			return
+		if _, err := a.signAndQueueOutgoingMessage(outboxMessageTypeCommentVoteSet, msg); err != nil && a.ctx != nil {
+			runtime.LogWarningf(a.ctx, "queue comment vote state failed: %v", err)
 		}
-		a.publishPayloadAsync(topic, payload, "COMMENT_VOTE_SET")
 	}(seq, key, voterPubkey, postID, commentID)
 }
 
@@ -475,10 +462,6 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 		_, err = a.AddLocalPostStructuredToSub(pubkey, title, body, "public", subID)
 		return err
 	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
 
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
@@ -507,16 +490,9 @@ func (a *App) PublishPostStructuredToSub(pubkey string, title string, body strin
 		SubID:         normalizeSubID(subID),
 		Timestamp:     localPost.Timestamp,
 		Lamport:       localPost.Lamport,
-		Signature:     "",
 	}
-
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.publishPayloadAsync(topic, payload, "POST")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypePost, msg)
+	return err
 }
 
 func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string, imageBase64 string, imageMIME string, subID string) error {
@@ -541,10 +517,6 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 		_, err = a.AddLocalPostWithImageToSub(pubkey, title, body, "public", subID, imageBase64, imageMIME)
 		return err
 	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
 
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
@@ -579,16 +551,9 @@ func (a *App) PublishPostWithImageToSub(pubkey string, title string, body string
 		SubID:         normalizeSubID(subID),
 		Timestamp:     localPost.Timestamp,
 		Lamport:       localPost.Lamport,
-		Signature:     "",
 	}
-
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.publishPayloadAsync(topic, payload, "POST_WITH_IMAGE")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypePost, msg)
+	return err
 }
 
 func (a *App) PublishShadowBan(targetPubkey string, adminPubkey string, reason string) error {
@@ -676,16 +641,8 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 		Lamport:            localComment.Lamport,
 	}
 
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-	a.publishPayloadAsync(topic, payload, "COMMENT")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypeComment, msg)
+	return err
 }
 
 func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parentID string, body string, localImageDataURLs []string, externalImageURLs []string) error {
@@ -769,16 +726,8 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 		Lamport:            localComment.Lamport,
 	}
 
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-	a.publishPayloadAsync(topic, payload, "COMMENT_WITH_ATTACHMENTS")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypeComment, msg)
+	return err
 }
 
 func (a *App) PublishDeletePost(pubkey string, postID string) error {
@@ -798,13 +747,6 @@ func (a *App) PublishDeletePost(pubkey string, postID string) error {
 		return err
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-	if topic == nil {
-		return nil
-	}
-
 	msg := IncomingMessage{
 		Type:             "POST_DELETE",
 		OpType:           postOpTypeDelete,
@@ -817,12 +759,8 @@ func (a *App) PublishDeletePost(pubkey string, postID string) error {
 		Lamport:          lamport,
 		DeletedAtLamport: lamport,
 	}
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	a.publishPayloadAsync(topic, payload, "POST_DELETE")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypePost, msg)
+	return err
 }
 
 func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
@@ -843,13 +781,6 @@ func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
 		return err
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-	if topic == nil {
-		return nil
-	}
-
 	msg := IncomingMessage{
 		Type:             "COMMENT_DELETE",
 		OpType:           postOpTypeDelete,
@@ -863,12 +794,8 @@ func (a *App) PublishDeleteComment(pubkey string, commentID string) error {
 		Lamport:          lamport,
 		DeletedAtLamport: lamport,
 	}
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	a.publishPayloadAsync(topic, payload, "COMMENT_DELETE")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypeComment, msg)
+	return err
 }
 
 func (a *App) PublishPostUpvote(pubkey string, postID string) error {
@@ -887,11 +814,14 @@ func (a *App) PublishPostUpvote(pubkey string, postID string) error {
 		Timestamp:   time.Now().Unix(),
 	}
 
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
+	payload, err := json.Marshal(signedMessage)
+	if err != nil {
+		return err
+	}
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
@@ -916,11 +846,14 @@ func (a *App) PublishPostDownvote(pubkey string, postID string) error {
 		Timestamp:   time.Now().Unix(),
 	}
 
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
+	payload, err := json.Marshal(signedMessage)
+	if err != nil {
+		return err
+	}
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
@@ -947,11 +880,14 @@ func (a *App) PublishCommentUpvote(pubkey string, postID string, commentID strin
 		Timestamp:   time.Now().Unix(),
 	}
 
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
+	payload, err := json.Marshal(signedMessage)
+	if err != nil {
+		return err
+	}
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
@@ -978,11 +914,14 @@ func (a *App) PublishCommentDownvote(pubkey string, postID string, commentID str
 		Timestamp:   time.Now().Unix(),
 	}
 
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
+	payload, err := json.Marshal(signedMessage)
+	if err != nil {
+		return err
+	}
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
@@ -1016,16 +955,7 @@ func (a *App) publishFavoriteOperation(record FavoriteOpRecord) error {
 		Timestamp:    record.CreatedAt,
 		Signature:    record.Signature,
 	}
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-	a.publishPayloadAsync(topic, payload, "FAVORITE_OP")
-	return nil
+	return a.queueOutgoingMessage(outboxMessageTypeFavorite, msg)
 }
 
 func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL string) error {
@@ -1037,31 +967,17 @@ func (a *App) PublishProfileUpdate(pubkey string, displayName string, avatarURL 
 	now := time.Now().Unix()
 	msg := IncomingMessage{
 		Type:        "PROFILE_UPDATE",
+		OpID:        buildMessageID(pubkey, fmt.Sprintf("profile|%d", now), now),
 		Pubkey:      pubkey,
 		DisplayName: strings.TrimSpace(displayName),
 		AvatarURL:   strings.TrimSpace(avatarURL),
 		Timestamp:   now,
 	}
-
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
-	if err = a.ProcessIncomingMessage(payload); err != nil {
-		return err
-	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return nil
-	}
-
-	return topic.Publish(ctx, payload)
+	return a.queueOutgoingMessage(outboxMessageTypeProfileUpdate, signedMessage)
 }
 
 func (a *App) publishLocalProfileUpdateLocked() {
@@ -1085,18 +1001,18 @@ func (a *App) publishLocalProfileUpdateLocked() {
 
 	msg := IncomingMessage{
 		Type:        "PROFILE_UPDATE",
+		OpID:        buildMessageID(pubkey, fmt.Sprintf("profile|%d", profile.UpdatedAt), profile.UpdatedAt),
 		Pubkey:      pubkey,
 		DisplayName: strings.TrimSpace(profile.DisplayName),
 		AvatarURL:   strings.TrimSpace(profile.AvatarURL),
-		Timestamp:   time.Now().Unix(),
+		Timestamp:   profile.UpdatedAt,
 	}
-
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return
+	if msg.Timestamp <= 0 {
+		msg.Timestamp = time.Now().Unix()
 	}
-
-	_ = a.p2pTopic.Publish(a.p2pCtx, payload)
+	if _, err = a.signAndQueueOutgoingMessage(outboxMessageTypeProfileUpdate, msg); err != nil && a.ctx != nil {
+		runtime.LogWarningf(a.ctx, "queue profile update failed: %v", err)
+	}
 }
 
 func (a *App) PublishGovernancePolicy(hideHistoryOnShadowBan bool) error {
@@ -1114,33 +1030,32 @@ func (a *App) PublishGovernancePolicy(hideHistoryOnShadowBan bool) error {
 		return errors.New("admin pubkey is not trusted")
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	now := time.Now().Unix()
-	msg := IncomingMessage{
-		Type:                   "GOVERNANCE_POLICY_UPDATE",
-		AdminPubkey:            adminPubkey,
-		HideHistoryOnShadowBan: hideHistoryOnShadowBan,
-		Timestamp:              now,
-	}
-
-	payload, err := json.Marshal(msg)
+	lamport, err := a.nextLamport()
 	if err != nil {
 		return err
 	}
+	msg := IncomingMessage{
+		Type:                   "GOVERNANCE_POLICY_UPDATE",
+		OpID:                   buildMessageID(adminPubkey, fmt.Sprintf("governance-policy|%t|%d", hideHistoryOnShadowBan, now), now),
+		AdminPubkey:            adminPubkey,
+		HideHistoryOnShadowBan: hideHistoryOnShadowBan,
+		Timestamp:              now,
+		Lamport:                lamport,
+	}
 
+	signedMessage, err := a.signIncomingMessage(msg)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(signedMessage)
+	if err != nil {
+		return err
+	}
 	if err = a.ProcessIncomingMessage(payload); err != nil {
 		return err
 	}
-
-	return topic.Publish(ctx, payload)
+	return a.queueOutgoingMessage(outboxMessageTypeGovernancePolicy, signedMessage)
 }
 
 func (a *App) PublishUnban(targetPubkey string, adminPubkey string, reason string) error {
@@ -1168,15 +1083,6 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 		return errors.New("admin pubkey is not trusted")
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	ctx := a.p2pCtx
-	a.p2pMu.Unlock()
-
-	if topic == nil || ctx == nil {
-		return errors.New("p2p not started")
-	}
-
 	now := time.Now().Unix()
 	lamport, err := a.nextLamport()
 	if err != nil {
@@ -1186,6 +1092,7 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 		Type:         action,
 		TargetPubkey: strings.TrimSpace(targetPubkey),
 		AdminPubkey:  strings.TrimSpace(adminPubkey),
+		OpID:         buildMessageID(adminPubkey, fmt.Sprintf("governance|%s|%s|%d", action, targetPubkey, now), now),
 		Timestamp:    now,
 		Lamport:      lamport,
 		Reason:       strings.TrimSpace(reason),
@@ -1195,12 +1102,11 @@ func (a *App) publishGovernanceMessage(action string, targetPubkey string, admin
 		return err
 	}
 
-	payload, err := json.Marshal(msg)
+	signedMessage, err := a.signIncomingMessage(msg)
 	if err != nil {
 		return err
 	}
-
-	return topic.Publish(ctx, payload)
+	return a.queueOutgoingMessage(outboxMessageTypeGovernance, signedMessage)
 }
 
 func (a *App) GetP2PStatus() P2PStatus {
@@ -3112,6 +3018,7 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	}
 
 	n.app.publishLocalProfileUpdateLocked()
+	n.app.flushOutgoingMessagesAsync()
 	n.app.p2pMu.Unlock()
 
 	if n.app.ctx != nil {
@@ -3363,10 +3270,6 @@ func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body
 		return err
 	}
 
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
-
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
 		profile = Profile{}
@@ -3400,16 +3303,9 @@ func (a *App) PublishPostUpdate(pubkey string, postID string, title string, body
 		SubID:         normalizeSubID(localPost.SubID),
 		Timestamp:     localPost.Timestamp,
 		Lamport:       localPost.Lamport,
-		Signature:     "",
 	}
-
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.publishPayloadAsync(topic, payload, "POST_UPDATE")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypePost, msg)
+	return err
 }
 
 func (a *App) PublishCommentUpdate(pubkey string, commentID string, body string) error {
@@ -3428,10 +3324,6 @@ func (a *App) PublishCommentUpdate(pubkey string, commentID string, body string)
 		_, err = a.UpdateLocalComment(pubkey, commentID, body)
 		return err
 	}
-
-	a.p2pMu.Lock()
-	topic := a.p2pTopic
-	a.p2pMu.Unlock()
 
 	profile, profileErr := a.GetProfile(pubkey)
 	if profileErr != nil {
@@ -3460,12 +3352,6 @@ func (a *App) PublishCommentUpdate(pubkey string, commentID string, body string)
 		Timestamp:          localComment.Timestamp,
 		Lamport:            localComment.Lamport,
 	}
-
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	a.publishPayloadAsync(topic, payload, "COMMENT_UPDATE")
-	return nil
+	_, err = a.signAndQueueOutgoingMessage(outboxMessageTypeComment, msg)
+	return err
 }

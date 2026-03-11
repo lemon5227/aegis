@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"math"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -66,28 +66,12 @@ type App struct {
 	releaseAlertActive map[string]ReleaseAlert
 	voteBroadcastMu    sync.Mutex
 	voteBroadcastSeq   map[string]int64
+	outboxFlushMu      sync.Mutex
 
 	defaultRecStrategy string
 }
 
-type AntiEntropyStats struct {
-	SyncRequestsSent       int64 `json:"syncRequestsSent"`
-	SyncRequestsReceived   int64 `json:"syncRequestsReceived"`
-	SyncResponsesReceived  int64 `json:"syncResponsesReceived"`
-	SyncSummariesReceived  int64 `json:"syncSummariesReceived"`
-	IndexInsertions        int64 `json:"indexInsertions"`
-	BlobFetchAttempts      int64 `json:"blobFetchAttempts"`
-	BlobFetchSuccess       int64 `json:"blobFetchSuccess"`
-	BlobFetchFailures      int64 `json:"blobFetchFailures"`
-	LastSyncAt             int64 `json:"lastSyncAt"`
-	LastRemoteSummaryTs    int64 `json:"lastRemoteSummaryTs"`
-	LastObservedSyncLagSec int64 `json:"lastObservedSyncLagSec"`
-}
 
-type Identity struct {
-	Mnemonic  string `json:"mnemonic"`
-	PublicKey string `json:"publicKey"`
-}
 
 // NewApp creates a new App application struct
 func NewApp() *App {
@@ -469,7 +453,7 @@ func (a *App) GetFeedStreamWithStrategy(limit int, algorithm string) (FeedStream
 		}
 
 		// Add 1 recommended
-		for ri < len(rankedRecommendations) && len(items) < limit && countFeedItemsByReason(items, "recommended_" + algorithm) < recommendedQuota {
+		for ri < len(rankedRecommendations) && len(items) < limit && countFeedItemsByReason(items, "recommended_"+algorithm) < recommendedQuota {
 			item := rankedRecommendations[ri]
 			ri++
 			if _, exists := seen[item.Post.ID]; exists {

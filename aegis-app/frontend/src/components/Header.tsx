@@ -6,7 +6,11 @@ interface HeaderProps {
   profile?: Profile;
   onCreatePost: () => void;
   onProfileClick: () => void;
+  onViewOwnProfile: () => void;
   onMyPostsClick: () => void;
+  onDraftsClick: () => void;
+  onHistoryClick: () => void;
+  onPendingSyncClick: () => void;
   onFavoritesClick: () => void;
   onSignOut: () => void;
   isDark: boolean;
@@ -16,6 +20,8 @@ interface HeaderProps {
   onSearch: (query: string, scope?: string) => void;
   onSearchResultClick: (type: 'sub' | 'post', id: string) => void;
   onSearchClear: () => void;
+  unreadNotificationCount: number;
+  onNotificationsClick: () => void;
 }
 
 function getInitials(name: string): string {
@@ -27,7 +33,11 @@ export function Header({
   profile, 
   onCreatePost, 
   onProfileClick,
+  onViewOwnProfile,
   onMyPostsClick,
+  onDraftsClick,
+  onHistoryClick,
+  onPendingSyncClick,
   onFavoritesClick,
   onSignOut,
   isDark, 
@@ -36,7 +46,9 @@ export function Header({
   searchResults,
   onSearch,
   onSearchResultClick,
-  onSearchClear
+  onSearchClear,
+  unreadNotificationCount,
+  onNotificationsClick,
 }: HeaderProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -224,6 +236,19 @@ export function Header({
             {isDark ? 'light_mode' : 'dark_mode'}
           </span>
         </button>
+
+        <button
+          onClick={onNotificationsClick}
+          className="relative text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors p-1"
+          title="Notifications"
+        >
+          <span className="material-icons-outlined text-xl">notifications</span>
+          {unreadNotificationCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 leading-none">
+              {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+            </span>
+          )}
+        </button>
         
         <div className="relative" ref={userMenuRef}>
           <button 
@@ -271,11 +296,18 @@ export function Header({
               
               <div className="p-2">
                 <button 
+                  onClick={() => handleUserMenuClick(onViewOwnProfile)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
+                >
+                  <span className="material-icons text-lg">badge</span>
+                  View Profile
+                </button>
+                <button 
                   onClick={() => handleUserMenuClick(onProfileClick)}
                   className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
                 >
                   <span className="material-icons text-lg">person</span>
-                  Profile / Settings
+                  Settings
                 </button>
                 <button 
                   onClick={() => handleUserMenuClick(onMyPostsClick)}
@@ -285,11 +317,32 @@ export function Header({
                   My Posts
                 </button>
                 <button 
+                  onClick={() => handleUserMenuClick(onDraftsClick)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
+                >
+                  <span className="material-icons text-lg">drafts</span>
+                  Drafts
+                </button>
+                <button 
                   onClick={() => handleUserMenuClick(onFavoritesClick)}
                   className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
                 >
                   <span className="material-icons text-lg">star</span>
                   Favorites
+                </button>
+                <button 
+                  onClick={() => handleUserMenuClick(onHistoryClick)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
+                >
+                  <span className="material-icons text-lg">history</span>
+                  History
+                </button>
+                <button 
+                  onClick={() => handleUserMenuClick(onPendingSyncClick)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-warm-bg dark:hover:bg-surface-lighter text-warm-text-primary dark:text-white transition-colors text-sm"
+                >
+                  <span className="material-icons text-lg">cloud_sync</span>
+                  Saved Actions
                 </button>
               </div>
               

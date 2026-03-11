@@ -11,9 +11,11 @@ interface MyPostsProps {
   profiles: Record<string, Profile>;
   onUpvote: (postId: string) => void;
   onPostClick: (post: Post) => void;
+  onAuthorClick?: (pubkey: string) => void;
+  onShare?: (post: Post) => void;
 }
 
-export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, onPostClick }: MyPostsProps) {
+export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, onPostClick, onAuthorClick, onShare }: MyPostsProps) {
   const cacheKey = currentPubkey.trim();
   const [myPosts, setMyPosts] = useState<Post[]>(() => myPostsCache.get(cacheKey) || []);
   const [loading, setLoading] = useState(() => !myPostsCache.has(cacheKey));
@@ -107,6 +109,8 @@ export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, o
                 authorProfile={profiles[post.pubkey]}
                 onUpvote={onUpvote}
                 onClick={onPostClick}
+                onAuthorClick={onAuthorClick}
+                onShare={onShare}
               />
             ))}
           </div>

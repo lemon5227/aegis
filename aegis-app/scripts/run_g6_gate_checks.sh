@@ -4,13 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 
-echo "[G6] 1/4 Go compile check"
+echo "[G6] 1/5 Go compile check"
 (cd "$ROOT_DIR" && go test ./...)
 
-echo "[G6] 2/4 Frontend build check"
+echo "[G6] 2/5 Frontend build check"
 (cd "$ROOT_DIR/frontend" && npm run build)
 
-echo "[G6] 3/4 API contract sanity (duplicates + required exports)"
+echo "[G6] 3/5 API contract sanity (duplicates + required exports)"
 python3 - <<'PY'
 import re
 from pathlib import Path
@@ -39,7 +39,17 @@ if missing:
 print("App.d.ts contract sanity passed")
 PY
 
-echo "[G6] 4/4 Migration safety scan"
+echo "[G6] 4/5 Trust and reliability source guards"
+if rg -n 'Signature:\s*""' "$ROOT_DIR/p2p.go"; then
+  echo "Unsigned publish payload detected in p2p.go."
+  exit 1
+fi
+if ! rg -n 'CREATE TABLE IF NOT EXISTS message_outbox' "$ROOT_DIR/db.go" >/dev/null; then
+  echo "message_outbox schema is missing."
+  exit 1
+fi
+
+echo "[G6] 5/5 Migration safety scan"
 if rg -n "DROP TABLE|DROP COLUMN|ALTER TABLE .* RENAME" "$ROOT_DIR" --glob "*.go"; then
   echo "Potential destructive migration detected. Please review output above."
   exit 1

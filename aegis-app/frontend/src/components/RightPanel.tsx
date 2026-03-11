@@ -1,16 +1,60 @@
-import { Sub } from '../types';
+import { AntiEntropyStats, P2PStatus, PendingSyncAction, Sub, SubStats } from '../types';
+import { deriveNetworkHealth, formatRelativeNetworkTime } from '../lib/networkHealth';
 
 interface RightPanelProps {
   sub: Sub | { id: string; title: string; description: string } | undefined;
   isSubscribed: boolean;
+  stats?: SubStats;
   membersCount?: number;
   onlineCount?: number;
+  onCreatePost?: () => void;
+  onShareSub?: () => void;
+  p2pStatus?: P2PStatus | null;
+  antiEntropyStats?: AntiEntropyStats | null;
+  pendingSyncActions?: PendingSyncAction[];
+  networkBusy?: boolean;
+  onSyncNow?: () => void;
+  onOpenNetworkSettings?: () => void;
+  onDismissPendingSyncAction?: (actionId: string) => void;
   onToggleSubscription: () => void;
 }
 
-export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 0, onToggleSubscription }: RightPanelProps) {
+function formatCreatedAt(timestamp: number): string {
+  if (!timestamp) return 'Created recently';
+  return `Created ${new Date(timestamp * 1000).toLocaleDateString()}`;
+}
+
+export function RightPanel({
+  sub,
+  isSubscribed,
+  stats,
+  membersCount = 0,
+  onlineCount = 0,
+  onCreatePost,
+  onShareSub,
+  p2pStatus = null,
+  antiEntropyStats = null,
+  pendingSyncActions = [],
+  networkBusy = false,
+  onSyncNow,
+  onOpenNetworkSettings,
+  onDismissPendingSyncAction,
+  onToggleSubscription,
+}: RightPanelProps) {
   const subTitle = sub?.title || sub?.id || 'General';
   const subDescription = sub?.description || 'Welcome to this community!';
+  const fallbackCreatedAt = sub && 'createdAt' in sub ? sub.createdAt : 0;
+  const visibleMembers = stats?.subscriberCount || membersCount;
+  const postCount = stats?.postCount || 0;
+  const activeAuthors = stats?.activeAuthors || membersCount;
+  const recentPosts = stats?.recentPosts24h || 0;
+  const networkHealth = deriveNetworkHealth(p2pStatus, antiEntropyStats);
+  const networkBadgeClasses = {
+    healthy: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800',
+    syncing: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
+    degraded: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800',
+    offline: 'bg-slate-200 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+  }[networkHealth.level];
 
   return (
     <aside className="w-80 bg-warm-sidebar dark:bg-surface-dark border-l border-warm-border dark:border-border-dark flex-shrink-0">
@@ -31,7 +75,7 @@ export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 
             </div>
             <div>
               <div className="font-bold text-warm-text-primary dark:text-white">{subTitle}</div>
-              <div className="text-xs text-warm-text-secondary dark:text-slate-400">Created recently</div>
+              <div className="text-xs text-warm-text-secondary dark:text-slate-400">{formatCreatedAt(stats?.createdAt || fallbackCreatedAt)}</div>
             </div>
           </div>
           
@@ -41,7 +85,7 @@ export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 
           
           <div className="grid grid-cols-2 gap-4 border-t border-warm-border/50 dark:border-border-dark pt-4 mb-4">
             <div>
-              <div className="text-lg font-bold text-warm-text-primary dark:text-white">{membersCount.toLocaleString()}</div>
+              <div className="text-lg font-bold text-warm-text-primary dark:text-white">{visibleMembers.toLocaleString()}</div>
               <div className="text-xs text-warm-text-secondary dark:text-slate-400">Members</div>
             </div>
             <div>
@@ -49,6 +93,21 @@ export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 
                 <span className="w-2 h-2 rounded-full bg-green-500"></span> {onlineCount.toLocaleString()}
               </div>
               <div className="text-xs text-warm-text-secondary dark:text-slate-400">Online</div>
+            </div>
+            <div>
+              <div className="text-lg font-bold text-warm-text-primary dark:text-white">{postCount.toLocaleString()}</div>
+              <div className="text-xs text-warm-text-secondary dark:text-slate-400">Posts</div>
+            </div>
+            <div>
+              <div className="text-lg font-bold text-warm-text-primary dark:text-white">{activeAuthors.toLocaleString()}</div>
+              <div className="text-xs text-warm-text-secondary dark:text-slate-400">Authors</div>
+            </div>
+          </div>
+
+          <div className="mb-4 rounded-xl bg-warm-sidebar/60 dark:bg-surface-dark px-3 py-2 border border-warm-border/50 dark:border-border-dark">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-warm-text-secondary dark:text-slate-400">Activity</div>
+            <div className="mt-1 text-sm font-semibold text-warm-text-primary dark:text-white">
+              {recentPosts.toLocaleString()} posts in the last 24 hours
             </div>
           </div>
           
@@ -69,7 +128,95 @@ export function RightPanel({ sub, isSubscribed, membersCount = 0, onlineCount = 
               'Subscribe'
             )}
           </button>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              onClick={onCreatePost}
+              className="rounded-lg border border-warm-border dark:border-border-dark px-3 py-2 text-xs font-medium text-warm-text-primary dark:text-white hover:bg-warm-bg dark:hover:bg-surface-dark transition-colors"
+            >
+              New Post
+            </button>
+            <button
+              onClick={onShareSub}
+              className="rounded-lg border border-warm-border dark:border-border-dark px-3 py-2 text-xs font-medium text-warm-text-primary dark:text-white hover:bg-warm-bg dark:hover:bg-surface-dark transition-colors"
+            >
+              Share Sub
+            </button>
+          </div>
         </div>
+
+        <div className="bg-warm-card dark:bg-surface-lighter rounded-xl p-4 mb-6 border border-warm-border dark:border-border-dark">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-warm-text-primary dark:text-white uppercase tracking-wider">
+                App Status
+              </h3>
+              <p className="mt-1 text-xs text-warm-text-secondary dark:text-slate-400">
+                {networkHealth.summary}
+              </p>
+            </div>
+            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${networkBadgeClasses}`}>
+              {networkHealth.label}
+            </span>
+          </div>
+
+          <div className="mt-4 rounded-xl bg-warm-sidebar/60 dark:bg-surface-dark px-3 py-3 border border-warm-border/50 dark:border-border-dark">
+            <div className="text-[11px] uppercase tracking-[0.16em] text-warm-text-secondary dark:text-slate-400">Recent activity</div>
+            <div className="mt-1 text-sm font-semibold text-warm-text-primary dark:text-white">
+              {formatRelativeNetworkTime(networkHealth.lastSyncAt)}
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={onSyncNow}
+              disabled={networkBusy}
+              className="rounded-lg bg-warm-accent px-3 py-2 text-xs font-medium text-white hover:bg-warm-accent-hover disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {networkBusy ? 'Syncing...' : 'Sync Now'}
+            </button>
+            <button
+              onClick={onOpenNetworkSettings}
+              className="rounded-lg border border-warm-border dark:border-border-dark px-3 py-2 text-xs font-medium text-warm-text-primary dark:text-white hover:bg-warm-bg dark:hover:bg-surface-dark transition-colors"
+            >
+              Network Settings
+            </button>
+          </div>
+        </div>
+
+        {pendingSyncActions.length > 0 && (
+          <div className="bg-warm-card dark:bg-surface-lighter rounded-xl p-4 mb-6 border border-amber-300 dark:border-amber-800">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-warm-text-primary dark:text-white uppercase tracking-wider">
+                  Saved Actions
+                </h3>
+                <p className="mt-1 text-xs text-warm-text-secondary dark:text-slate-400">
+                  Your recent changes are saved and will finish in the background.
+                </p>
+              </div>
+              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                {pendingSyncActions.length}
+              </span>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {pendingSyncActions.slice(0, 4).map((action) => (
+                <div key={action.id} className="rounded-lg border border-warm-border/70 dark:border-border-dark bg-warm-bg/70 dark:bg-surface-dark px-3 py-3">
+                  <div className="text-sm font-medium text-warm-text-primary dark:text-white">{action.summary}</div>
+                  <div className="mt-1 text-xs text-warm-text-secondary dark:text-slate-400">{formatRelativeNetworkTime(Math.floor(action.createdAt / 1000))}</div>
+                  {onDismissPendingSyncAction && (
+                    <button
+                      onClick={() => onDismissPendingSyncAction(action.id)}
+                      className="mt-2 text-xs font-medium text-warm-accent hover:underline"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         
         <div className="mb-6">
           <h3 className="text-xs font-bold text-warm-text-secondary dark:text-slate-400 uppercase tracking-wider mb-3">

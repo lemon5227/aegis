@@ -126,6 +126,10 @@ export function GetMyPosts(arg1, arg2) {
   return window['go']['main']['App']['GetMyPosts'](arg1, arg2);
 }
 
+export function GetNotifications(arg1, arg2) {
+  return window['go']['main']['App']['GetNotifications'](arg1, arg2);
+}
+
 export function GetP2PConfig() {
   return window['go']['main']['App']['GetP2PConfig']();
 }
@@ -148,6 +152,10 @@ export function GetPostIndexByID(arg1) {
 
 export function GetPostMediaByID(arg1) {
   return window['go']['main']['App']['GetPostMediaByID'](arg1);
+}
+
+export function GetPostsByAuthor(arg1, arg2) {
+  return window['go']['main']['App']['GetPostsByAuthor'](arg1, arg2);
 }
 
 export function GetPrivacySettings() {
@@ -178,6 +186,10 @@ export function GetStorageUsage() {
   return window['go']['main']['App']['GetStorageUsage']();
 }
 
+export function GetSubStats(arg1) {
+  return window['go']['main']['App']['GetSubStats'](arg1);
+}
+
 export function GetSubs() {
   return window['go']['main']['App']['GetSubs']();
 }
@@ -188,6 +200,10 @@ export function GetSubscribedSubs() {
 
 export function GetTrustedAdmins() {
   return window['go']['main']['App']['GetTrustedAdmins']();
+}
+
+export function GetUnreadNotificationCount() {
+  return window['go']['main']['App']['GetUnreadNotificationCount']();
 }
 
 export function GetVersionHistory(arg1) {
@@ -214,6 +230,14 @@ export function LoadSavedIdentity() {
   return window['go']['main']['App']['LoadSavedIdentity']();
 }
 
+export function MarkAllNotificationsRead() {
+  return window['go']['main']['App']['MarkAllNotificationsRead']();
+}
+
+export function MarkNotificationRead(arg1) {
+  return window['go']['main']['App']['MarkNotificationRead'](arg1);
+}
+
 export function ProcessIncomingMessage(arg1) {
   return window['go']['main']['App']['ProcessIncomingMessage'](arg1);
 }
@@ -224,6 +248,10 @@ export function PublishComment(arg1, arg2, arg3, arg4) {
 
 export function PublishCommentDownvote(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishCommentDownvote'](arg1, arg2, arg3);
+}
+
+export function PublishCommentUpdate(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PublishCommentUpdate'](arg1, arg2, arg3);
 }
 
 export function PublishCommentUpvote(arg1, arg2, arg3) {
@@ -260,6 +288,10 @@ export function PublishPostStructured(arg1, arg2, arg3) {
 
 export function PublishPostStructuredToSub(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PublishPostStructuredToSub'](arg1, arg2, arg3, arg4);
+}
+
+export function PublishPostUpdate(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PublishPostUpdate'](arg1, arg2, arg3, arg4);
 }
 
 export function PublishPostUpvote(arg1, arg2) {
@@ -352,6 +384,14 @@ export function TriggerReleaseAlertEvaluationNow() {
 
 export function UnsubscribeSub(arg1) {
   return window['go']['main']['App']['UnsubscribeSub'](arg1);
+}
+
+export function UpdateLocalComment(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateLocalComment'](arg1, arg2, arg3);
+}
+
+export function UpdateLocalPost(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateLocalPost'](arg1, arg2, arg3, arg4);
 }
 
 export function UpdateProfile(arg1, arg2) {
