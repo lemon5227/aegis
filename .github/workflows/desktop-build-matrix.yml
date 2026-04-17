@@ -66,7 +66,7 @@ jobs:
           if [ -n "$RELAY" ]; then
             LDFLAGS="$LDFLAGS -X 'main.defaultRelayPeersCSV=$RELAY'"
           fi
-          GOOS=linux GOARCH=${{ matrix.goarch }} go build -tags relay -ldflags "$LDFLAGS" -o build/bin/${{ matrix.binary_name }} .
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -tags relay -ldflags "$LDFLAGS" -o build/bin/${{ matrix.binary_name }} .
 
       - name: Upload relay artifact
         uses: actions/upload-artifact@v4
