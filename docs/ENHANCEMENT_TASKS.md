@@ -10,9 +10,9 @@
 ## 当前阶段状态
 - A1 Sub：Done
 - A2 帖子结构：Auto-Verified（待三节点手工清单勾选后置为 Done）
-- A3 排序：In Progress（默认 Hot + New 切换，Hot 评分先占位）
+- A3 排序：Auto-Verified（代码完整，待三节点手工验证后置为 Done）
 - A4 Profile：Done
-- B1 评论（楼中楼）：In Progress
+- B1 评论（楼中楼）：Auto-Verified（代码完整，待三节点手工验证后置为 Done）
 - B2 统一投票（帖子+评论）：Done
 - B3 Hot 评分稳定化：Done
 - C1 治理产品化：Auto-Verified（自动化门禁通过，待三节点手工联调后置为 Done）

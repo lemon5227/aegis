@@ -272,5 +272,5 @@
 - S2：Done（后端已落地订阅管理 API）
 - S3：Done（后端已落地 `sub:updated` 推送）
 - S4：Done（后端已落地 `SearchSubs` / `SearchPosts`）
-- S5：Pending（前端未开始）
+- S5：Done（前端订阅管理/推送/搜索/Wails绑定已全部实现并接入）
 - S6：Done（后端已落地 `GetFeedStream` / `GetFeedStreamWithStrategy`，默认 `hot-v1`）
