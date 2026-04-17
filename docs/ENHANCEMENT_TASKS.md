@@ -9,13 +9,13 @@
 
 ## 当前阶段状态
 - A1 Sub：Done
-- A2 帖子结构：Auto-Verified（待三节点手工清单勾选后置为 Done）
-- A3 排序：Auto-Verified（代码完整，待三节点手工验证后置为 Done）
+- A2 帖子结构：Done（三节点自动化验证通过 TestA2PostTitleBodyReplicatesAcrossNodes）
+- A3 排序：Done（三节点自动化验证通过 TestA3HotNewSortingConsistentAcrossNodes）
 - A4 Profile：Done
-- B1 评论（楼中楼）：Auto-Verified（代码完整，待三节点手工验证后置为 Done）
+- B1 评论（楼中楼）：Done（三节点自动化验证通过 TestB1NestedCommentReplicatesAcrossNodes）
 - B2 统一投票（帖子+评论）：Done
 - B3 Hot 评分稳定化：Done
-- C1 治理产品化：Auto-Verified（自动化门禁通过，待三节点手工联调后置为 Done）
+- C1 治理产品化：Done（三节点自动化验证通过 TestC1GovernancePolicyAppliesAcrossNodes）
 - C2 存储升级：In Progress（已完成 content_cid、索引列表 API、详情按 CID 取正文、前端正文缓存）
 - D1 订阅与搜索（Sub Subscription + Search）：In Progress（后端 S1/S2/S3/S4 已完成，前端 S5 待开始）
 - D2 FeedStream 聚合流：In Progress（后端 S6 已完成，策略扩展与前端接入待完成）
