@@ -94,6 +94,8 @@ export function GetReleaseMetrics():Promise<main.ReleaseMetrics>;
 
 export function GetStorageUsage():Promise<main.StorageUsage>;
 
+export function GetSubSettings(arg1:string):Promise<main.SubSettings>;
+
 export function GetSubStats(arg1:string):Promise<main.SubStats>;
 
 export function GetSubs():Promise<Array<main.Sub>>;
@@ -154,7 +156,13 @@ export function PublishPostWithImageToSub(arg1:string,arg2:string,arg3:string,ar
 
 export function PublishProfileUpdate(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function PublishSetPostLocked(arg1:string,arg2:boolean):Promise<void>;
+
+export function PublishSetPostPinned(arg1:string,arg2:boolean):Promise<void>;
+
 export function PublishShadowBan(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function PublishSubSettingsUpdate(arg1:string,arg2:Array<string>,arg3:string):Promise<void>;
 
 export function PublishUnban(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -173,6 +181,10 @@ export function SearchSubs(arg1:string,arg2:number):Promise<Array<main.Sub>>;
 export function SetDatabasePath(arg1:string):Promise<void>;
 
 export function SetGovernancePolicy(arg1:boolean):Promise<main.GovernancePolicy>;
+
+export function SetPostLocked(arg1:string,arg2:boolean):Promise<void>;
+
+export function SetPostPinned(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetPrivacySettings(arg1:boolean,arg2:boolean):Promise<main.PrivacySettings>;
 
@@ -201,6 +213,8 @@ export function UpdateLocalPost(arg1:string,arg2:string,arg3:string,arg4:string)
 export function UpdateProfile(arg1:string,arg2:string):Promise<main.Profile>;
 
 export function UpdateProfileDetails(arg1:string,arg2:string,arg3:string):Promise<main.ProfileDetails>;
+
+export function UpdateSubSettings(arg1:string,arg2:Array<string>,arg3:string):Promise<main.SubSettings>;
 
 export function UpvoteComment(arg1:string):Promise<void>;
 

@@ -56,6 +56,10 @@ export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, o
           zone: (item.zone || 'public') as 'private' | 'public',
           subId: item.subId || 'general',
           visibility: item.visibility || 'normal',
+          isPinned: !!item.isPinned,
+          pinnedAt: item.pinnedAt || 0,
+          isLocked: !!item.isLocked,
+          lockedAt: item.lockedAt || 0,
         }));
         if (!alive) return;
         myPostsCache.set(cacheKey, mapped);

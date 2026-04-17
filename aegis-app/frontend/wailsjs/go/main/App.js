@@ -186,6 +186,10 @@ export function GetStorageUsage() {
   return window['go']['main']['App']['GetStorageUsage']();
 }
 
+export function GetSubSettings(arg1) {
+  return window['go']['main']['App']['GetSubSettings'](arg1);
+}
+
 export function GetSubStats(arg1) {
   return window['go']['main']['App']['GetSubStats'](arg1);
 }
@@ -306,8 +310,20 @@ export function PublishProfileUpdate(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishProfileUpdate'](arg1, arg2, arg3);
 }
 
+export function PublishSetPostLocked(arg1, arg2) {
+  return window['go']['main']['App']['PublishSetPostLocked'](arg1, arg2);
+}
+
+export function PublishSetPostPinned(arg1, arg2) {
+  return window['go']['main']['App']['PublishSetPostPinned'](arg1, arg2);
+}
+
 export function PublishShadowBan(arg1, arg2, arg3) {
   return window['go']['main']['App']['PublishShadowBan'](arg1, arg2, arg3);
+}
+
+export function PublishSubSettingsUpdate(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PublishSubSettingsUpdate'](arg1, arg2, arg3);
 }
 
 export function PublishUnban(arg1, arg2, arg3) {
@@ -344,6 +360,14 @@ export function SetDatabasePath(arg1) {
 
 export function SetGovernancePolicy(arg1) {
   return window['go']['main']['App']['SetGovernancePolicy'](arg1);
+}
+
+export function SetPostLocked(arg1, arg2) {
+  return window['go']['main']['App']['SetPostLocked'](arg1, arg2);
+}
+
+export function SetPostPinned(arg1, arg2) {
+  return window['go']['main']['App']['SetPostPinned'](arg1, arg2);
 }
 
 export function SetPrivacySettings(arg1, arg2) {
@@ -400,6 +424,10 @@ export function UpdateProfile(arg1, arg2) {
 
 export function UpdateProfileDetails(arg1, arg2, arg3) {
   return window['go']['main']['App']['UpdateProfileDetails'](arg1, arg2, arg3);
+}
+
+export function UpdateSubSettings(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateSubSettings'](arg1, arg2, arg3);
 }
 
 export function UpvoteComment(arg1) {

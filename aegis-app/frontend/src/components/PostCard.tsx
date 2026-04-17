@@ -97,6 +97,18 @@ export function PostCard({ post, authorProfile, onUpvote, onClick, onAuthorClick
                 Recommended
               </span>
             )}
+            {post.isPinned && (
+              <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-blue-200 dark:border-blue-800 flex items-center gap-1">
+                <span className="material-icons-round text-[10px]">keep</span>
+                Pinned
+              </span>
+            )}
+            {post.isLocked && (
+              <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-slate-200 dark:border-slate-700 flex items-center gap-1">
+                <span className="material-icons-round text-[10px]">lock</span>
+                Locked
+              </span>
+            )}
             {isPartialContent && (
               <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-slate-200 dark:border-slate-700">
                 Syncing content

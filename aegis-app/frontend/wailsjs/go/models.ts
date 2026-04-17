@@ -157,6 +157,10 @@ export namespace main {
 	    sizeBytes: number;
 	    zone: string;
 	    subId: string;
+	    isPinned: boolean;
+	    pinnedAt: number;
+	    isLocked: boolean;
+	    lockedAt: number;
 	    isProtected: number;
 	    visibility: string;
 	    deletedAt?: number;
@@ -187,6 +191,10 @@ export namespace main {
 	        this.sizeBytes = source["sizeBytes"];
 	        this.zone = source["zone"];
 	        this.subId = source["subId"];
+	        this.isPinned = source["isPinned"];
+	        this.pinnedAt = source["pinnedAt"];
+	        this.isLocked = source["isLocked"];
+	        this.lockedAt = source["lockedAt"];
 	        this.isProtected = source["isProtected"];
 	        this.visibility = source["visibility"];
 	        this.deletedAt = source["deletedAt"];
@@ -531,6 +539,10 @@ export namespace main {
 	    timestamp: number;
 	    zone: string;
 	    subId: string;
+	    isPinned: boolean;
+	    pinnedAt: number;
+	    isLocked: boolean;
+	    lockedAt: number;
 	    visibility: string;
 	
 	    static createFrom(source: any = {}) {
@@ -554,6 +566,10 @@ export namespace main {
 	        this.timestamp = source["timestamp"];
 	        this.zone = source["zone"];
 	        this.subId = source["subId"];
+	        this.isPinned = source["isPinned"];
+	        this.pinnedAt = source["pinnedAt"];
+	        this.isLocked = source["isLocked"];
+	        this.lockedAt = source["lockedAt"];
 	        this.visibility = source["visibility"];
 	    }
 	}
@@ -731,6 +747,24 @@ export namespace main {
 	        this.title = source["title"];
 	        this.description = source["description"];
 	        this.createdAt = source["createdAt"];
+	    }
+	}
+	export class SubSettings {
+	    subId: string;
+	    rules: string[];
+	    announcement: string;
+	    updatedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subId = source["subId"];
+	        this.rules = source["rules"];
+	        this.announcement = source["announcement"];
+	        this.updatedAt = source["updatedAt"];
 	    }
 	}
 	export class SubStats {

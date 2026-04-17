@@ -19,13 +19,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/multiformats/go-multiaddr"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const forumTopicName = "aegis-forum-global"
 const mdnsServiceTag = "aegis-forum-mdns"
-
-
 
 var (
 	errContentFetchNoPeers   = errors.New("content fetch no peers")
@@ -78,7 +75,7 @@ func (a *App) StartP2P(listenPort int, bootstrapPeers []string) (P2PStatus, erro
 		}
 
 		if candidatePort != listenPort && a.ctx != nil {
-			runtime.LogInfof(a.ctx, "p2p start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
+			a.logInfof("p2p start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
 		}
 
 		return status, nil
@@ -129,7 +126,7 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 		fallbackOptions = append(fallbackOptions, options[1:]...)
 		host, err = libp2p.New(fallbackOptions...)
 		if err == nil && a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "p2p dual-stack bind failed, fallback to ipv4-only: %v", dualStackErr)
+			a.logWarningf("p2p dual-stack bind failed, fallback to ipv4-only: %v", dualStackErr)
 		}
 	}
 	if err != nil {
@@ -169,7 +166,7 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 	if err = mdnsService.Start(); err == nil {
 		a.mdnsSvc = mdnsService
 	} else if a.ctx != nil {
-		runtime.LogWarningf(a.ctx, "mdns start failed: %v", err)
+		a.logWarningf("mdns start failed: %v", err)
 	}
 
 	go a.consumeP2PMessages(ctx, host.ID(), subscription)
@@ -186,7 +183,7 @@ func (a *App) startP2POnPortLocked(listenPort int, bootstrapPeers []string) (P2P
 	a.flushOutgoingMessagesAsync()
 
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "p2p:updated")
+		a.emitEvent("p2p:updated")
 	}
 
 	return a.getP2PStatusLocked(), nil
@@ -228,7 +225,7 @@ func (a *App) StopP2P() error {
 	a.mdnsSvc = nil
 
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "p2p:updated")
+		a.emitEvent("p2p:updated")
 	}
 
 	return firstErr
@@ -240,7 +237,7 @@ func (a *App) ConnectPeer(address string) error {
 
 	err := a.connectPeerLocked(address)
 	if err == nil && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "p2p:updated")
+		a.emitEvent("p2p:updated")
 	}
 
 	return err
@@ -304,8 +301,8 @@ func (a *App) connectBootstrapPeersAsync(addresses []string) {
 
 	go func(targets []string) {
 		for _, addr := range targets {
-			if err := a.ConnectPeer(addr); err != nil && a.ctx != nil {
-				runtime.LogDebugf(a.ctx, "bootstrap connect skipped addr=%s err=%v", addr, err)
+			if err := a.ConnectPeer(addr); err != nil {
+				a.logWarningf("bootstrap connect skipped addr=%s err=%v", addr, err)
 			}
 		}
 	}(append([]string(nil), filtered...))
@@ -332,7 +329,7 @@ func (a *App) publishPayloadAsync(topic *pubsub.Topic, payload []byte, label str
 		defer cancel()
 		if err := t.Publish(publishCtx, data); err != nil {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "async publish failed (%s): %v", kind, err)
+				a.logWarningf("async publish failed (%s): %v", kind, err)
 			}
 		}
 	}(baseCtx, topic, append([]byte(nil), payload...), label)
@@ -398,7 +395,7 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 			state, err := a.getPostVoteState(pubkey, pid)
 			if err != nil {
 				if a.ctx != nil {
-					runtime.LogWarningf(a.ctx, "vote state read failed (post): %v", err)
+					a.logWarningf("vote state read failed (post): %v", err)
 				}
 				return
 			}
@@ -412,7 +409,7 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 				Timestamp:   now,
 			}
 			if _, err := a.signAndQueueOutgoingMessage(outboxMessageTypePostVoteSet, msg); err != nil && a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "queue post vote state failed: %v", err)
+				a.logWarningf("queue post vote state failed: %v", err)
 			}
 			return
 		}
@@ -420,7 +417,7 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 		state, err := a.getCommentVoteState(pubkey, cid)
 		if err != nil {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "vote state read failed (comment): %v", err)
+				a.logWarningf("vote state read failed (comment): %v", err)
 			}
 			return
 		}
@@ -435,7 +432,7 @@ func (a *App) scheduleVoteStateBroadcast(voterPubkey string, postID string, comm
 			Timestamp:   now,
 		}
 		if _, err := a.signAndQueueOutgoingMessage(outboxMessageTypeCommentVoteSet, msg); err != nil && a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "queue comment vote state failed: %v", err)
+			a.logWarningf("queue comment vote state failed: %v", err)
 		}
 	}(seq, key, voterPubkey, postID, commentID)
 }
@@ -605,6 +602,11 @@ func (a *App) PublishComment(pubkey string, postID string, parentID string, body
 	if pubkey == "" || postID == "" || body == "" {
 		return errors.New("pubkey, post id and body are required")
 	}
+	if locked, _, err := a.getPostLockState(postID); err != nil {
+		return err
+	} else if locked {
+		return errors.New("post is locked")
+	}
 
 	shadowBanned, err := a.isShadowBanned(pubkey)
 	if err != nil {
@@ -656,6 +658,11 @@ func (a *App) PublishCommentWithAttachments(pubkey string, postID string, parent
 	}
 	if body == "" && len(localImageDataURLs) == 0 && len(externalImageURLs) == 0 {
 		return errors.New("comment content is required")
+	}
+	if locked, _, err := a.getPostLockState(postID); err != nil {
+		return err
+	} else if locked {
+		return errors.New("post is locked")
 	}
 
 	attachments := make([]CommentAttachment, 0, len(localImageDataURLs)+len(externalImageURLs))
@@ -1011,7 +1018,7 @@ func (a *App) publishLocalProfileUpdateLocked() {
 		msg.Timestamp = time.Now().Unix()
 	}
 	if _, err = a.signAndQueueOutgoingMessage(outboxMessageTypeProfileUpdate, msg); err != nil && a.ctx != nil {
-		runtime.LogWarningf(a.ctx, "queue profile update failed: %v", err)
+		a.logWarningf("queue profile update failed: %v", err)
 	}
 }
 
@@ -1056,6 +1063,99 @@ func (a *App) PublishGovernancePolicy(hideHistoryOnShadowBan bool) error {
 		return err
 	}
 	return a.queueOutgoingMessage(outboxMessageTypeGovernancePolicy, signedMessage)
+}
+
+func (a *App) PublishSubSettingsUpdate(subID string, rules []string, announcement string) error {
+	identity, err := a.currentAdminIdentity()
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	opID := generateOperationID(subID, identity.PublicKey, lamport)
+	if err = a.applySubSettingsUpdate(subID, rules, announcement, identity.PublicKey, now, lamport, opID); err != nil {
+		return err
+	}
+
+	msg := IncomingMessage{
+		Type:         messageTypeSubSettingsUpdate,
+		OpID:         opID,
+		AdminPubkey:  identity.PublicKey,
+		SubID:        normalizeSubID(subID),
+		Rules:        normalizeSubRules(rules),
+		Announcement: strings.TrimSpace(announcement),
+		Timestamp:    now,
+		Lamport:      lamport,
+	}
+	signedMessage, err := a.signIncomingMessage(msg)
+	if err != nil {
+		return err
+	}
+	return a.queueOutgoingMessage(outboxMessageTypeSubSettings, signedMessage)
+}
+
+func (a *App) PublishSetPostPinned(postID string, pinned bool) error {
+	return a.publishPostAdminState(messageTypePostPinSet, postID, pinned)
+}
+
+func (a *App) PublishSetPostLocked(postID string, locked bool) error {
+	return a.publishPostAdminState(messageTypePostLockSet, postID, locked)
+}
+
+func (a *App) publishPostAdminState(messageType string, postID string, enabled bool) error {
+	identity, err := a.currentAdminIdentity()
+	if err != nil {
+		return err
+	}
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return errors.New("post id is required")
+	}
+
+	now := time.Now().Unix()
+	lamport, err := a.nextLamport()
+	if err != nil {
+		return err
+	}
+	opID := generateOperationID(postID, identity.PublicKey, lamport)
+	switch messageType {
+	case messageTypePostPinSet:
+		if err = a.applyPostPinnedState(postID, enabled, identity.PublicKey, now, lamport, opID); err != nil {
+			return err
+		}
+	case messageTypePostLockSet:
+		if err = a.applyPostLockedState(postID, enabled, identity.PublicKey, now, lamport, opID); err != nil {
+			return err
+		}
+	default:
+		return errors.New("invalid post admin message type")
+	}
+
+	msg := IncomingMessage{
+		Type:        messageType,
+		OpID:        opID,
+		AdminPubkey: identity.PublicKey,
+		PostID:      postID,
+		Timestamp:   now,
+		Lamport:     lamport,
+	}
+	if messageType == messageTypePostPinSet {
+		msg.Pinned = enabled
+	} else {
+		msg.Locked = enabled
+	}
+	signedMessage, err := a.signIncomingMessage(msg)
+	if err != nil {
+		return err
+	}
+	if messageType == messageTypePostPinSet {
+		return a.queueOutgoingMessage(outboxMessageTypePostPin, signedMessage)
+	}
+	return a.queueOutgoingMessage(outboxMessageTypePostLock, signedMessage)
 }
 
 func (a *App) PublishUnban(targetPubkey string, adminPubkey string, reason string) error {
@@ -1161,8 +1261,7 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 			Timestamp:       time.Now().Unix(),
 		}
 		if a.ctx != nil {
-			runtime.LogInfof(
-				a.ctx,
+			a.logInfof(
 				"content_fetch.request request_id=%s cid=%s peer_count=%d timeout_ms=%d retry_budget=%d",
 				requestID,
 				contentCID,
@@ -1218,8 +1317,7 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 	if err != nil {
 		a.noteContentFetchResult(false, time.Since(startedAt))
 		if a.ctx != nil {
-			runtime.LogWarningf(
-				a.ctx,
+			a.logWarningf(
 				"content_fetch.result cid=%s success=false elapsed_ms=%d dedup_shared=%t error=%v",
 				contentCID,
 				elapsedMs,
@@ -1231,8 +1329,7 @@ func (a *App) fetchContentBlobFromNetwork(contentCID string, timeout time.Durati
 	}
 	a.noteContentFetchResult(true, time.Since(startedAt))
 	if a.ctx != nil {
-		runtime.LogInfof(
-			a.ctx,
+		a.logInfof(
 			"content_fetch.result cid=%s success=true elapsed_ms=%d dedup_shared=%t",
 			contentCID,
 			elapsedMs,
@@ -1287,8 +1384,7 @@ func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration
 			Timestamp:       time.Now().Unix(),
 		}
 		if a.ctx != nil {
-			runtime.LogInfof(
-				a.ctx,
+			a.logInfof(
 				"media_fetch.request request_id=%s cid=%s peer_count=%d timeout_ms=%d retry_budget=%d",
 				requestID,
 				contentCID,
@@ -1346,9 +1442,9 @@ func (a *App) fetchMediaBlobFromNetwork(contentCID string, timeout time.Duration
 	})
 	if a.ctx != nil {
 		if err != nil {
-			runtime.LogWarningf(a.ctx, "media_fetch.result cid=%s success=false error=%v", contentCID, err)
+			a.logWarningf("media_fetch.result cid=%s success=false error=%v", contentCID, err)
 		} else {
-			runtime.LogInfof(a.ctx, "media_fetch.result cid=%s success=true", contentCID)
+			a.logInfof("media_fetch.result cid=%s success=true", contentCID)
 		}
 	}
 
@@ -1382,52 +1478,52 @@ func (a *App) runAntiEntropySyncWorker(ctx context.Context, localPeerID peer.ID)
 				!errors.Is(err, errAntiEntropyNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "anti-entropy initial sync failed: %v", err)
+				a.logWarningf("anti-entropy initial sync failed: %v", err)
 			}
 			if err := a.publishCommentSyncRequest(""); err != nil &&
 				!errors.Is(err, errCommentSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "comment sync initial request failed: %v", err)
+				a.logWarningf("comment sync initial request failed: %v", err)
 			}
 			if err := a.publishGovernanceSyncRequest(); err != nil &&
 				!errors.Is(err, errGovernanceSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance sync initial request failed: %v", err)
+				a.logWarningf("governance sync initial request failed: %v", err)
 			}
 			if err := a.publishFavoriteSyncRequest(); err != nil &&
 				!errors.Is(err, errFavoriteSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				!strings.Contains(strings.ToLower(err.Error()), "identity not found") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "favorite sync initial request failed: %v", err)
+				a.logWarningf("favorite sync initial request failed: %v", err)
 			}
 		case <-ticker.C:
 			if err := a.publishSyncSummaryRequest(); err != nil &&
 				!errors.Is(err, errAntiEntropyNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "anti-entropy periodic sync failed: %v", err)
+				a.logWarningf("anti-entropy periodic sync failed: %v", err)
 			}
 			if err := a.publishCommentSyncRequest(""); err != nil &&
 				!errors.Is(err, errCommentSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "comment sync periodic request failed: %v", err)
+				a.logWarningf("comment sync periodic request failed: %v", err)
 			}
 			if err := a.publishGovernanceSyncRequest(); err != nil &&
 				!errors.Is(err, errGovernanceSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance sync periodic request failed: %v", err)
+				a.logWarningf("governance sync periodic request failed: %v", err)
 			}
 			if err := a.publishFavoriteSyncRequest(); err != nil &&
 				!errors.Is(err, errFavoriteSyncNoPeers) &&
 				!strings.Contains(strings.ToLower(err.Error()), "p2p not started") &&
 				!strings.Contains(strings.ToLower(err.Error()), "identity not found") &&
 				a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "favorite sync periodic request failed: %v", err)
+				a.logWarningf("favorite sync periodic request failed: %v", err)
 			}
 		}
 	}
@@ -1564,7 +1660,7 @@ func (a *App) publishSyncSummaryRequest() error {
 		stats.SyncRequestsSent++
 	})
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "anti_entropy.request sent request_id=%s since=%d window=%d batch=%d", request.RequestID, request.SyncSinceTimestamp, request.SyncWindowSeconds, request.SyncBatchSize)
+		a.logInfof("anti_entropy.request sent request_id=%s since=%d window=%d batch=%d", request.RequestID, request.SyncSinceTimestamp, request.SyncWindowSeconds, request.SyncBatchSize)
 	}
 
 	return topic.Publish(ctx, payload)
@@ -1615,7 +1711,7 @@ func (a *App) publishCommentSyncRequest(postID string) error {
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "comment_sync.request sent request_id=%s post_id=%s since=%d batch=%d", request.RequestID, request.PostID, request.CommentSinceTs, request.CommentBatchSize)
+		a.logInfof("comment_sync.request sent request_id=%s post_id=%s since=%d batch=%d", request.RequestID, request.PostID, request.CommentSinceTs, request.CommentBatchSize)
 	}
 
 	return topic.Publish(ctx, payload)
@@ -1660,8 +1756,7 @@ func (a *App) publishGovernanceSyncRequest() error {
 		return err
 	}
 	if a.ctx != nil {
-		runtime.LogInfof(
-			a.ctx,
+		a.logInfof(
 			"governance_sync.request sent request_id=%s state_since=%d state_batch=%d log_since=%d log_limit=%d",
 			request.RequestID,
 			request.GovernanceSinceTs,
@@ -1728,7 +1823,7 @@ func (a *App) publishFavoriteSyncRequest() error {
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "favorite_sync.request sent request_id=%s pubkey=%s since=%d batch=%d", request.RequestID, request.Pubkey, request.FavoriteSinceTs, request.FavoriteBatchSize)
+		a.logInfof("favorite_sync.request sent request_id=%s pubkey=%s since=%d batch=%d", request.RequestID, request.Pubkey, request.FavoriteSinceTs, request.FavoriteBatchSize)
 	}
 	return topic.Publish(ctx, payload)
 }
@@ -1799,7 +1894,7 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 				_ = host.Network().ClosePeer(message.ReceivedFrom)
 			}
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "drop message from blocked peer peer=%s reason=%s", remotePeerID, reason)
+				a.logWarningf("drop message from blocked peer peer=%s reason=%s", remotePeerID, reason)
 			}
 			continue
 		}
@@ -1855,7 +1950,7 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 
 		if err = a.ProcessIncomingMessage(message.Data); err != nil {
 			if a.ctx != nil {
-				runtime.LogErrorf(a.ctx, "process p2p message failed: %v", err)
+				a.logErrorf("process p2p message failed: %v", err)
 			}
 			continue
 		}
@@ -1865,18 +1960,18 @@ func (a *App) consumeP2PMessages(ctx context.Context, localPeerID peer.ID, sub *
 				continue
 			}
 			if messageType == "SUB_CREATE" {
-				runtime.EventsEmit(a.ctx, "subs:updated")
+				a.emitEvent("subs:updated")
 				continue
 			}
 			if messageType == "COMMENT" || messageType == "COMMENT_UPVOTE" || messageType == "COMMENT_DELETE" {
 				postID := strings.TrimSpace(incoming.PostID)
 				if postID != "" {
-					runtime.EventsEmit(a.ctx, "comments:updated", map[string]string{"postId": postID})
+					a.emitEvent("comments:updated", map[string]string{"postId": postID})
 					continue
 				}
 			}
 
-			runtime.EventsEmit(a.ctx, "feed:updated")
+			a.emitEvent("feed:updated")
 		}
 	}
 }
@@ -1898,7 +1993,7 @@ func (a *App) handleContentFetchRequest(localPeerID string, remotePeerID string,
 	shareable, shareErr := a.canServeContentBlobToNetwork(contentCID)
 	if shareErr != nil || !shareable {
 		if a.ctx != nil && shareErr == nil {
-			runtime.LogInfof(a.ctx, "content_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
+			a.logInfof("content_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
 		}
 		a.publishContentFetchNotFound(localPeerID, requester, requestID, contentCID)
 		return
@@ -2002,7 +2097,7 @@ func (a *App) handleMediaFetchRequest(localPeerID string, remotePeerID string, m
 	shareable, shareErr := a.canServeMediaBlobToNetwork(contentCID)
 	if shareErr != nil || !shareable {
 		if a.ctx != nil && shareErr == nil {
-			runtime.LogInfof(a.ctx, "media_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
+			a.logInfof("media_fetch.policy_block request_id=%s cid=%s requester=%s", requestID, contentCID, requester)
 		}
 		a.publishMediaFetchNotFound(localPeerID, requester, requestID, contentCID)
 		return
@@ -2150,7 +2245,7 @@ func (a *App) allowIncomingMessage(peerID string, payloadSize int) bool {
 	maxBytes := resolveMaxIncomingMessageBytes()
 	if payloadSize > maxBytes {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "incoming message too large peer=%s size=%d max=%d", peerID, payloadSize, maxBytes)
+			a.logWarningf("incoming message too large peer=%s size=%d max=%d", peerID, payloadSize, maxBytes)
 		}
 		a.markPeerGreylisted(peerID, "incoming-message-too-large")
 		return false
@@ -2172,7 +2267,7 @@ func (a *App) allowIncomingMessage(peerID string, payloadSize int) bool {
 
 	if window.Count >= limit {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "incoming message rate limited peer=%s count=%d limit=%d window_sec=%d", peerID, window.Count, limit, windowSec)
+			a.logWarningf("incoming message rate limited peer=%s count=%d limit=%d window_sec=%d", peerID, window.Count, limit, windowSec)
 		}
 		a.markPeerGreylisted(peerID, "incoming-message-rate-limit")
 		return false
@@ -2206,7 +2301,7 @@ func (a *App) allowFetchRequest(peerID string, requestType string) bool {
 
 	if window.Count >= limit {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "fetch request rate limited type=%s requester=%s count=%d limit=%d window_sec=%d", requestType, peerID, window.Count, limit, windowSec)
+			a.logWarningf("fetch request rate limited type=%s requester=%s count=%d limit=%d window_sec=%d", requestType, peerID, window.Count, limit, windowSec)
 		}
 		a.markPeerGreylisted(peerID, "fetch-rate-limit")
 		return false
@@ -2260,7 +2355,7 @@ func (a *App) handleSyncSummaryRequest(localPeerID string, message IncomingMessa
 	summaries, err := a.listPublicPostDigestsSince(sinceTimestamp, batchSize)
 	if err != nil {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "anti-entropy build summary failed: %v", err)
+			a.logWarningf("anti-entropy build summary failed: %v", err)
 		}
 		return
 	}
@@ -2269,7 +2364,7 @@ func (a *App) handleSyncSummaryRequest(localPeerID string, message IncomingMessa
 		stats.SyncRequestsReceived++
 	})
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "anti_entropy.request received request_id=%s since=%d batch=%d summaries=%d", requestID, sinceTimestamp, batchSize, len(summaries))
+		a.logInfof("anti_entropy.request received request_id=%s since=%d batch=%d summaries=%d", requestID, sinceTimestamp, batchSize, len(summaries))
 	}
 
 	response := IncomingMessage{
@@ -2411,7 +2506,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 	})
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "anti_entropy.response applied request_id=%s summaries=%d inserted=%d text_fetch_candidates=%d media_fetch_candidates=%d", strings.TrimSpace(message.RequestID), len(summaries), indexInsertions, len(missingCIDs), len(missingMediaCIDs))
+		a.logInfof("anti_entropy.response applied request_id=%s summaries=%d inserted=%d text_fetch_candidates=%d media_fetch_candidates=%d", strings.TrimSpace(message.RequestID), len(summaries), indexInsertions, len(missingCIDs), len(missingMediaCIDs))
 	}
 
 	for _, contentCID := range missingCIDs {
@@ -2430,7 +2525,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 					stats.BlobFetchFailures++
 				})
 				if a.ctx != nil {
-					runtime.LogWarningf(a.ctx, "anti_entropy.blob_fetch failed cid=%s err=%v", cid, err)
+					a.logWarningf("anti_entropy.blob_fetch failed cid=%s err=%v", cid, err)
 				}
 				return
 			}
@@ -2439,7 +2534,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 				stats.BlobFetchSuccess++
 			})
 			if a.ctx != nil {
-				runtime.LogInfof(a.ctx, "anti_entropy.blob_fetch success cid=%s", cid)
+				a.logInfof("anti_entropy.blob_fetch success cid=%s", cid)
 			}
 		}()
 	}
@@ -2460,7 +2555,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 					stats.BlobFetchFailures++
 				})
 				if a.ctx != nil {
-					runtime.LogWarningf(a.ctx, "anti_entropy.media_fetch failed cid=%s err=%v", cid, err)
+					a.logWarningf("anti_entropy.media_fetch failed cid=%s err=%v", cid, err)
 				}
 				return
 			}
@@ -2469,7 +2564,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 				stats.BlobFetchSuccess++
 			})
 			if a.ctx != nil {
-				runtime.LogInfof(a.ctx, "anti_entropy.media_fetch success cid=%s", cid)
+				a.logInfof("anti_entropy.media_fetch success cid=%s", cid)
 			}
 		}()
 	}
@@ -2487,7 +2582,7 @@ func (a *App) handleSyncSummaryResponse(localPeerID string, message IncomingMess
 		}
 	}
 	if insertedAny && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "feed:updated")
+		a.emitEvent("feed:updated")
 	}
 }
 
@@ -2518,7 +2613,7 @@ func (a *App) handleCommentSyncRequest(localPeerID string, message IncomingMessa
 	}
 	if err != nil {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "comment_sync.build failed request_id=%s err=%v", requestID, err)
+			a.logWarningf("comment_sync.build failed request_id=%s err=%v", requestID, err)
 		}
 		return
 	}
@@ -2551,7 +2646,7 @@ func (a *App) handleCommentSyncRequest(localPeerID string, message IncomingMessa
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "comment_sync.response sent request_id=%s post_id=%s since=%d batch=%d comments=%d", requestID, requestPostID, sinceTimestamp, batchSize, len(comments))
+		a.logInfof("comment_sync.response sent request_id=%s post_id=%s since=%d batch=%d comments=%d", requestID, requestPostID, sinceTimestamp, batchSize, len(comments))
 	}
 
 	_ = topic.Publish(ctx, payload)
@@ -2639,7 +2734,7 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "comment_sync.response applied request_id=%s post_id=%s received=%d inserted=%d profiles=%d", strings.TrimSpace(message.RequestID), strings.TrimSpace(message.PostID), len(commentSummaries), inserted, updatedProfiles)
+		a.logInfof("comment_sync.response applied request_id=%s post_id=%s received=%d inserted=%d profiles=%d", strings.TrimSpace(message.RequestID), strings.TrimSpace(message.PostID), len(commentSummaries), inserted, updatedProfiles)
 	}
 
 	if inserted == 0 && updatedProfiles == 0 {
@@ -2651,9 +2746,9 @@ func (a *App) handleCommentSyncResponse(localPeerID string, message IncomingMess
 			if postID == "" {
 				continue
 			}
-			runtime.EventsEmit(a.ctx, "comments:updated", map[string]string{"postId": postID})
+			a.emitEvent("comments:updated", map[string]string{"postId": postID})
 		}
-		runtime.EventsEmit(a.ctx, "feed:updated")
+		a.emitEvent("feed:updated")
 	}
 }
 
@@ -2685,14 +2780,14 @@ func (a *App) handleGovernanceSyncRequest(localPeerID string, message IncomingMe
 	states, err := a.listModerationSince(sinceTs, batchSize)
 	if err != nil {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "governance_sync.build failed request_id=%s err=%v", requestID, err)
+			a.logWarningf("governance_sync.build failed request_id=%s err=%v", requestID, err)
 		}
 		return
 	}
 	logs, err := a.listAppliedModerationLogsSince(logSinceTs, logLimit)
 	if err != nil {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "governance_sync.build_logs failed request_id=%s err=%v", requestID, err)
+			a.logWarningf("governance_sync.build_logs failed request_id=%s err=%v", requestID, err)
 		}
 		return
 	}
@@ -2726,7 +2821,7 @@ func (a *App) handleGovernanceSyncRequest(localPeerID string, message IncomingMe
 	_ = topic.Publish(ctx, payload)
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "governance_sync.response sent request_id=%s state_since=%d states=%d log_since=%d logs=%d", requestID, sinceTs, len(states), logSinceTs, len(logs))
+		a.logInfof("governance_sync.response sent request_id=%s state_since=%d states=%d log_since=%d logs=%d", requestID, sinceTs, len(states), logSinceTs, len(logs))
 	}
 }
 
@@ -2772,13 +2867,13 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 		trusted, err := a.isTrustedAdmin(row.SourceAdmin)
 		if err != nil || !trusted {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance_sync.skip_untrusted target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, row.Action)
+				a.logWarningf("governance_sync.skip_untrusted target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, row.Action)
 			}
 			continue
 		}
 		if err := a.upsertModeration(row.TargetPubkey, row.Action, row.SourceAdmin, row.Timestamp, row.Lamport, row.Reason); err != nil {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance_sync.apply_failed target=%s action=%s err=%v", row.TargetPubkey, row.Action, err)
+				a.logWarningf("governance_sync.apply_failed target=%s action=%s err=%v", row.TargetPubkey, row.Action, err)
 			}
 			continue
 		}
@@ -2801,7 +2896,7 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 		trusted, err := a.isTrustedAdmin(row.SourceAdmin)
 		if err != nil || !trusted {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance_sync.skip_untrusted_log target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, action)
+				a.logWarningf("governance_sync.skip_untrusted_log target=%s admin=%s action=%s", row.TargetPubkey, row.SourceAdmin, action)
 			}
 			continue
 		}
@@ -2817,7 +2912,7 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 		})
 		if err != nil {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "governance_sync.log_apply_failed target=%s action=%s err=%v", row.TargetPubkey, action, err)
+				a.logWarningf("governance_sync.log_apply_failed target=%s action=%s err=%v", row.TargetPubkey, action, err)
 			}
 			continue
 		}
@@ -2827,9 +2922,9 @@ func (a *App) handleGovernanceSyncResponse(localPeerID string, message IncomingM
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "governance_sync.response applied request_id=%s states=%d applied=%d logs=%d logs_inserted=%d", strings.TrimSpace(message.RequestID), len(states), applied, len(message.GovernanceLogs), logsInserted)
+		a.logInfof("governance_sync.response applied request_id=%s states=%d applied=%d logs=%d logs_inserted=%d", strings.TrimSpace(message.RequestID), len(states), applied, len(message.GovernanceLogs), logsInserted)
 		if applied > 0 || logsInserted > 0 {
-			runtime.EventsEmit(a.ctx, "feed:updated")
+			a.emitEvent("feed:updated")
 		}
 	}
 }
@@ -2863,7 +2958,7 @@ func (a *App) handleFavoriteSyncRequest(localPeerID string, message IncomingMess
 	ops, err := a.listFavoriteOpsSince(pubkey, sinceTs, batchSize)
 	if err != nil {
 		if a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "favorite_sync.build failed request_id=%s err=%v", requestID, err)
+			a.logWarningf("favorite_sync.build failed request_id=%s err=%v", requestID, err)
 		}
 		return
 	}
@@ -2895,7 +2990,7 @@ func (a *App) handleFavoriteSyncRequest(localPeerID string, message IncomingMess
 	_ = topic.Publish(ctx, payload)
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "favorite_sync.response sent request_id=%s pubkey=%s since=%d ops=%d", requestID, pubkey, sinceTs, len(ops))
+		a.logInfof("favorite_sync.response sent request_id=%s pubkey=%s since=%d ops=%d", requestID, pubkey, sinceTs, len(ops))
 	}
 }
 
@@ -2956,7 +3051,7 @@ func (a *App) handleFavoriteSyncResponse(localPeerID string, message IncomingMes
 		changed, applyErr := a.applyFavoriteOperation(row, true)
 		if applyErr != nil {
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "favorite_sync.apply_failed op_id=%s post_id=%s err=%v", row.OpID, row.PostID, applyErr)
+				a.logWarningf("favorite_sync.apply_failed op_id=%s post_id=%s err=%v", row.OpID, row.PostID, applyErr)
 			}
 			continue
 		}
@@ -2966,7 +3061,7 @@ func (a *App) handleFavoriteSyncResponse(localPeerID string, message IncomingMes
 	}
 
 	if a.ctx != nil {
-		runtime.LogInfof(a.ctx, "favorite_sync.response applied request_id=%s received=%d applied=%d", strings.TrimSpace(message.RequestID), len(ops), applied)
+		a.logInfof("favorite_sync.response applied request_id=%s received=%d applied=%d", strings.TrimSpace(message.RequestID), len(ops), applied)
 	}
 	if applied > 0 {
 		a.emitFavoritesUpdated("")
@@ -2992,17 +3087,13 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	peerID := strings.TrimSpace(info.ID.String())
 	if blocked, reason := n.app.isPeerBlocked(peerID); blocked {
 		n.app.p2pMu.Unlock()
-		if n.app.ctx != nil {
-			runtime.LogWarningf(n.app.ctx, "mdns peer rejected by policy peer=%s reason=%s", peerID, reason)
-		}
+		n.app.logWarningf("mdns peer rejected by policy peer=%s reason=%s", peerID, reason)
 		return
 	}
 
 	if n.app.p2pHost.Network().Connectedness(info.ID) != network.Connected && len(n.app.p2pHost.Network().Peers()) >= resolveMaxConnectedPeers() {
 		n.app.p2pMu.Unlock()
-		if n.app.ctx != nil {
-			runtime.LogWarningf(n.app.ctx, "mdns peer rejected by max-peer limit peer=%s limit=%d", peerID, resolveMaxConnectedPeers())
-		}
+		n.app.logWarningf("mdns peer rejected by max-peer limit peer=%s limit=%d", peerID, resolveMaxConnectedPeers())
 		return
 	}
 
@@ -3011,9 +3102,7 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 
 	if err := n.app.p2pHost.Connect(ctx, info); err != nil {
 		n.app.p2pMu.Unlock()
-		if n.app.ctx != nil {
-			runtime.LogWarningf(n.app.ctx, "mdns connect failed: %v", err)
-		}
+		n.app.logWarningf("mdns connect failed: %v", err)
 		return
 	}
 
@@ -3021,10 +3110,8 @@ func (n *mdnsNotifee) HandlePeerFound(info peer.AddrInfo) {
 	n.app.flushOutgoingMessagesAsync()
 	n.app.p2pMu.Unlock()
 
-	if n.app.ctx != nil {
-		runtime.LogInfof(n.app.ctx, "mdns connected peer: %s", info.ID.String())
-		runtime.EventsEmit(n.app.ctx, "p2p:updated")
-	}
+	n.app.logInfof("mdns connected peer: %s", info.ID.String())
+	n.app.emitEvent("p2p:updated")
 }
 
 func resolveRelayPeers() []string {
@@ -3219,7 +3306,7 @@ func (a *App) markPeerGreylisted(peerID string, reason string) {
 	a.peerPolicyMu.Unlock()
 
 	if a.ctx != nil {
-		runtime.LogWarningf(a.ctx, "peer moved to greylist peer=%s reason=%s until=%d", peerID, strings.TrimSpace(reason), until)
+		a.logWarningf("peer moved to greylist peer=%s reason=%s until=%d", peerID, strings.TrimSpace(reason), until)
 	}
 }
 

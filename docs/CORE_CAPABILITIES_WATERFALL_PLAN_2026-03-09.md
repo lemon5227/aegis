@@ -72,6 +72,13 @@ Completed on March 9, 2026:
 - Automatic outbox replay with bounded backoff after peer recovery
 - Multi-node regression covering queued post replay after peer connect
 
+Completed on March 13, 2026:
+- Distributed admin-signed community rules and announcement updates
+- Distributed pin / unpin and lock / unlock post operations
+- Feed and detail rendering for pinned / locked state
+- Admin governance controls for community metadata inside settings
+- Multi-node regression covering community settings and post admin-state replication
+
 ### C5. Creation And Consumption Completeness
 
 Forum usage needs complete loops for drafting, resuming, citing, sharing, and continuing reading.

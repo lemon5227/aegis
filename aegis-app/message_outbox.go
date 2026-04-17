@@ -9,7 +9,6 @@ import (
 	"time"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type OutgoingMessageRecord struct {
@@ -176,17 +175,17 @@ func (a *App) flushOutgoingMessages() error {
 		if publishErr != nil {
 			_ = a.markOutgoingMessageRetry(record.ID, record.AttemptCount, publishErr)
 			if a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "outbox publish failed id=%s type=%s err=%v", record.ID, record.MessageType, publishErr)
+				a.logWarningf("outbox publish failed id=%s type=%s err=%v", record.ID, record.MessageType, publishErr)
 			}
 			continue
 		}
 		if err = a.deleteOutgoingMessage(record.ID); err != nil && a.ctx != nil {
-			runtime.LogWarningf(a.ctx, "outbox cleanup failed id=%s err=%v", record.ID, err)
+			a.logWarningf("outbox cleanup failed id=%s err=%v", record.ID, err)
 		}
 	}
 
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "p2p:updated")
+		a.emitEvent("p2p:updated")
 	}
 	return nil
 }
@@ -194,7 +193,7 @@ func (a *App) flushOutgoingMessages() error {
 func (a *App) flushOutgoingMessagesAsync() {
 	go func() {
 		if err := a.flushOutgoingMessages(); err != nil && a.ctx != nil && !errors.Is(err, sql.ErrNoRows) {
-			runtime.LogWarningf(a.ctx, "outbox flush failed: %v", err)
+			a.logWarningf("outbox flush failed: %v", err)
 		}
 	}()
 }
@@ -219,7 +218,7 @@ func (a *App) runOutboxWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := a.flushOutgoingMessages(); err != nil && a.ctx != nil {
-				runtime.LogWarningf(a.ctx, "outbox worker flush failed: %v", err)
+				a.logWarningf("outbox worker flush failed: %v", err)
 			}
 		}
 	}

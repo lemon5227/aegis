@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 )
 
 
@@ -68,7 +68,7 @@ func (a *App) tryGenerateNotification(notifType, sourcePubkey, targetEntityID, t
 	}
 	rows, _ := res.RowsAffected()
 	if rows > 0 && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "notifications:updated")
+		a.emitEvent("notifications:updated")
 	}
 }
 
@@ -206,7 +206,7 @@ func (a *App) MarkNotificationRead(notificationID string) error {
 		return err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "notifications:updated")
+		a.emitEvent("notifications:updated")
 	}
 	return nil
 }
@@ -221,7 +221,7 @@ func (a *App) MarkAllNotificationsRead() error {
 		return err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "notifications:updated")
+		a.emitEvent("notifications:updated")
 	}
 	return nil
 }

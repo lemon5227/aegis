@@ -22,6 +22,10 @@ type ForumMessage struct {
 	SizeBytes   int64  `json:"sizeBytes"`
 	Zone        string `json:"zone"`
 	SubID       string `json:"subId"`
+	IsPinned    bool   `json:"isPinned"`
+	PinnedAt    int64  `json:"pinnedAt"`
+	IsLocked    bool   `json:"isLocked"`
+	LockedAt    int64  `json:"lockedAt"`
 	IsProtected int    `json:"isProtected"`
 	Visibility  string `json:"visibility"`
 	DeletedAt   int64  `json:"deletedAt,omitempty"`
@@ -45,6 +49,10 @@ type PostIndex struct {
 	Timestamp   int64  `json:"timestamp"`
 	Zone        string `json:"zone"`
 	SubID       string `json:"subId"`
+	IsPinned    bool   `json:"isPinned"`
+	PinnedAt    int64  `json:"pinnedAt"`
+	IsLocked    bool   `json:"isLocked"`
+	LockedAt    int64  `json:"lockedAt"`
 	Visibility  string `json:"visibility"`
 }
 
@@ -82,6 +90,14 @@ type SubStats struct {
 	ActiveAuthors   int64  `json:"activeAuthors"`
 	RecentPosts24h  int64  `json:"recentPosts24h"`
 	CreatedAt       int64  `json:"createdAt"`
+}
+
+// SubSettings represents configurable community metadata.
+type SubSettings struct {
+	SubID        string   `json:"subId"`
+	Rules        []string `json:"rules"`
+	Announcement string   `json:"announcement"`
+	UpdatedAt    int64    `json:"updatedAt"`
 }
 
 // Profile represents a user's public profile.
@@ -341,6 +357,10 @@ type IncomingMessage struct {
 	SubID                  string              `json:"sub_id"`
 	SubTitle               string              `json:"sub_title"`
 	SubDesc                string              `json:"sub_desc"`
+	Rules                  []string            `json:"rules,omitempty"`
+	Announcement           string              `json:"announcement,omitempty"`
+	Pinned                 bool                `json:"pinned,omitempty"`
+	Locked                 bool                `json:"locked,omitempty"`
 	Timestamp              int64               `json:"timestamp"`
 	Lamport                int64               `json:"lamport,omitempty"`
 	DeletedAtLamport       int64               `json:"deleted_at_lamport,omitempty"`

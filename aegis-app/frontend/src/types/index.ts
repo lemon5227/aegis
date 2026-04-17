@@ -22,6 +22,10 @@ export interface PostIndex {
   zone: string;
   subId: string;
   visibility: string;
+  isPinned: boolean;
+  pinnedAt: number;
+  isLocked: boolean;
+  lockedAt: number;
 }
 
 export interface Profile {
@@ -148,6 +152,10 @@ export interface ForumMessage {
   subId: string;
   isProtected: number;
   visibility: string;
+  isPinned: boolean;
+  pinnedAt: number;
+  isLocked: boolean;
+  lockedAt: number;
 }
 
 export interface Post extends PostIndex {
@@ -238,6 +246,13 @@ export interface SubStats {
   activeAuthors: number;
   recentPosts24h: number;
   createdAt: number;
+}
+
+export interface SubSettings {
+  subId: string;
+  rules: string[];
+  announcement: string;
+  updatedAt: number;
 }
 
 export interface Notification {

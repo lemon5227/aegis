@@ -20,7 +20,6 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/tyler-smith/go-bip39"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -119,22 +118,11 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
 	if err := a.initDatabase(); err != nil {
-		runtime.LogErrorf(ctx, "database initialization failed: %v", err)
+		a.logErrorf("database initialization failed: %v", err)
 		return
 	}
 
-	trustedAdminsEnv := strings.TrimSpace(os.Getenv("AEGIS_TRUSTED_ADMINS"))
-	if trustedAdminsEnv != "" {
-		for _, candidate := range strings.Split(trustedAdminsEnv, ",") {
-			adminPubkey := strings.TrimSpace(candidate)
-			if adminPubkey == "" {
-				continue
-			}
-			if err := a.AddTrustedAdmin(adminPubkey, "genesis"); err != nil {
-				runtime.LogErrorf(ctx, "seed trusted admin failed (%s): %v", adminPubkey, err)
-			}
-		}
-	}
+	a.seedTrustedAdminsFromEnv()
 
 	autoStart, listenPort, bootstrapPeers := a.resolveAutoStartP2PSettings()
 	if !autoStart {
@@ -148,30 +136,46 @@ func (a *App) startup(ctx context.Context) {
 		}
 
 		if _, err := a.StartP2P(candidatePort, bootstrapPeers); err != nil {
-			runtime.LogWarningf(ctx, "p2p auto start failed on port %d: %v", candidatePort, err)
+			a.logWarningf("p2p auto start failed on port %d: %v", candidatePort, err)
 			continue
 		}
 
 		started = true
 		if candidatePort != listenPort {
-			runtime.LogInfof(ctx, "p2p auto start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
+			a.logInfof("p2p auto start fallback port selected: %d (preferred: %d)", candidatePort, listenPort)
 		}
 		break
 	}
 
 	if !started {
-		runtime.LogErrorf(ctx, "p2p auto start failed: no available port in range [%d,%d]", listenPort, listenPort+20)
+		a.logErrorf("p2p auto start failed: no available port in range [%d,%d]", listenPort, listenPort+20)
 	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	if err := a.StopP2P(); err != nil {
-		runtime.LogErrorf(ctx, "p2p shutdown failed: %v", err)
+		a.logErrorf("p2p shutdown failed: %v", err)
 	}
 
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {
-			runtime.LogErrorf(ctx, "database close failed: %v", err)
+			a.logErrorf("database close failed: %v", err)
+		}
+	}
+}
+
+func (a *App) seedTrustedAdminsFromEnv() {
+	trustedAdminsEnv := strings.TrimSpace(os.Getenv("AEGIS_TRUSTED_ADMINS"))
+	if trustedAdminsEnv == "" {
+		return
+	}
+	for _, candidate := range strings.Split(trustedAdminsEnv, ",") {
+		adminPubkey := strings.TrimSpace(candidate)
+		if adminPubkey == "" {
+			continue
+		}
+		if err := a.AddTrustedAdmin(adminPubkey, "genesis"); err != nil {
+			a.logErrorf("seed trusted admin failed (%s): %v", adminPubkey, err)
 		}
 	}
 }

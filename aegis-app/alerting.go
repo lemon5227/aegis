@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 )
 
 type ReleaseAlert struct {
@@ -101,8 +101,7 @@ func (a *App) evaluateReleaseAlertsAt(now int64, metrics ReleaseMetrics) []Relea
 			if _, existed := previous[key]; existed {
 				continue
 			}
-			runtime.LogWarningf(
-				a.ctx,
+			a.logWarningf(
 				"release_alert.raised key=%s metric=%s level=%s value=%.6f threshold=%.6f window_sec=%d",
 				alert.Key, alert.Metric, alert.Level, alert.Value, alert.Threshold, alert.WindowSec,
 			)
@@ -111,8 +110,7 @@ func (a *App) evaluateReleaseAlertsAt(now int64, metrics ReleaseMetrics) []Relea
 			if _, stillActive := current[key]; stillActive {
 				continue
 			}
-			runtime.LogInfof(
-				a.ctx,
+			a.logInfof(
 				"release_alert.recovered key=%s metric=%s level=%s",
 				alert.Key, alert.Metric, alert.Level,
 			)

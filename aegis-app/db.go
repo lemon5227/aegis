@@ -23,14 +23,9 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	xdraw "golang.org/x/image/draw"
 	_ "modernc.org/sqlite"
 )
-
-
-
-
 
 func compareLamportVersion(left LamportVersion, right LamportVersion) int {
 	if left.Lamport > right.Lamport {
@@ -466,17 +461,6 @@ func (a *App) RunTombstoneGC(retentionDays int, requiredStablePasses int, batchS
 
 	return result, nil
 }
-
-
-
-
-
-
-
-
-
-
-
 
 func (a *App) GetSubStats(subID string) (SubStats, error) {
 	if a.db == nil {
@@ -1634,8 +1618,6 @@ func (a *App) hasMediaBlobLocal(contentCID string) (bool, error) {
 	return true, nil
 }
 
-
-
 func (a *App) GetCommentsByPost(postID string) ([]Comment, error) {
 	if a.db == nil {
 		return nil, errors.New("database not initialized")
@@ -1780,7 +1762,7 @@ func (a *App) SubscribeSub(subID string) (Sub, error) {
 	}
 
 	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "subs:subscriptions_updated")
+		a.emitEvent("subs:subscriptions_updated")
 	}
 
 	return sub, nil
@@ -1798,7 +1780,7 @@ func (a *App) UnsubscribeSub(subID string) error {
 	}
 
 	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 && a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "subs:subscriptions_updated")
+		a.emitEvent("subs:subscriptions_updated")
 	}
 
 	return nil
@@ -1877,7 +1859,6 @@ func (a *App) SearchSubs(keyword string, limit int) ([]Sub, error) {
 
 	return result, rows.Err()
 }
-
 
 func (a *App) UpdateProfile(displayName string, avatarURL string) (Profile, error) {
 	if a.db == nil {
@@ -2541,9 +2522,9 @@ func (a *App) ResetLocalTestData() error {
 	}
 
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "feed:updated")
-		runtime.EventsEmit(a.ctx, "subs:updated")
-		runtime.EventsEmit(a.ctx, "p2p:updated")
+		a.emitEvent("feed:updated")
+		a.emitEvent("subs:updated")
+		a.emitEvent("p2p:updated")
 	}
 
 	a.releaseAlertMu.Lock()
@@ -2653,7 +2634,7 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 			return err
 		}
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "subs:updated")
+			a.emitEvent("subs:updated")
 		}
 		return nil
 	case "GOVERNANCE_POLICY_UPDATE":
@@ -2666,6 +2647,54 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 		_, policyErr := a.SetGovernancePolicy(message.HideHistoryOnShadowBan)
 		return policyErr
+	case messageTypeSubSettingsUpdate:
+		trusted, trustErr := a.isTrustedAdmin(message.AdminPubkey)
+		if trustErr != nil {
+			return trustErr
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
+		if message.Timestamp <= 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.applySubSettingsUpdate(message.SubID, message.Rules, message.Announcement, message.AdminPubkey, message.Timestamp, lamport, message.OpID)
+	case messageTypePostPinSet:
+		trusted, trustErr := a.isTrustedAdmin(message.AdminPubkey)
+		if trustErr != nil {
+			return trustErr
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
+		if message.Timestamp <= 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.applyPostPinnedState(message.PostID, message.Pinned, message.AdminPubkey, message.Timestamp, lamport, message.OpID)
+	case messageTypePostLockSet:
+		trusted, trustErr := a.isTrustedAdmin(message.AdminPubkey)
+		if trustErr != nil {
+			return trustErr
+		}
+		if !trusted {
+			return errors.New("admin pubkey is not trusted")
+		}
+		if message.Timestamp <= 0 {
+			message.Timestamp = time.Now().Unix()
+		}
+		lamport, err := a.normalizeIncomingLamport(message.Lamport, message.Timestamp)
+		if err != nil {
+			return err
+		}
+		return a.applyPostLockedState(message.PostID, message.Locked, message.AdminPubkey, message.Timestamp, lamport, message.OpID)
 	case "PROFILE_UPDATE":
 		_, err := a.upsertProfile(message.Pubkey, message.DisplayName, message.AvatarURL, message.Timestamp)
 		return err
@@ -2906,6 +2935,11 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		if !allowed {
 			return nil
 		}
+		if locked, lockLamport, lockErr := a.getPostLockState(message.PostID); lockErr != nil {
+			return lockErr
+		} else if locked && (lockLamport == 0 || message.Lamport > lockLamport) {
+			return errors.New("post is locked")
+		}
 
 		commentBody := strings.TrimSpace(message.Body)
 		attachments := normalizeCommentAttachments(message.CommentAttachments)
@@ -3088,7 +3122,6 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 	}
 }
 
-
 func (a *App) AddLocalComment(pubkey string, postID string, parentID string, body string) (Comment, error) {
 	return a.AddLocalCommentWithAttachments(pubkey, postID, parentID, body, nil)
 }
@@ -3109,6 +3142,11 @@ func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, paren
 	}
 	if body == "" && len(attachments) == 0 {
 		return Comment{}, errors.New("comment content is required")
+	}
+	if locked, _, err := a.getPostLockState(postID); err != nil {
+		return Comment{}, err
+	} else if locked {
+		return Comment{}, errors.New("post is locked")
 	}
 
 	now := time.Now().Unix()
@@ -3137,7 +3175,6 @@ func (a *App) AddLocalCommentWithAttachments(pubkey string, postID string, paren
 
 	return a.insertComment(comment)
 }
-
 
 func (a *App) deleteLocalCommentAsAuthor(pubkey string, commentID string, deletedAt int64, lamport int64, opID string) (string, error) {
 	if a.db == nil {
@@ -3333,7 +3370,7 @@ func (a *App) AddFavorite(postID string) error {
 
 	a.emitFavoritesUpdated(postID)
 	if err = a.publishFavoriteOperation(record); err != nil && a.ctx != nil {
-		runtime.LogWarningf(a.ctx, "favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
+		a.logWarningf("favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
 	}
 
 	return nil
@@ -3381,7 +3418,7 @@ func (a *App) RemoveFavorite(postID string) error {
 
 	a.emitFavoritesUpdated(postID)
 	if err = a.publishFavoriteOperation(record); err != nil && a.ctx != nil {
-		runtime.LogWarningf(a.ctx, "favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
+		a.logWarningf("favorite publish failed op_id=%s post_id=%s err=%v", record.OpID, postID, err)
 	}
 
 	return nil
@@ -3620,8 +3657,6 @@ func (a *App) upsertProfile(pubkey string, displayName string, avatarURL string,
 
 	return Profile{Pubkey: pubkey, DisplayName: displayName, AvatarURL: avatarURL, UpdatedAt: updatedAt}, nil
 }
-
-
 
 func (a *App) StoreCommentImageDataURL(dataURL string) (CommentAttachment, error) {
 	if a.db == nil {
@@ -3899,7 +3934,6 @@ func (a *App) isTrustedAdmin(pubkey string) (bool, error) {
 
 	return count > 0, nil
 }
-
 
 func (a *App) insertComment(comment Comment) (Comment, error) {
 	if a.db == nil {
@@ -4437,7 +4471,6 @@ func (a *App) applyCommentVoteState(voterPubkey string, commentID string, postID
 	return tx.Commit()
 }
 
-
 func (a *App) isFavoritedByPubkey(pubkey string, postID string) (bool, error) {
 	if a.db == nil {
 		return false, errors.New("database not initialized")
@@ -4625,8 +4658,8 @@ func (a *App) emitFavoritesUpdated(postID string) {
 	payload := map[string]string{
 		"postId": strings.TrimSpace(postID),
 	}
-	runtime.EventsEmit(a.ctx, "favorites:updated", payload)
-	runtime.EventsEmit(a.ctx, "feed:updated")
+	a.emitEvent("favorites:updated", payload)
+	a.emitEvent("feed:updated")
 }
 
 func ensureZoneQuota(tx *sql.Tx, zone string, quota int64, incomingBytes int64) error {
@@ -5349,8 +5382,6 @@ func (a *App) listSubscribedSubIDs() ([]string, error) {
 	return result, rows.Err()
 }
 
-
-
 func (a *App) queryForumMessages(query string, args ...interface{}) ([]ForumMessage, error) {
 	rows, err := a.db.Query(query, args...)
 	if err != nil {
@@ -5428,7 +5459,7 @@ func (a *App) emitSubscribedSubUpdate(message ForumMessage) {
 		return
 	}
 
-	runtime.EventsEmit(a.ctx, "sub:updated", map[string]interface{}{
+	a.emitEvent("sub:updated", map[string]interface{}{
 		"subId":     message.SubID,
 		"postId":    message.ID,
 		"title":     message.Title,
@@ -5476,7 +5507,6 @@ func (a *App) getLocalIdentity() (Identity, error) {
 
 	return identity, nil
 }
-
 
 func (a *App) UpdateLocalComment(pubkey string, commentID string, body string) (Comment, error) {
 	if a.db == nil {

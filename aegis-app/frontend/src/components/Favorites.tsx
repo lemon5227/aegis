@@ -49,6 +49,10 @@ export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUp
         zone: (item.zone || 'public') as 'private' | 'public',
         subId: item.subId || 'general',
         visibility: item.visibility || 'normal',
+        isPinned: !!item.isPinned,
+        pinnedAt: item.pinnedAt || 0,
+        isLocked: !!item.isLocked,
+        lockedAt: item.lockedAt || 0,
       }));
 
       favoritesCache.set(cacheKey, mapped);

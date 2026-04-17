@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
-import { AntiEntropyStats, EntityOpRecord, GovernanceAdmin, ModerationLog, ModerationState, Profile, TombstoneGCResult } from '../types';
+import { AntiEntropyStats, EntityOpRecord, GovernanceAdmin, ModerationLog, ModerationState, Profile, SubSettings, TombstoneGCResult } from '../types';
 import { CheckForUpdates, GetAntiEntropyStats, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ListEntityOps, ResetLocalTestData, RunTombstoneGC, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P, UpdateProfileDetails } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
@@ -11,10 +11,14 @@ interface SettingsPanelProps {
   governanceAdmins: GovernanceAdmin[];
   moderationStates?: ModerationState[];
   moderationLogs?: ModerationLog[];
+  currentSubId: string;
+  currentSubTitle: string;
+  currentSubSettings?: SubSettings;
   onSaveProfile: (displayName: string, avatarURL: string, bio: string) => Promise<void> | void;
   onPublishProfile: (displayName: string, avatarURL: string) => void;
   onBanUser: (targetPubkey: string, reason: string) => void;
   onUnbanUser: (targetPubkey: string, reason: string) => void;
+  onUpdateSubSettings: (subId: string, rules: string[], announcement: string) => Promise<void> | void;
   consistencyFocus?: {
     entityType: 'post' | 'comment';
     entityId: string;
@@ -67,10 +71,14 @@ export function SettingsPanel({
   governanceAdmins,
   moderationStates = [],
   moderationLogs = [],
+  currentSubId,
+  currentSubTitle,
+  currentSubSettings,
   onSaveProfile,
   onPublishProfile,
   onBanUser,
   onUnbanUser,
+  onUpdateSubSettings,
   consistencyFocus,
   isDevMode,
 }: SettingsPanelProps) {
@@ -93,6 +101,10 @@ export function SettingsPanel({
   const [hideHistoryOnShadowBan, setHideHistoryOnShadowBan] = useState(true);
   const [governancePolicyBusy, setGovernancePolicyBusy] = useState(false);
   const [governancePolicyMessage, setGovernancePolicyMessage] = useState('');
+  const [subRulesInput, setSubRulesInput] = useState('');
+  const [subAnnouncement, setSubAnnouncement] = useState('');
+  const [subSettingsBusy, setSubSettingsBusy] = useState(false);
+  const [subSettingsMessage, setSubSettingsMessage] = useState('');
   const [p2pListenPort, setP2PListenPort] = useState('40100');
   const [p2pRelayPeersInput, setP2PRelayPeersInput] = useState('');
   const [p2pAutoStart, setP2PAutoStart] = useState(true);
@@ -376,6 +388,13 @@ export function SettingsPanel({
   }, [profile?.displayName, profile?.avatarURL, profile?.bio]);
 
   useEffect(() => {
+    const rules = currentSubSettings?.rules || [];
+    setSubRulesInput(rules.join('\n'));
+    setSubAnnouncement(currentSubSettings?.announcement || '');
+    setSubSettingsMessage('');
+  }, [currentSubId, currentSubSettings?.announcement, currentSubSettings?.updatedAt, JSON.stringify(currentSubSettings?.rules || [])]);
+
+  useEffect(() => {
     return () => {
       if (accountToastTimerRef.current !== null) {
         window.clearTimeout(accountToastTimerRef.current);
@@ -572,6 +591,26 @@ export function SettingsPanel({
       setGovernancePolicyMessage('Failed to save governance policy.');
     } finally {
       setGovernancePolicyBusy(false);
+    }
+  };
+
+  const handleSaveSubSettings = async () => {
+    if (!isAdmin) return;
+    const rules = subRulesInput
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    setSubSettingsBusy(true);
+    setSubSettingsMessage('');
+    try {
+      await onUpdateSubSettings(currentSubId, rules, subAnnouncement.trim());
+      setSubSettingsMessage('Community details saved.');
+    } catch (error) {
+      console.error('Failed to save sub settings:', error);
+      setSubSettingsMessage('Failed to save community details.');
+    } finally {
+      setSubSettingsBusy(false);
     }
   };
 
@@ -1494,6 +1533,58 @@ export function SettingsPanel({
               </header>
 
               <div className="px-8 pt-4 border-b border-warm-border dark:border-border-dark bg-warm-bg dark:bg-background-dark">
+                <div className="mb-4 rounded-xl border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark p-4">
+                  <div className="flex flex-col gap-4">
+                    <div>
+                      <h3 className="font-semibold text-warm-text-primary dark:text-white">Community Presentation</h3>
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400 mt-1">
+                        Update the rules and announcement shown for <span className="font-semibold">#{currentSubTitle}</span>.
+                      </p>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[1.1fr,0.9fr]">
+                      <div>
+                        <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-warm-text-secondary dark:text-slate-400">
+                          Rules
+                        </label>
+                        <textarea
+                          value={subRulesInput}
+                          onChange={(e) => setSubRulesInput(e.target.value)}
+                          rows={6}
+                          placeholder={'One rule per line\nBe respectful\nStay on topic'}
+                          className="w-full rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark px-4 py-3 text-sm text-warm-text-primary dark:text-white outline-none focus:ring-2 focus:ring-warm-accent resize-y"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-warm-text-secondary dark:text-slate-400">
+                          Announcement
+                        </label>
+                        <textarea
+                          value={subAnnouncement}
+                          onChange={(e) => setSubAnnouncement(e.target.value)}
+                          rows={6}
+                          placeholder="Share updates, events, or posting guidance."
+                          className="w-full rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark px-4 py-3 text-sm text-warm-text-primary dark:text-white outline-none focus:ring-2 focus:ring-warm-accent resize-y"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-warm-text-secondary dark:text-slate-400">
+                        These details are shown in the community sidebar for members.
+                      </span>
+                      <button
+                        onClick={handleSaveSubSettings}
+                        disabled={subSettingsBusy || currentSubId === 'recommended'}
+                        className="px-3 py-1.5 text-xs font-medium bg-warm-accent hover:bg-warm-accent-hover text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {subSettingsBusy ? 'Saving...' : 'Save Community Details'}
+                      </button>
+                    </div>
+                    {subSettingsMessage && (
+                      <p className="text-xs text-warm-text-secondary dark:text-slate-400">{subSettingsMessage}</p>
+                    )}
+                  </div>
+                </div>
+
                 <div className="mb-4 rounded-xl border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>

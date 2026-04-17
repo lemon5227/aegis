@@ -73,6 +73,22 @@ func reserveLoopbackPort(t *testing.T) int {
 	return addr.Port
 }
 
+func waitForNoBusyError(t *testing.T, timeout time.Duration, fn func() error) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		err := fn()
+		if err == nil {
+			return
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "database is locked") {
+			t.Fatalf("unexpected operation error: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("database remained busy for %s", timeout)
+}
+
 func TestG7RejectsForgedSignedPost(t *testing.T) {
 	app := newG7TestApp(t, "g7_signature.db")
 	identity := seedLocalIdentity(t, app)
@@ -178,6 +194,90 @@ func TestG7PublishPostFlushesOutboxAfterPeerConnect(t *testing.T) {
 
 	if len(statusA.ListenAddrs) == 0 && len(statusA.AnnounceAddrs) == 0 {
 		t.Fatalf("node A failed to expose listen address")
+	}
+}
+
+func TestG7ReplicatesCommunityOperationsAcrossPeers(t *testing.T) {
+	nodeA := newG7TestApp(t, "g7_community_a.db")
+	nodeB := newG7TestApp(t, "g7_community_b.db")
+	adminIdentity := seedLocalIdentity(t, nodeA)
+	seedLocalIdentity(t, nodeB)
+
+	if err := nodeA.AddTrustedAdmin(adminIdentity.PublicKey, "owner"); err != nil {
+		t.Fatalf("trust admin on node A: %v", err)
+	}
+	if err := nodeB.AddTrustedAdmin(adminIdentity.PublicKey, "owner"); err != nil {
+		t.Fatalf("trust admin on node B: %v", err)
+	}
+
+	portB := reserveLoopbackPort(t)
+	portA := reserveLoopbackPort(t)
+
+	statusB, err := nodeB.StartP2P(portB, nil)
+	if err != nil {
+		t.Fatalf("start node B: %v", err)
+	}
+	if _, err = nodeA.StartP2P(portA, nil); err != nil {
+		t.Fatalf("start node A: %v", err)
+	}
+	if err = nodeA.ConnectPeer(loopbackAddress(portB, statusB.PeerID)); err != nil {
+		t.Fatalf("connect peers: %v", err)
+	}
+
+	waitForCondition(t, 10*time.Second, func() (bool, error) {
+		return len(nodeA.GetP2PStatus().ConnectedPeers) > 0 && len(nodeB.GetP2PStatus().ConnectedPeers) > 0, nil
+	})
+
+	waitForNoBusyError(t, 5*time.Second, func() error {
+		return nodeA.PublishPostStructuredToSub(adminIdentity.PublicKey, "Admin notice", "Important post", defaultSubID)
+	})
+
+	var postID string
+	waitForCondition(t, 10*time.Second, func() (bool, error) {
+		err := nodeA.db.QueryRow(`SELECT id FROM messages WHERE title = ? LIMIT 1;`, "Admin notice").Scan(&postID)
+		return err == nil && strings.TrimSpace(postID) != "", nil
+	})
+	waitForCondition(t, 10*time.Second, func() (bool, error) {
+		var replicated int
+		err := nodeB.db.QueryRow(`SELECT COUNT(1) FROM messages WHERE id = ?;`, postID).Scan(&replicated)
+		return replicated == 1, err
+	})
+
+	if err = nodeA.PublishSubSettingsUpdate(defaultSubID, []string{"Be respectful", "Stay on topic"}, "Weekly thread is live."); err != nil {
+		t.Fatalf("publish sub settings: %v", err)
+	}
+	if err = nodeA.PublishSetPostPinned(postID, true); err != nil {
+		t.Fatalf("publish post pin: %v", err)
+	}
+	if err = nodeA.PublishSetPostLocked(postID, true); err != nil {
+		t.Fatalf("publish post lock: %v", err)
+	}
+
+	waitForCondition(t, 10*time.Second, func() (bool, error) {
+		settings, err := nodeB.GetSubSettings(defaultSubID)
+		if err != nil {
+			return false, err
+		}
+		return settings.Announcement == "Weekly thread is live." && len(settings.Rules) == 2, nil
+	})
+
+	waitForCondition(t, 10*time.Second, func() (bool, error) {
+		var pinned int
+		var locked int
+		err := nodeB.db.QueryRow(`
+			SELECT pinned, locked
+			FROM post_admin_state
+			WHERE post_id = ?;
+		`, postID).Scan(&pinned, &locked)
+		return pinned == 1 && locked == 1, err
+	})
+
+	locked, _, err := nodeB.getPostLockState(postID)
+	if err != nil {
+		t.Fatalf("read post lock state: %v", err)
+	}
+	if !locked {
+		t.Fatalf("expected replicated lock state on node B")
 	}
 }
 

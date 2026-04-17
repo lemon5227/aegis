@@ -16,6 +16,9 @@ const (
 	outboxMessageTypePostVoteSet      = "POST_VOTE_SET"
 	outboxMessageTypeCommentVoteSet   = "COMMENT_VOTE_SET"
 	outboxMessageTypeGovernancePolicy = "GOVERNANCE_POLICY_UPDATE"
+	outboxMessageTypeSubSettings      = "SUB_SETTINGS_UPDATE"
+	outboxMessageTypePostPin          = "POST_PIN_SET"
+	outboxMessageTypePostLock         = "POST_LOCK_SET"
 )
 
 func normalizeIncomingMessageForSignature(message IncomingMessage) IncomingMessage {
@@ -39,6 +42,7 @@ func normalizeIncomingMessageForSignature(message IncomingMessage) IncomingMessa
 	message.ThumbCID = strings.TrimSpace(message.ThumbCID)
 	message.ImageMIME = strings.TrimSpace(message.ImageMIME)
 	message.SubID = normalizeSubID(message.SubID)
+	message.Announcement = strings.TrimSpace(message.Announcement)
 	message.Signature = strings.TrimSpace(message.Signature)
 	message.TargetPubkey = strings.TrimSpace(message.TargetPubkey)
 	message.AdminPubkey = strings.TrimSpace(message.AdminPubkey)
@@ -51,7 +55,8 @@ func signedIncomingMessageType(messageType string) bool {
 	case "POST", "COMMENT", "POST_DELETE", "COMMENT_DELETE",
 		"PROFILE_UPDATE", "POST_UPVOTE", "POST_DOWNVOTE", "POST_VOTE_SET",
 		"COMMENT_UPVOTE", "COMMENT_DOWNVOTE", "COMMENT_VOTE_SET",
-		"GOVERNANCE_POLICY_UPDATE", "SHADOW_BAN", "UNBAN":
+		"GOVERNANCE_POLICY_UPDATE", "SHADOW_BAN", "UNBAN",
+		messageTypeSubSettingsUpdate, messageTypePostPinSet, messageTypePostLockSet:
 		return true
 	default:
 		return false
@@ -74,7 +79,7 @@ func signerPubkeyForIncomingMessage(message IncomingMessage) (string, error) {
 			return "", errors.New("voter pubkey is required")
 		}
 		return voterPubkey, nil
-	case "GOVERNANCE_POLICY_UPDATE", "SHADOW_BAN", "UNBAN":
+	case "GOVERNANCE_POLICY_UPDATE", "SHADOW_BAN", "UNBAN", messageTypeSubSettingsUpdate, messageTypePostPinSet, messageTypePostLockSet:
 		if message.AdminPubkey == "" {
 			return "", errors.New("admin pubkey is required")
 		}
@@ -155,6 +160,20 @@ func buildIncomingMessageSignaturePayload(message IncomingMessage) (string, erro
 			"type=%s|op_id=%s|admin_pubkey=%s|target_pubkey=%s|reason=%s|timestamp=%d|lamport=%d",
 			message.Type, message.OpID, message.AdminPubkey, message.TargetPubkey, message.Reason, message.Timestamp, message.Lamport,
 		), nil
+	case messageTypeSubSettingsUpdate:
+		rulesJSON, err := encodeSubRulesJSON(message.Rules)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf(
+			"type=%s|op_id=%s|admin_pubkey=%s|sub_id=%s|rules=%s|announcement=%s|timestamp=%d|lamport=%d",
+			message.Type, message.OpID, message.AdminPubkey, message.SubID, rulesJSON, message.Announcement, message.Timestamp, message.Lamport,
+		), nil
+	case messageTypePostPinSet, messageTypePostLockSet:
+		return fmt.Sprintf(
+			"type=%s|op_id=%s|admin_pubkey=%s|post_id=%s|enabled=%t|timestamp=%d|lamport=%d",
+			message.Type, message.OpID, message.AdminPubkey, message.PostID, message.Pinned || message.Locked, message.Timestamp, message.Lamport,
+		), nil
 	default:
 		return "", fmt.Errorf("unsupported signed message type %s", message.Type)
 	}
@@ -183,6 +202,12 @@ func (a *App) signIncomingMessage(message IncomingMessage) (IncomingMessage, err
 	}
 	if (message.Type == "SHADOW_BAN" || message.Type == "UNBAN") && message.OpID == "" {
 		message.OpID = buildMessageID(signerPubkey, fmt.Sprintf("governance|%s|%s|%d", message.Type, message.TargetPubkey, message.Timestamp), message.Timestamp)
+	}
+	if message.Type == messageTypeSubSettingsUpdate && message.OpID == "" {
+		message.OpID = buildMessageID(signerPubkey, fmt.Sprintf("sub-settings|%s|%d", message.SubID, message.Timestamp), message.Timestamp)
+	}
+	if (message.Type == messageTypePostPinSet || message.Type == messageTypePostLockSet) && message.OpID == "" {
+		message.OpID = buildMessageID(signerPubkey, fmt.Sprintf("post-admin|%s|%s|%d", message.Type, message.PostID, message.Timestamp), message.Timestamp)
 	}
 	if message.Timestamp <= 0 {
 		message.Timestamp = time.Now().Unix()

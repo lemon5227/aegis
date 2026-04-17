@@ -106,6 +106,16 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			description TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS sub_settings (
+			sub_id TEXT PRIMARY KEY,
+			rules_json TEXT NOT NULL DEFAULT '[]',
+			announcement TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL DEFAULT 0,
+			current_admin_pubkey TEXT NOT NULL DEFAULT '',
+			current_op_id TEXT NOT NULL DEFAULT '',
+			lamport INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY(sub_id) REFERENCES subs(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS sub_subscriptions (
 			sub_id TEXT PRIMARY KEY,
 			subscribed_at INTEGER NOT NULL,
@@ -221,6 +231,20 @@ func (a *App) ensureSchema(db *sql.DB) error {
 			op_id TEXT PRIMARY KEY,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS post_admin_state (
+			post_id TEXT PRIMARY KEY,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			pinned_by TEXT NOT NULL DEFAULT '',
+			pinned_updated_at INTEGER NOT NULL DEFAULT 0,
+			pinned_lamport INTEGER NOT NULL DEFAULT 0,
+			pinned_op_id TEXT NOT NULL DEFAULT '',
+			locked INTEGER NOT NULL DEFAULT 0,
+			locked_by TEXT NOT NULL DEFAULT '',
+			locked_updated_at INTEGER NOT NULL DEFAULT 0,
+			locked_lamport INTEGER NOT NULL DEFAULT 0,
+			locked_op_id TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_post_admin_state_pinned ON post_admin_state(pinned, pinned_updated_at DESC);`,
 		`CREATE TABLE IF NOT EXISTS moderation (
 			target_pubkey TEXT PRIMARY KEY,
 			action TEXT NOT NULL,
@@ -457,6 +481,89 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return err
 		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN announcement TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN current_admin_pubkey TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN current_op_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE sub_settings ADD COLUMN lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN pinned_by TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN pinned_updated_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN pinned_lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN pinned_op_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN locked_by TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN locked_updated_at INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN locked_lamport INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE post_admin_state ADD COLUMN locked_op_id TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_post_admin_state_pinned ON post_admin_state(pinned, pinned_updated_at DESC);`); err != nil {
+		return err
 	}
 
 	if _, err := db.Exec(`ALTER TABLE comments ADD COLUMN score INTEGER NOT NULL DEFAULT 0;`); err != nil {

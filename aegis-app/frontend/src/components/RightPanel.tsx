@@ -1,10 +1,11 @@
-import { AntiEntropyStats, P2PStatus, PendingSyncAction, Sub, SubStats } from '../types';
+import { AntiEntropyStats, P2PStatus, PendingSyncAction, Sub, SubSettings, SubStats } from '../types';
 import { deriveNetworkHealth, formatRelativeNetworkTime } from '../lib/networkHealth';
 
 interface RightPanelProps {
   sub: Sub | { id: string; title: string; description: string } | undefined;
   isSubscribed: boolean;
   stats?: SubStats;
+  settings?: SubSettings;
   membersCount?: number;
   onlineCount?: number;
   onCreatePost?: () => void;
@@ -28,6 +29,7 @@ export function RightPanel({
   sub,
   isSubscribed,
   stats,
+  settings,
   membersCount = 0,
   onlineCount = 0,
   onCreatePost,
@@ -48,6 +50,8 @@ export function RightPanel({
   const postCount = stats?.postCount || 0;
   const activeAuthors = stats?.activeAuthors || membersCount;
   const recentPosts = stats?.recentPosts24h || 0;
+  const subRules = settings?.rules || [];
+  const announcement = settings?.announcement?.trim() || '';
   const networkHealth = deriveNetworkHealth(p2pStatus, antiEntropyStats);
   const networkBadgeClasses = {
     healthy: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800',
@@ -110,6 +114,31 @@ export function RightPanel({
               {recentPosts.toLocaleString()} posts in the last 24 hours
             </div>
           </div>
+
+          {announcement && (
+            <div className="mb-4 rounded-xl border border-warm-border/60 dark:border-border-dark bg-warm-bg/80 dark:bg-surface-dark px-3 py-3">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-warm-text-secondary dark:text-slate-400">Announcement</div>
+              <div className="mt-1 text-sm text-warm-text-primary dark:text-white leading-relaxed">
+                {announcement}
+              </div>
+            </div>
+          )}
+
+          {subRules.length > 0 && (
+            <div className="mb-4 rounded-xl border border-warm-border/60 dark:border-border-dark bg-warm-bg/80 dark:bg-surface-dark px-3 py-3">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-warm-text-secondary dark:text-slate-400">Community Rules</div>
+              <ul className="mt-2 space-y-2">
+                {subRules.map((rule, index) => (
+                  <li key={`${index}-${rule}`} className="flex gap-2 text-sm text-warm-text-primary dark:text-white">
+                    <span className="mt-[2px] inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-warm-card dark:bg-surface-lighter text-[11px] font-semibold text-warm-text-secondary dark:text-slate-300">
+                      {index + 1}
+                    </span>
+                    <span className="leading-relaxed">{rule}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           
           <button 
             onClick={onToggleSubscription}

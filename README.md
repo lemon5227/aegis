@@ -137,7 +137,31 @@ Plans and runbooks:
 
 - `aegis-app/` - main application (Go backend + React frontend)
 - `docs/` - architecture, governance, rollout, and ops docs
+- `scripts/` - deployment and test scripts
 - `.github/workflows/` - build and release automation
+
+---
+
+## Relay Deployment
+
+Every Aegis node is a relay by default (`AEGIS_RELAY_SERVICE_ENABLED=true`). A seed relay helps with cold-start when the network is small.
+
+### One-line install on Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lemon5227/aegis/main/scripts/install-relay.sh | sudo bash -s -- --public-ip YOUR_PUBLIC_IP
+```
+
+Options: `--port`, `--http-port`, `--announce`, `--db-path`, `--trusted-admins`, `--uninstall`
+
+After install, the relay exposes:
+- `http://localhost:40101/health` - node status
+- `http://localhost:40101/metrics` - release metrics
+- `http://localhost:40101/peers` - connected peers
+
+### Desktop nodes auto-connect
+
+Desktop builds bake in relay addresses via CI secrets (`AEGIS_RELAY_PEERS`, `AEGIS_BOOTSTRAP_PEERS`). New users connect automatically on first launch.
 
 ---
 

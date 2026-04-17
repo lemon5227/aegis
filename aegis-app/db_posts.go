@@ -23,10 +23,13 @@ func (a *App) GetFeed() ([]ForumMessage, error) {
 	}
 
 	rows, err := a.db.Query(`
-		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
-		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
-		ORDER BY timestamp DESC
+		SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id,
+		       COALESCE(pas.pinned, 0), COALESCE(pas.pinned_updated_at, 0), COALESCE(pas.locked, 0), COALESCE(pas.locked_updated_at, 0),
+		       m.is_protected, m.visibility
+		FROM messages m
+		LEFT JOIN post_admin_state pas ON pas.post_id = m.id
+		WHERE m.zone = 'public' AND (m.visibility = 'normal' OR (m.pubkey = ? AND m.visibility != 'deleted'))
+		ORDER BY COALESCE(pas.pinned, 0) DESC, COALESCE(pas.pinned_updated_at, 0) DESC, m.timestamp DESC
 		LIMIT 200;
 	`, viewerPubkey)
 	if err != nil {
@@ -49,6 +52,10 @@ func (a *App) GetFeed() ([]ForumMessage, error) {
 			&message.SizeBytes,
 			&message.Zone,
 			&message.SubID,
+			&message.IsPinned,
+			&message.PinnedAt,
+			&message.IsLocked,
+			&message.LockedAt,
 			&message.IsProtected,
 			&message.Visibility,
 		); err != nil {
@@ -106,10 +113,13 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 
 	if sortMode == "new" {
 		query := fmt.Sprintf(`
-			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
-			FROM messages
-			WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
-			ORDER BY %s
+			SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id,
+			       COALESCE(pas.pinned, 0), COALESCE(pas.pinned_updated_at, 0), COALESCE(pas.locked, 0), COALESCE(pas.locked_updated_at, 0),
+			       m.is_protected, m.visibility
+			FROM messages m
+			LEFT JOIN post_admin_state pas ON pas.post_id = m.id
+			WHERE m.zone = 'public' AND (m.visibility = 'normal' OR (m.pubkey = ? AND m.visibility != 'deleted')) AND m.sub_id = ?
+			ORDER BY COALESCE(pas.pinned, 0) DESC, COALESCE(pas.pinned_updated_at, 0) DESC, %s
 			LIMIT 200;
 		`, orderBy)
 
@@ -134,6 +144,10 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 				&message.SizeBytes,
 				&message.Zone,
 				&message.SubID,
+				&message.IsPinned,
+				&message.PinnedAt,
+				&message.IsLocked,
+				&message.LockedAt,
 				&message.IsProtected,
 				&message.Visibility,
 			); err != nil {
@@ -146,10 +160,13 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 	}
 
 	query := `
-		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
-		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
-		ORDER BY timestamp DESC
+		SELECT m.id, m.pubkey, m.title, m.body, m.content_cid, m.content, m.score, m.timestamp, m.size_bytes, m.zone, m.sub_id,
+		       COALESCE(pas.pinned, 0), COALESCE(pas.pinned_updated_at, 0), COALESCE(pas.locked, 0), COALESCE(pas.locked_updated_at, 0),
+		       m.is_protected, m.visibility
+		FROM messages m
+		LEFT JOIN post_admin_state pas ON pas.post_id = m.id
+		WHERE m.zone = 'public' AND (m.visibility = 'normal' OR (m.pubkey = ? AND m.visibility != 'deleted')) AND m.sub_id = ?
+		ORDER BY COALESCE(pas.pinned, 0) DESC, COALESCE(pas.pinned_updated_at, 0) DESC, m.timestamp DESC
 		LIMIT 500;
 	`
 
@@ -174,6 +191,10 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 			&message.SizeBytes,
 			&message.Zone,
 			&message.SubID,
+			&message.IsPinned,
+			&message.PinnedAt,
+			&message.IsLocked,
+			&message.LockedAt,
 			&message.IsProtected,
 			&message.Visibility,
 		); err != nil {
@@ -199,6 +220,9 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 			messages = filtered
 		}
 		sort.SliceStable(messages, func(i int, j int) bool {
+			if messages[i].IsPinned != messages[j].IsPinned {
+				return messages[i].IsPinned
+			}
 			if messages[i].Score == messages[j].Score {
 				return messages[i].Timestamp > messages[j].Timestamp
 			}
@@ -210,6 +234,9 @@ func (a *App) GetFeedBySubSorted(subID string, sortMode string) ([]ForumMessage,
 		return messages, nil
 	}
 	sort.SliceStable(messages, func(i int, j int) bool {
+		if messages[i].IsPinned != messages[j].IsPinned {
+			return messages[i].IsPinned
+		}
 		left := computeHotScore(messages[i].Score, messages[i].Timestamp, now)
 		right := computeHotScore(messages[j].Score, messages[j].Timestamp, now)
 		if left == right {
@@ -238,10 +265,14 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 	sortMode = normalizeFeedSortMode(sortMode)
 
 	query := `
-		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
-		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')) AND sub_id = ?
-		ORDER BY timestamp DESC
+		SELECT m.id, m.pubkey, m.title, SUBSTR(m.body, 1, 140) AS body_preview, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime,
+		       m.image_size, m.image_width, m.image_height, m.score, m.timestamp, m.zone, m.sub_id,
+		       COALESCE(pas.pinned, 0), COALESCE(pas.pinned_updated_at, 0), COALESCE(pas.locked, 0), COALESCE(pas.locked_updated_at, 0),
+		       m.visibility
+		FROM messages m
+		LEFT JOIN post_admin_state pas ON pas.post_id = m.id
+		WHERE m.zone = 'public' AND (m.visibility = 'normal' OR (m.pubkey = ? AND m.visibility != 'deleted')) AND m.sub_id = ?
+		ORDER BY COALESCE(pas.pinned, 0) DESC, COALESCE(pas.pinned_updated_at, 0) DESC, m.timestamp DESC
 		LIMIT 500;
 	`
 
@@ -270,6 +301,10 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 			&item.Timestamp,
 			&item.Zone,
 			&item.SubID,
+			&item.IsPinned,
+			&item.PinnedAt,
+			&item.IsLocked,
+			&item.LockedAt,
 			&item.Visibility,
 		); err != nil {
 			return nil, err
@@ -294,6 +329,9 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 			items = filtered
 		}
 		sort.SliceStable(items, func(i int, j int) bool {
+			if items[i].IsPinned != items[j].IsPinned {
+				return items[i].IsPinned
+			}
 			if items[i].Score == items[j].Score {
 				return items[i].Timestamp > items[j].Timestamp
 			}
@@ -301,6 +339,9 @@ func (a *App) GetFeedIndexBySubSorted(subID string, sortMode string) ([]PostInde
 		})
 	} else if sortMode == "hot" {
 		sort.SliceStable(items, func(i int, j int) bool {
+			if items[i].IsPinned != items[j].IsPinned {
+				return items[i].IsPinned
+			}
 			left := computeHotScore(items[i].Score, items[i].Timestamp, now)
 			right := computeHotScore(items[j].Score, items[j].Timestamp, now)
 			if left == right {
@@ -333,12 +374,16 @@ func (a *App) GetPostIndexByID(postID string) (PostIndex, error) {
 
 	var item PostIndex
 	err := a.db.QueryRow(`
-		SELECT id, pubkey, title, SUBSTR(body, 1, 140) AS body_preview, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, score, timestamp, zone, sub_id, visibility
-		FROM messages
-		WHERE id = ?
+		SELECT m.id, m.pubkey, m.title, SUBSTR(m.body, 1, 140) AS body_preview, m.content_cid, m.image_cid, m.thumb_cid, m.image_mime,
+		       m.image_size, m.image_width, m.image_height, m.score, m.timestamp, m.zone, m.sub_id,
+		       COALESCE(pas.pinned, 0), COALESCE(pas.pinned_updated_at, 0), COALESCE(pas.locked, 0), COALESCE(pas.locked_updated_at, 0),
+		       m.visibility
+		FROM messages m
+		LEFT JOIN post_admin_state pas ON pas.post_id = m.id
+		WHERE m.id = ?
 		  AND (
-			(zone = 'public' AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted')))
-			OR (zone = 'private' AND pubkey = ?)
+			(m.zone = 'public' AND (m.visibility = 'normal' OR (m.pubkey = ? AND m.visibility != 'deleted')))
+			OR (m.zone = 'private' AND m.pubkey = ?)
 		  )
 		LIMIT 1;
 	`, postID, viewerPubkey, viewerPubkey).Scan(
@@ -357,6 +402,10 @@ func (a *App) GetPostIndexByID(postID string) (PostIndex, error) {
 		&item.Timestamp,
 		&item.Zone,
 		&item.SubID,
+		&item.IsPinned,
+		&item.PinnedAt,
+		&item.IsLocked,
+		&item.LockedAt,
 		&item.Visibility,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

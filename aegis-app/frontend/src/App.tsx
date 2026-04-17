@@ -22,6 +22,7 @@ import {
   GetPostsByAuthor,
   GetProfile,
   GetSubStats,
+  GetSubSettings,
   GetTrustedAdmins,
   GetModerationState,
   GetPostIndexByID,
@@ -43,6 +44,9 @@ import {
   PublishDeleteComment,
   PublishPostUpdate,
   PublishCommentUpdate,
+  PublishSetPostLocked,
+  PublishSetPostPinned,
+  PublishSubSettingsUpdate,
   IsDevMode,
   GetFavoritePostIDs,
   AddFavorite,
@@ -69,7 +73,7 @@ import { NetworkBanner } from './components/NetworkBanner';
 import { PendingSyncView } from './components/PendingSyncView';
 import { NotificationsView } from './components/NotificationsView';
 import { ToastContainer, useToasts } from './components/Toast';
-import { Sub, Profile, ProfileDetails, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState, SubStats, CreatePostInput, AntiEntropyStats, P2PStatus, PendingSyncAction, PendingSyncActionKind } from './types';
+import { Sub, Profile, ProfileDetails, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState, SubStats, CreatePostInput, AntiEntropyStats, P2PStatus, PendingSyncAction, PendingSyncActionKind, SubSettings } from './types';
 import { ClipboardSetText, EventsOn } from '../wailsjs/runtime/runtime';
 import { recordRecentlyViewed } from './lib/history';
 import { deriveNetworkHealth } from './lib/networkHealth';
@@ -111,6 +115,10 @@ function mapPostIndexToPost(item: any): Post {
     zone: (item.zone || 'public') as 'private' | 'public',
     subId: item.subId || 'general',
     visibility: item.visibility || 'normal',
+    isPinned: !!item.isPinned,
+    pinnedAt: item.pinnedAt || 0,
+    isLocked: !!item.isLocked,
+    lockedAt: item.lockedAt || 0,
   };
 }
 
@@ -132,6 +140,10 @@ function mapForumMessageToPost(item: any): Post {
     zone: (item.zone || 'public') as 'private' | 'public',
     subId: item.subId || 'general',
     visibility: item.visibility || 'normal',
+    isPinned: !!item.isPinned,
+    pinnedAt: item.pinnedAt || 0,
+    isLocked: !!item.isLocked,
+    lockedAt: item.lockedAt || 0,
   };
 }
 
@@ -206,6 +218,7 @@ function App() {
   const [selectedProfile, setSelectedProfile] = useState<ProfileDetails | null>(null);
   const [selectedProfilePosts, setSelectedProfilePosts] = useState<Post[]>([]);
   const [currentSubStats, setCurrentSubStats] = useState<SubStats | null>(null);
+  const [currentSubSettings, setCurrentSubSettings] = useState<SubSettings | null>(null);
   const [governanceAdmins, setGovernanceAdmins] = useState<GovernanceAdmin[]>([]);
   const [moderationStates, setModerationStates] = useState<ModerationState[]>([]);
   const [moderationLogs, setModerationLogs] = useState<ModerationLog[]>([]);
@@ -354,6 +367,31 @@ function App() {
     } catch (e) {
       console.error('Failed to load sub stats:', e);
       setCurrentSubStats(null);
+    }
+  }, []);
+
+  const loadSubSettings = useCallback(async (subId: string) => {
+    if (!hasWailsRuntime()) return;
+    if (!subId || subId === 'recommended') {
+      setCurrentSubSettings(null);
+      return;
+    }
+    try {
+      const settings = await GetSubSettings(subId);
+      setCurrentSubSettings({
+        subId: settings?.subId || subId,
+        rules: Array.isArray(settings?.rules) ? settings.rules : [],
+        announcement: settings?.announcement || '',
+        updatedAt: settings?.updatedAt || 0,
+      });
+    } catch (e) {
+      console.error('Failed to load sub settings:', e);
+      setCurrentSubSettings({
+        subId,
+        rules: [],
+        announcement: '',
+        updatedAt: 0,
+      });
     }
   }, []);
 
@@ -561,29 +599,26 @@ function App() {
     if (!hasWailsRuntime()) return;
     try {
       const index = await GetPostIndexByID(postId);
-      const updated: Post = {
-        id: index.id,
-        pubkey: index.pubkey,
-        title: index.title,
-        bodyPreview: index.bodyPreview || '',
-        contentCid: index.contentCid || '',
-        imageCid: index.imageCid || '',
-        thumbCid: index.thumbCid || '',
-        imageMime: index.imageMime || '',
-        imageSize: index.imageSize || 0,
-        imageWidth: index.imageWidth || 0,
-        imageHeight: index.imageHeight || 0,
-        score: index.score || 0,
-        timestamp: index.timestamp || 0,
-        zone: (index.zone || 'public') as 'private' | 'public',
-        subId: index.subId || 'general',
-        visibility: index.visibility || 'normal',
-      };
+      const updated: Post = mapPostIndexToPost(index);
 
       setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, score: updated.score } : p)));
       setSelectedPost((prev) => (prev && prev.id === postId ? { ...prev, score: updated.score } : prev));
     } catch (error) {
       console.error('Failed to refresh post score:', error);
+    }
+  }, []);
+
+  const refreshPostState = useCallback(async (postId: string) => {
+    if (!hasWailsRuntime()) return null;
+    try {
+      const index = await GetPostIndexByID(postId);
+      const updatedPost = mapPostIndexToPost(index);
+      setPosts((prev) => prev.map((item) => (item.id === postId ? { ...item, ...updatedPost } : item)));
+      setSelectedPost((prev) => (prev && prev.id === postId ? { ...prev, ...updatedPost } : prev));
+      return updatedPost;
+    } catch (error) {
+      console.error('Failed to refresh post state:', error);
+      return null;
     }
   }, []);
 
@@ -979,10 +1014,7 @@ function App() {
     try {
       await PublishPostUpdate(identity.publicKey, postId, title, body);
       trackPendingSyncAction('post-edit', postId, `Post edit queued for ${postId.slice(0, 8)}`);
-      const index = await GetPostIndexByID(postId);
-      const updatedPost = mapPostIndexToPost(index);
-      setPosts((prev) => prev.map((item) => (item.id === postId ? { ...item, ...updatedPost } : item)));
-      setSelectedPost((prev) => (prev && prev.id === postId ? { ...prev, ...updatedPost } : prev));
+      await refreshPostState(postId);
       const latestBody = await GetPostBodyByID(postId);
       setPostBody(latestBody.body || body);
       bumpViewSyncToken();
@@ -990,6 +1022,61 @@ function App() {
     } catch (e) {
       const detail = getErrorMessage(e, 'Failed to update post');
       console.error('Failed to update post:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
+  };
+
+  const handleUpdateSubSettings = async (subId: string, rules: string[], announcement: string) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      await PublishSubSettingsUpdate(subId, rules, announcement);
+      await loadSubSettings(subId);
+      addToast({
+        title: 'Community Updated',
+        message: 'Community details have been updated.',
+        type: 'success',
+      });
+    } catch (e) {
+      const detail = getErrorMessage(e, 'Failed to update community settings');
+      console.error('Failed to update community settings:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
+  };
+
+  const handleSetPostPinned = async (postId: string, pinned: boolean) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      await PublishSetPostPinned(postId, pinned);
+      await refreshPostState(postId);
+      await loadPosts(currentSubId, sortMode);
+      addToast({
+        title: pinned ? 'Post Pinned' : 'Post Unpinned',
+        message: pinned ? 'This post now stays at the top of the community.' : 'This post returned to the normal feed order.',
+        type: 'success',
+      });
+    } catch (e) {
+      const detail = getErrorMessage(e, pinned ? 'Failed to pin post' : 'Failed to unpin post');
+      console.error('Failed to update pinned state:', e);
+      addToast({ title: 'Error', message: detail, type: 'error' });
+      throw new Error(detail);
+    }
+  };
+
+  const handleSetPostLocked = async (postId: string, locked: boolean) => {
+    if (!hasWailsRuntime() || !identity) return;
+    try {
+      await PublishSetPostLocked(postId, locked);
+      await refreshPostState(postId);
+      addToast({
+        title: locked ? 'Post Locked' : 'Post Unlocked',
+        message: locked ? 'New replies are now closed for this post.' : 'Replies are open again for this post.',
+        type: 'success',
+      });
+    } catch (e) {
+      const detail = getErrorMessage(e, locked ? 'Failed to lock post' : 'Failed to unlock post');
+      console.error('Failed to update locked state:', e);
       addToast({ title: 'Error', message: detail, type: 'error' });
       throw new Error(detail);
     }
@@ -1172,7 +1259,8 @@ function App() {
   useEffect(() => {
     if (!identity) return;
     void loadSubStats(currentSubId);
-  }, [identity, currentSubId, loadSubStats]);
+    void loadSubSettings(currentSubId);
+  }, [identity, currentSubId, loadSubSettings, loadSubStats]);
 
   useEffect(() => {
     if (identityChecked && !identity) {
@@ -1274,6 +1362,7 @@ function App() {
       if (!identity) return;
       if (view === 'feed') {
         void loadPosts(currentSubId, sortMode);
+        void loadSubSettings(currentSubId);
       } else if (view === 'post-detail' && selectedPost) {
         setHasRemotePostUpdate(true);
       }
@@ -1282,7 +1371,7 @@ function App() {
     return () => {
       unsubscribe();
     };
-  }, [identity, view, currentSubId, sortMode, loadPosts, bumpViewSyncToken, loadNetworkHealth, selectedPost]);
+  }, [identity, view, currentSubId, sortMode, loadPosts, loadSubSettings, bumpViewSyncToken, loadNetworkHealth, selectedPost]);
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
@@ -1519,7 +1608,7 @@ function App() {
           )}
 
           {view === 'post-detail' && selectedPost && (
-            <PostDetail
+          <PostDetail
               post={{ ...selectedPost, isFavorited: favoritePostIds.has(selectedPost.id) }}
               body={postBody}
               comments={postComments}
@@ -1540,9 +1629,12 @@ function App() {
               onDeleteComment={handleDeleteComment}
               onEditPost={handleUpdatePost}
               onEditComment={handleUpdateComment}
+              onSetPinned={handleSetPostPinned}
+              onSetLocked={handleSetPostLocked}
               onViewOperationTimeline={handleViewOperationTimeline}
               isDevMode={isDevMode}
               onToggleFavorite={handleToggleFavorite}
+              isAdmin={isAdmin}
             />
           )}
 
@@ -1625,6 +1717,7 @@ function App() {
             sub={currentSub}
             isSubscribed={isCurrentSubSubscribed}
             stats={currentSubStats || undefined}
+            settings={currentSubSettings || undefined}
             membersCount={membersCount}
             onlineCount={onlineCount}
             onCreatePost={() => setShowCreatePostModal(true)}
@@ -1649,10 +1742,14 @@ function App() {
         governanceAdmins={governanceAdmins}
         moderationStates={moderationStates}
         moderationLogs={moderationLogs}
+        currentSubId={currentSubId}
+        currentSubTitle={currentSub.title}
+        currentSubSettings={currentSubSettings || undefined}
         onSaveProfile={handleSaveProfile}
         onPublishProfile={handlePublishProfile}
         onBanUser={handleBanUser}
         onUnbanUser={handleUnbanUser}
+        onUpdateSubSettings={handleUpdateSubSettings}
         consistencyFocus={consistencyFocus}
         isDevMode={isDevMode}
       />

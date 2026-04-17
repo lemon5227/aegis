@@ -84,9 +84,12 @@ interface PostDetailProps {
   onDeleteComment: (commentId: string) => Promise<void>;
   onEditPost: (postId: string, title: string, body: string) => Promise<void>;
   onEditComment: (commentId: string, body: string) => Promise<void>;
+  onSetPinned?: (postId: string, pinned: boolean) => Promise<void> | void;
+  onSetLocked?: (postId: string, locked: boolean) => Promise<void> | void;
   onViewOperationTimeline: (entityType: 'post' | 'comment', entityId: string) => void;
   isDevMode?: boolean;
   onToggleFavorite?: (postId: string) => void;
+  isAdmin?: boolean;
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -180,9 +183,12 @@ export function PostDetail({
   onDeleteComment,
   onEditPost,
   onEditComment,
+  onSetPinned,
+  onSetLocked,
   onViewOperationTimeline,
   isDevMode,
   onToggleFavorite,
+  isAdmin = false,
 }: PostDetailProps) {
   const [commentSortMode, setCommentSortMode] = useState<'best' | 'newest' | 'controversial'>('best');
   const [replyContent, setReplyContent] = useState('');
@@ -210,6 +216,7 @@ export function PostDetail({
   const displayName = authorProfile?.displayName || post.pubkey.slice(0, 8);
   const avatarUrl = authorProfile?.avatarURL;
   const canManagePost = !!currentPubkey && currentPubkey === post.pubkey;
+  const canAdminManagePost = isAdmin && !!onSetPinned && !!onSetLocked;
   const commentDraftKey = useMemo(() => getCommentDraftStorageKey(post.id, currentPubkey), [currentPubkey, post.id]);
   const parsedPostContent = useMemo(() => parsePostContent(body, post.bodyPreview), [body, post.bodyPreview]);
   const editingLinkURLInvalid = parsedPostContent.mode === 'link' && !isValidExternalURL(editingPostLinkURL.trim());
@@ -489,6 +496,16 @@ export function PostDetail({
                   <span className="bg-warm-sidebar dark:bg-surface-lighter text-warm-text-secondary dark:text-slate-400 text-[10px] px-2 py-0.5 rounded-full font-medium border border-warm-border dark:border-slate-700">
                     #{post.subId}
                   </span>
+                  {post.isPinned && (
+                    <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-blue-200 dark:border-blue-800">
+                      Pinned
+                    </span>
+                  )}
+                  {post.isLocked && (
+                    <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] px-2 py-0.5 rounded-full font-medium border border-slate-200 dark:border-slate-700">
+                      Locked
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-warm-text-secondary dark:text-slate-400 flex items-center gap-1">
                   <span>{formatTimeAgo(post.timestamp)}</span>
@@ -507,8 +524,26 @@ export function PostDetail({
                 </div>
               </div>
             </div>
-            {canManagePost && (
+            {(canManagePost || canAdminManagePost) && (
               <div className="flex items-center gap-1">
+                {canAdminManagePost && (
+                  <>
+                    <button
+                      onClick={() => void onSetPinned?.(post.id, !post.isPinned)}
+                      className={`transition-colors p-2 rounded-full ${post.isPinned ? 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20' : 'text-warm-text-secondary hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'}`}
+                      title={post.isPinned ? 'Unpin Post' : 'Pin Post'}
+                    >
+                      <span className="material-icons text-xl">{post.isPinned ? 'keep_off' : 'keep'}</span>
+                    </button>
+                    <button
+                      onClick={() => void onSetLocked?.(post.id, !post.isLocked)}
+                      className={`transition-colors p-2 rounded-full ${post.isLocked ? 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800' : 'text-warm-text-secondary hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                      title={post.isLocked ? 'Unlock Post' : 'Lock Post'}
+                    >
+                      <span className="material-icons text-xl">{post.isLocked ? 'lock_open' : 'lock'}</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => setEditingPost((prev) => !prev)}
                   className="text-warm-text-secondary hover:text-warm-accent transition-colors p-2 rounded-full hover:bg-warm-bg dark:hover:bg-surface-lighter"
@@ -706,7 +741,7 @@ export function PostDetail({
           </div>
         </article>
 
-        <div className="mb-8">
+          <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-bold text-warm-text-primary dark:text-white">
               Comments <span className="text-warm-text-secondary dark:text-slate-400 text-sm font-normal">({comments.length})</span>
@@ -735,6 +770,11 @@ export function PostDetail({
               ?
             </div>
             <div className="flex-1 relative">
+              {post.isLocked && (
+                <div className="mb-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-200">
+                  Replies are closed for this post.
+                </div>
+              )}
               <div className="mb-2 flex items-center justify-between rounded-lg border border-warm-border dark:border-border-dark bg-warm-card dark:bg-surface-dark px-3 py-2 text-xs text-warm-text-secondary dark:text-slate-400">
                 <span>{replyDraftRestored ? 'Recovered your comment draft for this post.' : 'Comment drafts are autosaved per post.'}</span>
                 <span>{replyDraftSavedAt ? `Saved ${new Date(replyDraftSavedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Not saved yet'}</span>
@@ -756,8 +796,9 @@ export function PostDetail({
                 ref={replyInputRef}
                 value={replyContent}
                 onChange={(e) => setReplyContent(e.target.value)}
+                disabled={post.isLocked}
                 className="w-full bg-warm-surface dark:bg-surface-dark border border-warm-border dark:border-border-dark rounded-xl p-4 text-warm-text-primary dark:text-white focus:ring-2 focus:ring-warm-accent focus:border-transparent placeholder-warm-text-secondary/40 dark:placeholder-slate-400/40 resize-none shadow-soft"
-                placeholder="What are your thoughts?"
+                placeholder={post.isLocked ? 'Replies are closed for this post.' : 'What are your thoughts?'}
                 rows={3}
               />
               {(pendingLocalImages.length > 0 || pendingExternalImages.length > 0) && (
@@ -802,14 +843,14 @@ export function PostDetail({
               <div className="mt-2 flex items-center justify-end gap-2">
                 <button
                   onClick={discardReplyDraft}
-                  disabled={replyBusy}
+                  disabled={replyBusy || post.isLocked}
                   className="px-3 py-1.5 text-xs font-medium text-warm-text-secondary dark:text-slate-300 rounded-lg border border-warm-border dark:border-border-dark hover:bg-warm-bg dark:hover:bg-surface-lighter disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Discard Draft
                 </button>
                 <button
                   onClick={() => imageFileInputRef.current?.click()}
-                  disabled={imageInsertBusy || replyBusy}
+                  disabled={imageInsertBusy || replyBusy || post.isLocked}
                   className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
                   title="Insert local image"
                 >
@@ -824,6 +865,7 @@ export function PostDetail({
                 />
                 <button
                   onClick={handleInsertImageURL}
+                  disabled={post.isLocked}
                   className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
                   title="Insert external image URL"
                 >
@@ -831,13 +873,14 @@ export function PostDetail({
                 </button>
                 <button
                   onClick={handleInsertCodeBlock}
+                  disabled={post.isLocked}
                   className="p-1.5 text-warm-text-secondary dark:text-slate-400 hover:text-warm-accent transition-colors rounded"
                 >
                   <span className="material-icons text-lg">code</span>
                 </button>
                 <button
                   onClick={handleSubmitReply}
-                  disabled={(!replyContent.trim() && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) || replyBusy}
+                  disabled={post.isLocked || ((!replyContent.trim() && pendingLocalImages.length === 0 && pendingExternalImages.length === 0) || replyBusy)}
                   className="bg-warm-accent hover:bg-warm-accent-hover text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow-md shadow-warm-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {replyBusy ? 'Posting...' : 'Comment'}
