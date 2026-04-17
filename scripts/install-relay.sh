@@ -96,6 +96,7 @@ if ! curl -fsSL -o "$TMP_FILE" "$DOWNLOAD_URL"; then
 fi
 
 info "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
+mkdir -p "$INSTALL_DIR"
 chmod +x "$TMP_FILE"
 mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
 
