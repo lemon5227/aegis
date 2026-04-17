@@ -247,7 +247,7 @@
 - F1：Done（已新增`post_favorites_state/post_favorite_ops`与索引迁移）
 - F2：Done（已实现`AddFavorite/RemoveFavorite`、签名、`FAVORITE_OP`广播、LWW）
 - F3：Done（已实现`GetFavorites/IsFavorited/GetFavoritePostIDs`）
-- F4：Partial（已提供`favorites:updated`事件与`feed:updated`联动；Feed/Search直接带收藏态后续补）
-- F5：In Progress（后端`go test ./...`已通过；前端联调与契约快照更新后收口）
+- F4：Done（已提供`favorites:updated`事件与`feed:updated`联动；Feed/Search结果携带收藏态已落地）
+- F5：Done（后端`go test ./...`已通过；前端联调已完成；Wails绑定已更新）
 
 本轮已完成后端收藏主链路与分布式同步闭环，后续按瀑布关口推进前端联调与回归用例补齐。

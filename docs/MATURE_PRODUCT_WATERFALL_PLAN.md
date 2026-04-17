@@ -201,7 +201,7 @@ git push origin master
 ## 4. 当前状态
 
 - Phase 1: Done
-- Phase 2: Pending
+- Phase 2: Done
 - Phase 3: Pending
 - Phase 4: Pending
 - Phase 5: Pending
@@ -241,3 +241,11 @@ git push origin master
   - 保留 `refreshToken` 驱动增量刷新，确保缓存命中时仍能在数据变更后及时收敛。
   - 验证通过：`go test ./...`、`frontend npm run build`、`./scripts/run_g6_gate_checks.sh`。
   - 影响：Feed/My Posts/Favorites 之间切换更顺滑，交互感知延迟降低。
+
+### Phase 2 进展记录
+
+- 2026-04-17 / Phase 2 Done
+  - 通知中心后端已实现：通知生成（评论/回复/投票/治理）、查询分页、已读/批量已读、去重。
+  - 通知中心前端已实现：NotificationsView 组件、Sidebar 未读角标、App.tsx 路由集成。
+  - 后端 API：GetNotifications、GetUnreadNotificationCount、MarkNotificationRead、MarkAllNotificationsRead。
+  - 验证：后端测试通过，前端构建通过。
