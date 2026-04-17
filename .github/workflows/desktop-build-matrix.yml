@@ -28,6 +28,17 @@ permissions:
 
 jobs:
   build-relay:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            artifact_name: aegis-relay-linux-amd64
+            binary_name: aegis-relay-amd64
+          - goarch: arm64
+            artifact_name: aegis-relay-linux-arm64
+            binary_name: aegis-relay-arm64
+
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -55,20 +66,20 @@ jobs:
           if [ -n "$RELAY" ]; then
             LDFLAGS="$LDFLAGS -X 'main.defaultRelayPeersCSV=$RELAY'"
           fi
-          go build -tags relay -ldflags "$LDFLAGS" -o build/bin/aegis-relay .
+          GOOS=linux GOARCH=${{ matrix.goarch }} go build -tags relay -ldflags "$LDFLAGS" -o build/bin/${{ matrix.binary_name }} .
 
       - name: Upload relay artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-relay-linux-amd64
-          path: aegis-app/build/bin/aegis-relay
+          name: ${{ matrix.artifact_name }}
+          path: aegis-app/build/bin/${{ matrix.binary_name }}
           if-no-files-found: error
 
       - name: Publish relay release asset
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: aegis-app/build/bin/aegis-relay
+          files: aegis-app/build/bin/${{ matrix.binary_name }}
           overwrite_files: true
 
       - name: Publish relay draft prerelease asset
@@ -79,7 +90,7 @@ jobs:
           name: ${{ github.event.inputs.draft_tag_name }} (manual draft)
           draft: true
           prerelease: true
-          files: aegis-app/build/bin/aegis-relay
+          files: aegis-app/build/bin/${{ matrix.binary_name }}
           overwrite_files: true
 
   build:

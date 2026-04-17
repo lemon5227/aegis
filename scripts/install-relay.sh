@@ -85,7 +85,7 @@ if [[ -z "$LATEST_TAG" ]]; then
 fi
 info "Latest release: ${LATEST_TAG}"
 
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${BINARY_NAME}"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/aegis-relay-${GOARCH}"
 TMP_FILE=$(mktemp)
 info "Downloading ${BINARY_NAME}..."
 if ! curl -fsSL -o "$TMP_FILE" "$DOWNLOAD_URL"; then
