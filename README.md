@@ -149,7 +149,7 @@ Every Aegis node is a relay by default (`AEGIS_RELAY_SERVICE_ENABLED=true`). A s
 ### One-line install on Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lemon5227/aegis/main/scripts/install-relay.sh | sudo bash -s -- --public-ip YOUR_PUBLIC_IP
+curl -fsSL https://raw.githubusercontent.com/lemon5227/aegis/master/scripts/install-relay.sh | sudo bash -s -- --public-ip YOUR_PUBLIC_IP
 ```
 
 Options: `--port`, `--http-port`, `--announce`, `--db-path`, `--trusted-admins`, `--uninstall`
