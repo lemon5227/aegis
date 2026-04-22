@@ -28,7 +28,7 @@ var (
 	defaultRelayPeersCSV     string
 )
 
-const officialBootstrapRelayAddr = "/ip4/51.107.6.171/tcp/40100/p2p/12D3KooWAFxb45HZaK3rtSRAy6wTR7PN8nUaZrXgBNuBPJoNKqwg"
+const officialBootstrapRelayAddr = "/ip4/141.253.112.150/tcp/40100/p2p/12D3KooWS9tnSV87k8dYX7vYnTfsnWCaMQarxzgMkcibQTFAdyqd"
 
 // App struct
 type App struct {
