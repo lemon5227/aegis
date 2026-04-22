@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,7 +77,13 @@ type App struct {
 func NewApp() *App {
 	databasePath := strings.TrimSpace(os.Getenv("AEGIS_DB_PATH"))
 	if databasePath == "" {
-		databasePath = "aegis_node.db"
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			configDir = "."
+		}
+		aegisDir := filepath.Join(configDir, "aegis-node")
+		_ = os.MkdirAll(aegisDir, 0700)
+		databasePath = filepath.Join(aegisDir, "aegis_node.db")
 	}
 
 	defaultStrategy := strings.TrimSpace(os.Getenv("AEGIS_DEFAULT_REC_STRATEGY"))

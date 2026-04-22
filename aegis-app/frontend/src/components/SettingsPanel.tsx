@@ -1197,7 +1197,7 @@ export function SettingsPanel({
                         className="w-full px-4 py-2.5 rounded-lg border border-warm-border dark:border-border-dark bg-white dark:bg-surface-dark text-warm-text-primary dark:text-white font-mono text-sm focus:ring-2 focus:ring-warm-accent focus:border-transparent outline-none resize-y"
                       />
                       <p className="mt-2 text-xs text-warm-text-secondary dark:text-slate-400">
-                        Example: /ip4/51.107.6.171/tcp/40100/p2p/12D3KooWAFxb45HZaK3rtSRAy6wTR7PN8nUaZrXgBNuBPJoNKqwg
+                        Example: /ip4/141.253.112.150/tcp/40100/p2p/12D3KooWS9tnSV87k8dYX7vYnTfsnWCaMQarxzgMkcibQTFAdyqd
                       </p>
                     </div>
 
