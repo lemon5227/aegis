@@ -108,7 +108,10 @@ jobs:
           # Ad-hoc sign to reduce Gatekeeper corruption warnings
           codesign --force --deep --sign - "$APP_BUNDLE"
 
-          hdiutil create -volname "Aegis" -srcfolder "$APP_BUNDLE" -ov -format UDZO build/bin/aegis-app-macos-arm64.dmg
+          DMG_STAGING=$(mktemp -d)
+          cp -R "$APP_BUNDLE" "$DMG_STAGING/"
+          ln -s /Applications "$DMG_STAGING/Applications"
+          hdiutil create -volname "Aegis" -srcfolder "$DMG_STAGING" -ov -format UDZO build/bin/aegis-app-macos-arm64.dmg
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
