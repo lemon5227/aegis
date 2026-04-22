@@ -1400,6 +1400,16 @@ function App() {
   }, [identity, loadNetworkHealth]);
 
   useEffect(() => {
+    if (!hasWailsRuntime()) return;
+    const unsubscribe = EventsOn('p2p:updated', () => {
+      void loadNetworkHealth();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [loadNetworkHealth]);
+
+  useEffect(() => {
     const nextHash = (() => {
       if (view === 'post-detail' && selectedPost) {
         return buildAppHash(`/post/${encodeURIComponent(selectedPost.id)}`);

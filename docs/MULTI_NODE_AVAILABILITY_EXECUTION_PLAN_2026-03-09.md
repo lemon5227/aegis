@@ -160,7 +160,6 @@ In progress:
 - W1 quiet network reliability
 
 Pending:
-- W3 offline and weak-network UX
 - W5 consistency and conflict UX
 
 Completed / substantially advanced:
@@ -168,6 +167,13 @@ Completed / substantially advanced:
   - persistent backend `message_outbox`
   - bounded retry scheduling
   - replay after peer recovery
+- W3 offline and weak-network UX
+  - NetworkBanner with offline/degraded/syncing/healthy levels
+  - `p2p:updated` event listener for instant banner transitions
+  - `syncing` level in deriveNetworkHealth for reconnect feedback
+  - pendingSyncActions tracking (localStorage)
+  - draft persistence for posts and comments
+  - backend message outbox provides offline durability
 - W4 partial content recovery
   - partial post/media placeholders
   - per-post repair entry points

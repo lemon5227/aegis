@@ -53,6 +53,19 @@ export function deriveNetworkHealth(status: P2PStatus | null, stats: AntiEntropy
     };
   }
 
+  if (lagSeconds > 30 && lastSyncAt > 0) {
+    return {
+      level: 'syncing',
+      label: 'Syncing',
+      summary: 'Connected and catching up with recent activity.',
+      peerCount,
+      lagSeconds,
+      lastSyncAt,
+      lastRemoteSummaryTs,
+      blobFailureRate,
+    };
+  }
+
   // Sync lag and blob failures are handled silently in the background.
   // No need to surface transient sync states to the user.
 
