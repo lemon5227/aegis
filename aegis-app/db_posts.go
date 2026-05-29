@@ -1175,42 +1175,7 @@ func (a *App) queryPostsBySubSet(viewerPubkey string, subIDs []string, limit int
 
 	return a.queryForumMessages(query, args...)
 }
-func (a *App) queryRecommendedPosts(viewerPubkey string, subscribedSubIDs []string, limit int) ([]ForumMessage, error) {
-	if limit <= 0 {
-		limit = 40
-	}
 
-	if len(subscribedSubIDs) == 0 {
-		return a.queryForumMessages(`
-			SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
-			FROM messages
-			WHERE zone = 'public'
-			  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
-			ORDER BY score DESC, timestamp DESC
-			LIMIT ?;
-		`, viewerPubkey, limit)
-	}
-
-	placeholders := makeSQLPlaceholders(len(subscribedSubIDs))
-	args := make([]interface{}, 0, len(subscribedSubIDs)+2)
-	args = append(args, viewerPubkey)
-	for _, subID := range subscribedSubIDs {
-		args = append(args, normalizeSubID(subID))
-	}
-	args = append(args, limit)
-
-	query := fmt.Sprintf(`
-		SELECT id, pubkey, title, body, content_cid, content, score, timestamp, size_bytes, zone, sub_id, is_protected, visibility
-		FROM messages
-		WHERE zone = 'public'
-		  AND (visibility = 'normal' OR (pubkey = ? AND visibility != 'deleted'))
-		  AND sub_id NOT IN (%s)
-		ORDER BY score DESC, timestamp DESC
-		LIMIT ?;
-	`, placeholders)
-
-	return a.queryForumMessages(query, args...)
-}
 func (a *App) UpdateLocalPost(pubkey string, postID string, title string, body string) (ForumMessage, error) {
 	if a.db == nil {
 		return ForumMessage{}, errors.New("database not initialized")

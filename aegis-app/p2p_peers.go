@@ -48,9 +48,7 @@ func (a *App) getKnownPeerBootstrapAddresses(limit int) []string {
 		if scanErr := rows.Scan(&peerID, &addrsJSON); scanErr != nil {
 			continue
 		}
-		for _, addr := range decodeKnownPeerAddrs(addrsJSON) {
-			result = append(result, addr)
-		}
+		result = append(result, decodeKnownPeerAddrs(addrsJSON)...)
 	}
 	if len(result) == 0 {
 		return nil
@@ -105,7 +103,7 @@ func (a *App) upsertKnownPeer(entry KnownPeerExchange, successDelta int, failDel
 			relay_capable = CASE WHEN excluded.relay_capable = 1 THEN 1 ELSE known_peers.relay_capable END,
 			public_reachable = CASE WHEN excluded.public_reachable = 1 THEN 1 ELSE known_peers.public_reachable END,
 			updated_at = excluded.updated_at;
-	`, peerID, string(addrsJSONBytes), entry.LastSeen, maxInt(successDelta, 0), maxInt(failDelta, 0), relayCapable, publicReachable, time.Now().Unix(), maxInt(successDelta, 0), maxInt(failDelta, 0))
+	`, peerID, string(addrsJSONBytes), entry.LastSeen, max(successDelta, 0), max(failDelta, 0), relayCapable, publicReachable, time.Now().Unix(), max(successDelta, 0), max(failDelta, 0))
 	return err
 }
 
@@ -382,9 +380,3 @@ func resolveRelayCandidateEnabled() bool {
 	return !(raw == "0" || raw == "false" || raw == "no" || raw == "off")
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

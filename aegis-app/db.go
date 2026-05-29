@@ -113,18 +113,6 @@ func resolveOperationID(opID string, entityID string, author string, lamport int
 	return fallbackOperationID(entityID, author, lamport, opType)
 }
 
-func resolveCurrentVersion(lamport int64, author string, opID string, entityID string) LamportVersion {
-	author = strings.TrimSpace(author)
-	if author == "" {
-		author = strings.TrimSpace(entityID)
-	}
-	opID = strings.TrimSpace(opID)
-	if opID == "" {
-		opID = strings.TrimSpace(entityID)
-	}
-	return LamportVersion{Lamport: lamport, Author: author, OpID: opID}
-}
-
 func normalizeAuthScope(scope string) string {
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope == "" {
@@ -846,46 +834,6 @@ func (a *App) upsertContentBlob(contentCID string, body string, sizeBytes int64)
 			last_accessed_at = excluded.last_accessed_at;
 	`, contentCID, body, sizeBytes, now, now)
 	return err
-}
-
-func (a *App) listRecentPublicPostDigests(limit int) ([]SyncPostDigest, error) {
-	if a.db == nil {
-		return nil, errors.New("database not initialized")
-	}
-
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
-
-	rows, err := a.db.Query(`
-		SELECT id, pubkey, current_op_id, visibility, deleted_at_lamport, title, content_cid, image_cid, thumb_cid, image_mime, image_size, image_width, image_height, timestamp, lamport, sub_id
-		FROM messages
-		WHERE zone = 'public' AND (visibility = 'normal' OR visibility = 'deleted')
-		ORDER BY timestamp DESC
-		LIMIT ?;
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := make([]SyncPostDigest, 0, limit)
-	for rows.Next() {
-		var digest SyncPostDigest
-		var visibility string
-		if err = rows.Scan(&digest.ID, &digest.Pubkey, &digest.OpID, &visibility, &digest.DeletedAtLamport, &digest.Title, &digest.ContentCID, &digest.ImageCID, &digest.ThumbCID, &digest.ImageMIME, &digest.ImageSize, &digest.ImageWidth, &digest.ImageHeight, &digest.Timestamp, &digest.Lamport, &digest.SubID); err != nil {
-			return nil, err
-		}
-		digest.Deleted = strings.EqualFold(strings.TrimSpace(visibility), "deleted")
-		if digest.Deleted {
-			digest.OpType = postOpTypeDelete
-		} else {
-			digest.OpType = postOpTypeCreate
-		}
-		result = append(result, digest)
-	}
-
-	return result, rows.Err()
 }
 
 func (a *App) getLatestPublicPostTimestamp() (int64, error) {
@@ -1692,6 +1640,37 @@ func (a *App) normalizeIncomingLamport(incomingLamport int64, timestamp int64) (
 	return incomingLamport, nil
 }
 
+// resolvePostVoteFields validates a POST_UPVOTE / POST_DOWNVOTE / POST_VOTE_SET
+// payload and returns the trimmed voter pubkey and post id. The caller does not
+// need a per-subtype error string because the message Type is part of the
+// processing context.
+func resolvePostVoteFields(message IncomingMessage) (voter, postID string, err error) {
+	voter = strings.TrimSpace(message.VoterPubkey)
+	if voter == "" {
+		voter = strings.TrimSpace(message.Pubkey)
+	}
+	postID = strings.TrimSpace(message.PostID)
+	if voter == "" || postID == "" {
+		return "", "", errors.New("invalid post vote payload")
+	}
+	return voter, postID, nil
+}
+
+// resolveCommentVoteFields is the comment-shaped counterpart to
+// resolvePostVoteFields.
+func resolveCommentVoteFields(message IncomingMessage) (voter, commentID, postID string, err error) {
+	voter = strings.TrimSpace(message.VoterPubkey)
+	if voter == "" {
+		voter = strings.TrimSpace(message.Pubkey)
+	}
+	commentID = strings.TrimSpace(message.CommentID)
+	postID = strings.TrimSpace(message.PostID)
+	if voter == "" || commentID == "" || postID == "" {
+		return "", "", "", errors.New("invalid comment vote payload")
+	}
+	return voter, commentID, postID, nil
+}
+
 func (a *App) ProcessIncomingMessage(payload []byte) error {
 	if a.db == nil {
 		return errors.New("database not initialized")
@@ -1844,118 +1823,64 @@ func (a *App) ProcessIncomingMessage(payload []byte) error {
 		}
 		return err
 	case "POST_UPVOTE":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid post upvote payload")
-		}
-
-		if err := a.applyPostUpvote(voterPubkey, message.PostID, message.OpID); err != nil {
+		voterPubkey, postID, err := resolvePostVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
-				a.tryGenerateNotification(NotifTypePostUpvote, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
-			}
+		if err := a.applyPostUpvote(voterPubkey, postID, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyPostVote(postID, voterPubkey, "up", message.Timestamp)
 		return nil
 	case "POST_DOWNVOTE":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid post downvote payload")
-		}
-
-		if err := a.applyPostDownvote(voterPubkey, message.PostID, message.OpID); err != nil {
+		voterPubkey, postID, err := resolvePostVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
-				a.tryGenerateNotification(NotifTypePostDownvote, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
-			}
+		if err := a.applyPostDownvote(voterPubkey, postID, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyPostVote(postID, voterPubkey, "down", message.Timestamp)
 		return nil
 	case "POST_VOTE_SET":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid post vote set payload")
-		}
-		if err := a.applyPostVoteState(voterPubkey, message.PostID, message.VoteState, message.OpID); err != nil {
+		voterPubkey, postID, err := resolvePostVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if postAuthor, paErr := a.getPostAuthor(message.PostID); paErr == nil && postAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == postAuthor {
-				notifType := NotifTypePostUpvote
-				if strings.TrimSpace(message.VoteState) == "down" {
-					notifType = NotifTypePostDownvote
-				}
-				a.tryGenerateNotification(notifType, voterPubkey, message.PostID, "post", message.PostID, message.Timestamp)
-			}
+		if err := a.applyPostVoteState(voterPubkey, postID, message.VoteState, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyPostVote(postID, voterPubkey, message.VoteState, message.Timestamp)
 		return nil
 	case "COMMENT_UPVOTE":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid comment upvote payload")
-		}
-
-		if err := a.applyCommentUpvote(voterPubkey, message.CommentID, message.PostID, message.OpID); err != nil {
+		voterPubkey, commentID, postID, err := resolveCommentVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
-				a.tryGenerateNotification(NotifTypeCommentUpvote, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
-			}
+		if err := a.applyCommentUpvote(voterPubkey, commentID, postID, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyCommentVote(commentID, postID, voterPubkey, "up", message.Timestamp)
 		return nil
 	case "COMMENT_DOWNVOTE":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid comment downvote payload")
-		}
-
-		if err := a.applyCommentDownvote(voterPubkey, message.CommentID, message.PostID, message.OpID); err != nil {
+		voterPubkey, commentID, postID, err := resolveCommentVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
-				a.tryGenerateNotification(NotifTypeCommentDownvote, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
-			}
+		if err := a.applyCommentDownvote(voterPubkey, commentID, postID, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyCommentVote(commentID, postID, voterPubkey, "down", message.Timestamp)
 		return nil
 	case "COMMENT_VOTE_SET":
-		voterPubkey := strings.TrimSpace(message.VoterPubkey)
-		if voterPubkey == "" {
-			voterPubkey = strings.TrimSpace(message.Pubkey)
-		}
-		if voterPubkey == "" || strings.TrimSpace(message.CommentID) == "" || strings.TrimSpace(message.PostID) == "" {
-			return errors.New("invalid comment vote set payload")
-		}
-		if err := a.applyCommentVoteState(voterPubkey, message.CommentID, message.PostID, message.VoteState, message.OpID); err != nil {
+		voterPubkey, commentID, postID, err := resolveCommentVoteFields(message)
+		if err != nil {
 			return err
 		}
-		if commentAuthor, caErr := a.getCommentAuthor(message.CommentID); caErr == nil && commentAuthor != "" {
-			if localID, liErr := a.getLocalIdentity(); liErr == nil && strings.TrimSpace(localID.PublicKey) == commentAuthor {
-				notifType := NotifTypeCommentUpvote
-				if strings.TrimSpace(message.VoteState) == "down" {
-					notifType = NotifTypeCommentDownvote
-				}
-				a.tryGenerateNotification(notifType, voterPubkey, message.CommentID, "comment", message.PostID, message.Timestamp)
-			}
+		if err := a.applyCommentVoteState(voterPubkey, commentID, postID, message.VoteState, message.OpID); err != nil {
+			return err
 		}
+		a.maybeNotifyCommentVote(commentID, postID, voterPubkey, message.VoteState, message.Timestamp)
 		return nil
 	case messageTypeFavoriteOp:
 		localIdentity, err := a.getLocalIdentity()
@@ -2528,46 +2453,6 @@ func (a *App) applyPostVoteState(voterPubkey string, postID string, targetState 
 	return tx.Commit()
 }
 
-func ensureZoneQuota(tx *sql.Tx, zone string, quota int64, incomingBytes int64) error {
-	if incomingBytes > quota {
-		return errors.New("message exceeds zone quota")
-	}
-
-	for {
-		var used int64
-		if err := tx.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM messages WHERE zone = ?;`, zone).Scan(&used); err != nil {
-			return err
-		}
-
-		if used+incomingBytes <= quota {
-			return nil
-		}
-
-		result, err := tx.Exec(`
-			DELETE FROM messages
-			WHERE id IN (
-				SELECT id
-				FROM messages
-				WHERE zone = ? AND is_protected = 0
-				ORDER BY timestamp ASC
-				LIMIT 1
-			);
-		`, zone)
-		if err != nil {
-			return err
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-
-		if rowsAffected == 0 {
-			return errors.New("quota exceeded and no evictable records")
-		}
-	}
-}
-
 func ensureBlobQuotaWithLRU(tx *sql.Tx, zone string, quota int64, incomingBytes int64, incomingContentCID string) error {
 	if incomingBytes > quota {
 		return errors.New("content blob exceeds zone quota")
@@ -2797,15 +2682,6 @@ func normalizeFeedStreamAlgorithm(algorithm string) string {
 		return "hot-v1"
 	}
 	return normalized
-}
-
-func scoreFeedRecommendation(message ForumMessage, now int64, algorithm string) float64 {
-	switch strings.TrimSpace(strings.ToLower(algorithm)) {
-	case "hot-v1":
-		return computeHotScore(message.Score, message.Timestamp, now)
-	default:
-		return computeHotScore(message.Score, message.Timestamp, now)
-	}
 }
 
 func countFeedItemsByReason(items []FeedStreamItem, reason string) int {

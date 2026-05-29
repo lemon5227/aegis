@@ -312,29 +312,6 @@ func (a *App) PublishPostStructured(pubkey string, title string, body string) er
 	return a.PublishPostStructuredToSub(pubkey, title, body, defaultSubID)
 }
 
-func (a *App) publishPayloadAsync(topic *pubsub.Topic, payload []byte, label string) {
-	if topic == nil || len(payload) == 0 {
-		return
-	}
-
-	a.p2pMu.Lock()
-	baseCtx := a.p2pCtx
-	a.p2pMu.Unlock()
-	if baseCtx == nil {
-		return
-	}
-
-	go func(ctx context.Context, t *pubsub.Topic, data []byte, kind string) {
-		publishCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		if err := t.Publish(publishCtx, data); err != nil {
-			if a.ctx != nil {
-				a.logWarningf("async publish failed (%s): %v", kind, err)
-			}
-		}
-	}(baseCtx, topic, append([]byte(nil), payload...), label)
-}
-
 func (a *App) signAndQueueOutgoingMessage(messageType string, message IncomingMessage) (IncomingMessage, error) {
 	signedMessage, err := a.signIncomingMessage(message)
 	if err != nil {

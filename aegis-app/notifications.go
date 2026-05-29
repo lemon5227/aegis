@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -9,8 +10,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-
-
 )
 
 
@@ -86,11 +85,50 @@ func (a *App) getCommentAuthor(commentID string) (string, error) {
 	return pubkey, err
 }
 
-// getCommentPostID returns the post_id that a comment belongs to.
-func (a *App) getCommentPostID(commentID string) (string, error) {
-	var postID string
-	err := a.db.QueryRow(`SELECT post_id FROM comments WHERE id = ?`, commentID).Scan(&postID)
-	return postID, err
+// maybeNotifyPostVote emits a post-vote notification when the post's author
+// is the local node. It is a no-op when the post author is unknown, the local
+// identity is missing, or the local node is not the post author. Errors are
+// swallowed so notification failures never abort message processing.
+func (a *App) maybeNotifyPostVote(postID, voterPubkey, voteState string, timestamp int64) {
+	postID = strings.TrimSpace(postID)
+	if postID == "" {
+		return
+	}
+	author, err := a.getPostAuthor(postID)
+	if err != nil || strings.TrimSpace(author) == "" {
+		return
+	}
+	localID, liErr := a.getLocalIdentity()
+	if liErr != nil || strings.TrimSpace(localID.PublicKey) != strings.TrimSpace(author) {
+		return
+	}
+	notifType := NotifTypePostUpvote
+	if strings.TrimSpace(strings.ToLower(voteState)) == "down" {
+		notifType = NotifTypePostDownvote
+	}
+	a.tryGenerateNotification(notifType, voterPubkey, postID, "post", postID, timestamp)
+}
+
+// maybeNotifyCommentVote emits a comment-vote notification when the comment's
+// author is the local node. Same no-op semantics as maybeNotifyPostVote.
+func (a *App) maybeNotifyCommentVote(commentID, postID, voterPubkey, voteState string, timestamp int64) {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return
+	}
+	author, err := a.getCommentAuthor(commentID)
+	if err != nil || strings.TrimSpace(author) == "" {
+		return
+	}
+	localID, liErr := a.getLocalIdentity()
+	if liErr != nil || strings.TrimSpace(localID.PublicKey) != strings.TrimSpace(author) {
+		return
+	}
+	notifType := NotifTypeCommentUpvote
+	if strings.TrimSpace(strings.ToLower(voteState)) == "down" {
+		notifType = NotifTypeCommentDownvote
+	}
+	a.tryGenerateNotification(notifType, voterPubkey, commentID, "comment", strings.TrimSpace(postID), timestamp)
 }
 
 // encodeNotificationCursor encodes a cursor from created_at and id.
@@ -115,6 +153,27 @@ func decodeNotificationCursor(cursor string) (int64, string, error) {
 	return ts, parts[1], nil
 }
 
+// scanNotifications consumes a *sql.Rows that selects the canonical notification
+// columns and returns the decoded list. The caller owns rows and must close it.
+func scanNotifications(rows *sql.Rows) ([]Notification, error) {
+	var out []Notification
+	for rows.Next() {
+		var (
+			n      Notification
+			isRead int
+		)
+		if err := rows.Scan(&n.ID, &n.Type, &n.SourcePubkey, &n.TargetEntityID, &n.TargetType, &n.PostID, &isRead, &n.CreatedAt); err != nil {
+			return nil, err
+		}
+		n.IsRead = isRead != 0
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetNotifications returns a paginated list of notifications ordered by created_at DESC.
 func (a *App) GetNotifications(limit int, cursor string) (NotificationPage, error) {
 	if a.db == nil {
@@ -124,64 +183,43 @@ func (a *App) GetNotifications(limit int, cursor string) (NotificationPage, erro
 		limit = 20
 	}
 
-	var rows_ []Notification
-	var err error
+	const baseSelect = `SELECT id, type, source_pubkey, target_entity_id, target_type, post_id, is_read, created_at
+		 FROM notifications`
 
+	var (
+		rows *sql.Rows
+		err  error
+	)
 	if cursor == "" {
-		r, qErr := a.db.Query(
-			`SELECT id, type, source_pubkey, target_entity_id, target_type, post_id, is_read, created_at
-			 FROM notifications ORDER BY created_at DESC, id DESC LIMIT ?`, limit+1)
-		if qErr != nil {
-			return NotificationPage{}, qErr
-		}
-		defer r.Close()
-		for r.Next() {
-			var n Notification
-			var isRead int
-			if err = r.Scan(&n.ID, &n.Type, &n.SourcePubkey, &n.TargetEntityID, &n.TargetType, &n.PostID, &isRead, &n.CreatedAt); err != nil {
-				return NotificationPage{}, err
-			}
-			n.IsRead = isRead != 0
-			rows_ = append(rows_, n)
-		}
-		if err = r.Err(); err != nil {
-			return NotificationPage{}, err
-		}
+		rows, err = a.db.Query(baseSelect+` ORDER BY created_at DESC, id DESC LIMIT ?`, limit+1)
 	} else {
 		ts, cursorID, decErr := decodeNotificationCursor(cursor)
 		if decErr != nil {
 			return NotificationPage{}, decErr
 		}
-		r, qErr := a.db.Query(
-			`SELECT id, type, source_pubkey, target_entity_id, target_type, post_id, is_read, created_at
-			 FROM notifications
-			 WHERE (created_at < ? OR (created_at = ? AND id < ?))
-			 ORDER BY created_at DESC, id DESC LIMIT ?`, ts, ts, cursorID, limit+1)
-		if qErr != nil {
-			return NotificationPage{}, qErr
-		}
-		defer r.Close()
-		for r.Next() {
-			var n Notification
-			var isRead int
-			if err = r.Scan(&n.ID, &n.Type, &n.SourcePubkey, &n.TargetEntityID, &n.TargetType, &n.PostID, &isRead, &n.CreatedAt); err != nil {
-				return NotificationPage{}, err
-			}
-			n.IsRead = isRead != 0
-			rows_ = append(rows_, n)
-		}
-		if err = r.Err(); err != nil {
-			return NotificationPage{}, err
-		}
+		rows, err = a.db.Query(
+			baseSelect+` WHERE (created_at < ? OR (created_at = ? AND id < ?))
+			 ORDER BY created_at DESC, id DESC LIMIT ?`,
+			ts, ts, cursorID, limit+1,
+		)
+	}
+	if err != nil {
+		return NotificationPage{}, err
+	}
+	defer rows.Close()
+
+	items, err := scanNotifications(rows)
+	if err != nil {
+		return NotificationPage{}, err
 	}
 
 	page := NotificationPage{Items: make([]Notification, 0)}
-	if len(rows_) > limit {
-		page.Items = rows_[:limit]
-		last := rows_[limit-1]
+	if len(items) > limit {
+		page.Items = items[:limit]
+		last := items[limit-1]
 		page.NextCursor = encodeNotificationCursor(last.CreatedAt, last.ID)
-	} else {
-		page.Items = rows_
+	} else if items != nil {
+		page.Items = items
 	}
 	return page, nil
 }
