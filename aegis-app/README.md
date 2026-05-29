@@ -82,6 +82,25 @@ See rollout docs in `../docs/`:
 - Comment attachments via structured references (`media_cid`, `external_url`).
 - Click-to-zoom images in post and comment views.
 
+### Personal (Client-Side) Features
+
+These features stay local to a single device and do NOT participate in P2P
+consensus or governance:
+
+- **Mute users**: hide content from specific pubkeys client-side without
+  triggering a network-wide shadow-ban.
+- **Post read tracking**: mark posts as read/unread, count unread per sub.
+- **User preferences**: arbitrary key-value preferences (theme, layout, etc.)
+  persisted across sessions.
+
+Backend API:
+- `MuteUser(pubkey, reason)`, `UnmuteUser(pubkey)`, `IsMuted(pubkey)`,
+  `GetMutedUsers()`, `GetMutedPubkeys()`
+- `MarkPostRead(postID)`, `MarkPostsRead([]postIDs)`, `IsPostRead(postID)`,
+  `GetReadPostIDs()`, `GetUnreadPostCount(subID)`, `ClearReadHistory()`
+- `SetUserPreference(key, value)`, `GetUserPreference(key)`,
+  `DeleteUserPreference(key)`, `GetAllUserPreferences()`
+
 ## Quick Start (Dev)
 
 From `aegis-app`:
@@ -91,6 +110,43 @@ go test ./...
 cd frontend && npm install && npm run build && cd ..
 wails dev
 ```
+
+## Testing
+
+### Go Backend
+
+```bash
+# All tests
+go test -timeout 300s ./...
+
+# Unit tests only (fast, no P2P)
+go test -run "TestIdentity|TestSign|TestCreateSub|TestPublishPost|TestAddComment|TestFavorite|TestModeration|TestSubSettings|TestGovernance" ./...
+
+# P2P integration tests
+go test -run "TestA2|TestA3|TestB1|TestC1|TestG7" -timeout 180s ./...
+
+# Coverage report
+go test -coverprofile=coverage.out -timeout 300s ./...
+go tool cover -func=coverage.out
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm run lint          # ESLint check
+npx tsc --noEmit     # TypeScript type check
+```
+
+### Quality Gates
+
+Before submitting changes:
+
+1. `go vet ./...` — no warnings
+2. `go build ./...` — compiles cleanly
+3. `go test -timeout 300s ./...` — all tests pass
+4. `cd frontend && npx tsc --noEmit` — TypeScript compiles
+5. `cd frontend && npm run lint` — ESLint passes (0 errors)
 
 ## Build
 

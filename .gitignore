@@ -29,5 +29,10 @@ npm-debug.log*
 *.db-shm
 *.db-wal
 
+# Test coverage
+coverage.out
+coverage.html
+*.coverprofile
+
 # Local website workspace
 website/

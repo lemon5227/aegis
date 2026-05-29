@@ -68,7 +68,7 @@ export function SettingsPanel({
   onClose,
   profile,
   isAdmin,
-  governanceAdmins,
+  governanceAdmins: _governanceAdmins,
   moderationStates = [],
   moderationLogs = [],
   currentSubId,
@@ -90,7 +90,6 @@ export function SettingsPanel({
   const [allowSearch, setAllowSearch] = useState(true);
   const [privacyBusy, setPrivacyBusy] = useState(false);
   const [privacyMessage, setPrivacyMessage] = useState('');
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
   const [accountToast, setAccountToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);

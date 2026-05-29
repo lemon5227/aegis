@@ -20,12 +20,23 @@ func (a *App) initDatabase() error {
 		databasePath = "aegis_node.db"
 	}
 
-	db, err := sql.Open("sqlite", databasePath)
+	// Use connection-string pragmas so settings apply to ALL pooled connections,
+	// not just the first one. This fixes intermittent SQLITE_BUSY errors under
+	// concurrent test load and high-contention production usage.
+	connURL := databasePath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
+
+	db, err := sql.Open("sqlite", connURL)
 	if err != nil {
 		return err
 	}
 
-	if _, err = db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
+	// Limit connection pool size for SQLite to reduce write contention.
+	// SQLite WAL mode allows concurrent reads but only one writer at a time.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
+
+	// Verify pragmas applied (sanity check).
+	if _, err = db.Exec("PRAGMA busy_timeout = 10000;"); err != nil {
 		_ = db.Close()
 		return err
 	}
@@ -803,6 +814,44 @@ func (a *App) ensureSchema(db *sql.DB) error {
 		return err
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_moderation_lamport ON moderation(lamport);`); err != nil {
+		return err
+	}
+
+	// --- Personal mute users (client-side only, not synced via P2P) ---
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS muted_users (
+			pubkey TEXT PRIMARY KEY,
+			reason TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		);
+	`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_muted_users_created_at ON muted_users(created_at DESC);`); err != nil {
+		return err
+	}
+
+	// --- Post read tracking (client-side only, not synced via P2P) ---
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS post_reads (
+			post_id TEXT PRIMARY KEY,
+			read_at INTEGER NOT NULL
+		);
+	`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_post_reads_read_at ON post_reads(read_at DESC);`); err != nil {
+		return err
+	}
+
+	// --- User preferences (client-side key-value store) ---
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS user_preferences (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+	`); err != nil {
 		return err
 	}
 

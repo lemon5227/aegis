@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 export interface ToastMessage {
   id: string;
@@ -92,20 +92,4 @@ function Toast({ toast, onClose }: { toast: ToastMessage; onClose: () => void })
       </button>
     </div>
   );
-}
-
-export function useToasts() {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { ...toast, id }]);
-    return id;
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  return { toasts, addToast, removeToast };
 }
