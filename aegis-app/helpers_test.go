@@ -388,3 +388,31 @@ func TestNormalizeFeedStreamAlgorithm(t *testing.T) {
 		}
 	}
 }
+
+func TestTopWindowStartUnix(t *testing.T) {
+	now := int64(1_700_000_000)
+
+	cases := []struct {
+		name     string
+		sortMode string
+		want     int64
+	}{
+		{"top-day", "top-day", now - 24*60*60},
+		{"top-week", "top-week", now - 7*24*60*60},
+		{"top-month", "top-month", now - 30*24*60*60},
+		{"empty falls through to default", "", 0},
+		{"new defaults to 0", "new", 0},
+		{"hot defaults to 0", "hot", 0},
+		{"unknown defaults to 0", "definitely-not-a-mode", 0},
+		{"whitespace trimmed", "   top-week   ", now - 7*24*60*60},
+		{"case-insensitive via normalizeFeedSortMode", "TOP-DAY", now - 24*60*60},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := topWindowStartUnix(tc.sortMode, now)
+			if got != tc.want {
+				t.Errorf("topWindowStartUnix(%q, %d) = %d, want %d", tc.sortMode, now, got, tc.want)
+			}
+		})
+	}
+}
