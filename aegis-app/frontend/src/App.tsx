@@ -72,7 +72,8 @@ import { HistoryView } from './components/HistoryView';
 import { NetworkBanner } from './components/NetworkBanner';
 import { PendingSyncView } from './components/PendingSyncView';
 import { NotificationsView } from './components/NotificationsView';
-import { ToastContainer, useToasts } from './components/Toast';
+import { ToastContainer } from './components/Toast';
+import { useToasts } from './lib/useToasts';
 import { Sub, Profile, ProfileDetails, Post, GovernanceAdmin, Identity, Comment, ModerationLog, ModerationState, SubStats, CreatePostInput, AntiEntropyStats, P2PStatus, PendingSyncAction, PendingSyncActionKind, SubSettings } from './types';
 import { ClipboardSetText, EventsOn } from '../wailsjs/runtime/runtime';
 import { recordRecentlyViewed } from './lib/history';
@@ -201,7 +202,7 @@ function App() {
   const [showCreatePostModal, setShowCreatePostModal] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [consistencyFocus, setConsistencyFocus] = useState<ConsistencyFocus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<{ subs: Sub[]; posts: any[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchScopeSubId, setSearchScopeSubId] = useState<string | null>(null);
@@ -1323,7 +1324,7 @@ function App() {
 
   useEffect(() => {
     if (!hasWailsRuntime()) return;
-    const unsubscribe = EventsOn('favorites:updated', (payload: { postId?: string } | undefined) => {
+    const unsubscribe = EventsOn('favorites:updated', (_payload: { postId?: string } | undefined) => {
       void loadFavorites();
       bumpViewSyncToken();
     });

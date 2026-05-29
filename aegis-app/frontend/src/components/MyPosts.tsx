@@ -69,8 +69,7 @@ export function MyPosts({ currentPubkey, refreshToken = 0, profiles, onUpvote, o
         console.error('Failed to load my posts:', e);
         setMyPosts(cached || []);
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     };
 

@@ -187,4 +187,5 @@ Run workflow manually with:
 
 Start here for full setup and runtime details:
 
-- `aegis-app/README.md`
+- `aegis-app/README.md` — build, run, and test instructions
+- `CONTRIBUTING.md` — development workflow, testing, and code style guide

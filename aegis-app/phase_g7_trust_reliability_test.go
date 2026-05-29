@@ -20,6 +20,8 @@ func newG7TestApp(t *testing.T, dbName string) *App {
 	t.Cleanup(func() {
 		_ = app.StopP2P()
 		if app.db != nil {
+			// Checkpoint WAL and truncate before closing.
+			_, _ = app.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 			_ = app.db.Close()
 		}
 	})
@@ -168,9 +170,9 @@ func TestG7PublishPostFlushesOutboxAfterPeerConnect(t *testing.T) {
 		t.Fatalf("node B has no connectable address")
 	}
 
-	if err = nodeA.ConnectPeer(targetAddr); err != nil {
-		t.Fatalf("connect node A to node B: %v", err)
-	}
+	// Allow hosts to fully initialize and mDNS to settle before connecting.
+	time.Sleep(2 * time.Second)
+	connectPeerWithBackoffClear(t, nodeA, targetAddr, 5)
 
 	waitForCondition(t, 10*time.Second, func() (bool, error) {
 		return len(nodeA.GetP2PStatus().ConnectedPeers) > 0 && len(nodeB.GetP2PStatus().ConnectedPeers) > 0, nil
@@ -220,9 +222,11 @@ func TestG7ReplicatesCommunityOperationsAcrossPeers(t *testing.T) {
 	if _, err = nodeA.StartP2P(portA, nil); err != nil {
 		t.Fatalf("start node A: %v", err)
 	}
-	if err = nodeA.ConnectPeer(loopbackAddress(portB, statusB.PeerID)); err != nil {
-		t.Fatalf("connect peers: %v", err)
-	}
+	// Allow hosts to fully initialize and mDNS to settle before connecting.
+	// This avoids TLS handshake races between explicit ConnectPeer and
+	// mDNS-triggered dial attempts.
+	time.Sleep(2 * time.Second)
+	connectPeerWithBackoffClear(t, nodeA, loopbackAddress(portB, statusB.PeerID), 5)
 
 	waitForCondition(t, 10*time.Second, func() (bool, error) {
 		return len(nodeA.GetP2PStatus().ConnectedPeers) > 0 && len(nodeB.GetP2PStatus().ConnectedPeers) > 0, nil
@@ -243,15 +247,15 @@ func TestG7ReplicatesCommunityOperationsAcrossPeers(t *testing.T) {
 		return replicated == 1, err
 	})
 
-	if err = nodeA.PublishSubSettingsUpdate(defaultSubID, []string{"Be respectful", "Stay on topic"}, "Weekly thread is live."); err != nil {
-		t.Fatalf("publish sub settings: %v", err)
-	}
-	if err = nodeA.PublishSetPostPinned(postID, true); err != nil {
-		t.Fatalf("publish post pin: %v", err)
-	}
-	if err = nodeA.PublishSetPostLocked(postID, true); err != nil {
-		t.Fatalf("publish post lock: %v", err)
-	}
+	waitForNoBusyError(t, 5*time.Second, func() error {
+		return nodeA.PublishSubSettingsUpdate(defaultSubID, []string{"Be respectful", "Stay on topic"}, "Weekly thread is live.")
+	})
+	waitForNoBusyError(t, 5*time.Second, func() error {
+		return nodeA.PublishSetPostPinned(postID, true)
+	})
+	waitForNoBusyError(t, 5*time.Second, func() error {
+		return nodeA.PublishSetPostLocked(postID, true)
+	})
 
 	waitForCondition(t, 10*time.Second, func() (bool, error) {
 		settings, err := nodeB.GetSubSettings(defaultSubID)

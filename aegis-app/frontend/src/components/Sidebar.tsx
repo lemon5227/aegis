@@ -10,7 +10,7 @@ interface SidebarProps {
   unreadSubs?: Set<string>;
 }
 
-export function Sidebar({ subs, subscribedSubs, currentSubId, onSelectSub, onDiscoverClick, onCreateSub, unreadSubs }: SidebarProps) {
+export function Sidebar({ subs: _subs, subscribedSubs, currentSubId, onSelectSub, onDiscoverClick, onCreateSub, unreadSubs }: SidebarProps) {
   const isSelected = (subId: string) => currentSubId === subId;
 
   return (
