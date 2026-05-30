@@ -28,7 +28,20 @@ function getStorageKeys(): string[] {
   if (!canUseStorage()) {
     return [];
   }
-  return Object.keys(window.localStorage);
+  // Use the Storage spec API rather than Object.keys(localStorage). The
+  // browser-specific Proxy that makes Object.keys enumerate user keys is
+  // not part of the Web Storage spec, and test environments (happy-dom,
+  // Node embeddings) will return internal fields instead. localStorage.key(i)
+  // is universally supported.
+  const storage = window.localStorage;
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key !== null) {
+      keys.push(key);
+    }
+  }
+  return keys;
 }
 
 function parsePostDraft(key: string): PostDraftSummary | null {
