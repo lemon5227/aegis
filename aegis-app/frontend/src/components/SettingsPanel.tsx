@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AntiEntropyStats, EntityOpRecord, GovernanceAdmin, ModerationLog, ModerationState, Profile, SubSettings, TombstoneGCResult } from '../types';
 import { CheckForUpdates, GetAntiEntropyStats, GetGovernancePolicy, GetP2PConfig, GetP2PStatus, GetPrivacySettings, GetStorageUsage, GetVersionHistory, ListEntityOps, ResetLocalTestData, RunTombstoneGC, SaveP2PConfig, SetGovernancePolicy, SetPrivacySettings, StartP2P, StopP2P, UpdateProfileDetails } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
@@ -316,6 +316,11 @@ export function SettingsPanel({
     return () => {
       unsubscribe();
     };
+    // The loaders are intentionally not in the dep array: this effect is the
+    // panel-open initial-load trigger, and the loaders close over component
+    // state. Including them would cause re-fetches on every state-driven
+    // re-render (each loader is a fresh closure per render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   useEffect(() => {
@@ -326,6 +331,10 @@ export function SettingsPanel({
     setEntityOpTypeFilter(consistencyFocus.entityType);
     setEntityOpIDFilter(consistencyFocus.entityId);
     void loadEntityOpsWithFilters(consistencyFocus.entityType, consistencyFocus.entityId, entityOpLimit);
+    // consistencyFocus.nonce is the explicit re-trigger signal; we deliberately
+    // do not re-run when other consistencyFocus fields mutate, and we read
+    // entityOpLimit at the moment of trigger rather than tracking it as a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, consistencyFocus?.nonce]);
 
   const formatBytes = (bytes: number): string => {
@@ -386,12 +395,24 @@ export function SettingsPanel({
     setBio(profile?.bio || '');
   }, [profile?.displayName, profile?.avatarURL, profile?.bio]);
 
+  // Stable content-fingerprint for the rules array so the effect below only
+  // re-fires when rules content actually changes (not on every parent re-render
+  // that hands us a fresh array reference with the same values).
+  const subRulesKey = useMemo(
+    () => JSON.stringify(currentSubSettings?.rules || []),
+    [currentSubSettings?.rules],
+  );
+
   useEffect(() => {
     const rules = currentSubSettings?.rules || [];
     setSubRulesInput(rules.join('\n'));
     setSubAnnouncement(currentSubSettings?.announcement || '');
     setSubSettingsMessage('');
-  }, [currentSubId, currentSubSettings?.announcement, currentSubSettings?.updatedAt, JSON.stringify(currentSubSettings?.rules || [])]);
+    // currentSubSettings.rules is captured via the subRulesKey content fingerprint
+    // computed above (useMemo dep is currentSubSettings?.rules). The static
+    // analysis can't see through the JSON string into the array dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSubId, currentSubSettings?.announcement, currentSubSettings?.updatedAt, subRulesKey]);
 
   useEffect(() => {
     return () => {

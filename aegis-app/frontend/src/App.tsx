@@ -676,7 +676,7 @@ function App() {
     }
   };
 
-  const handlePostClick = async (post: Post) => {
+  const handlePostClick = useCallback(async (post: Post) => {
     if (view !== 'post-detail') {
       setPostReturnView(view);
     }
@@ -686,7 +686,7 @@ function App() {
     setSelectedPost(post);
     setView('post-detail');
     await loadPostDetail(post);
-  };
+  }, [view, bumpHistorySyncToken, loadPostDetail]);
 
   const handleSharePost = useCallback(async (post: Post) => {
     try {
@@ -889,7 +889,7 @@ function App() {
     }
   };
 
-  const handleSearch = async (query: string, scope?: string) => {
+  const handleSearch = useCallback(async (query: string, scope?: string) => {
     setSearchQuery(query);
     setSearchScopeSubId(scope ? scope : null);
     if (!query.trim()) {
@@ -933,7 +933,7 @@ function App() {
     } catch (e) {
       console.error('Failed to search:', e);
     }
-  };
+  }, [view]);
 
   const handleSearchResultClick = async (type: 'sub' | 'post', id: string) => {
     setSearchResults(null);

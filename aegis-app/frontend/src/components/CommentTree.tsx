@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Comment, Profile } from '../types';
 import { GetMediaByCID } from '../../wailsjs/go/main/App';
 
@@ -73,9 +73,11 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
   const [editBody, setEditBody] = useState(comment.body);
   const [editBusy, setEditBusy] = useState(false);
   const [collapsed, setCollapsed] = useState(depth > 1);
-  const attachmentKey = (comment.attachments || [])
-    .map((item) => `${item.kind}:${item.ref}`)
-    .join('|');
+  const attachments = useMemo(() => comment.attachments || [], [comment.attachments]);
+  const attachmentKey = useMemo(
+    () => attachments.map((item) => `${item.kind}:${item.ref}`).join('|'),
+    [attachments],
+  );
 
   useEffect(() => {
     setEditBody(comment.body);
@@ -103,14 +105,13 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
     };
 
     const run = async () => {
-      const items = comment.attachments || [];
-      if (items.length === 0) {
+      if (attachments.length === 0) {
         if (alive) setResolvedAttachmentImages([]);
         return;
       }
 
       const output: string[] = [];
-      for (const item of items) {
+      for (const item of attachments) {
         if (item.kind === 'external_url' && item.ref) {
           output.push(item.ref);
           continue;
@@ -130,6 +131,11 @@ export function CommentItem({ comment, profiles, onReply, onUpvote, onDownvote, 
     return () => {
       alive = false;
     };
+    // attachmentKey is the stable content fingerprint of `attachments`.
+    // Including `attachments` would re-fire the effect (and the network
+    // calls inside) every time the parent passed a fresh array reference
+    // even when contents are unchanged.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attachmentKey]);
 
   return (

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Post, Profile } from '../types';
 import { PostCard } from './PostCard';
 import { GetFavorites, RemoveFavorite } from '../../wailsjs/go/main/App';
@@ -22,7 +22,7 @@ export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUp
   const [favoritePosts, setFavoritePosts] = useState<Post[]>(() => favoritesCache.get(cacheKey) || []);
   const [loading, setLoading] = useState(() => !favoritesCache.has(cacheKey));
 
-  const loadFavorites = async () => {
+  const loadFavorites = useCallback(async () => {
     const cached = favoritesCache.get(cacheKey);
     if (cached) {
       setFavoritePosts(cached);
@@ -63,11 +63,11 @@ export function Favorites({ refreshToken = 0, currentPubkey = '', profiles, onUp
     } finally {
       setLoading(false);
     }
-  };
+  }, [cacheKey]);
 
   useEffect(() => {
     void loadFavorites();
-  }, [refreshToken, cacheKey]);
+  }, [refreshToken, loadFavorites]);
 
   const handleRemoveFavorite = async (postId: string) => {
     try {
