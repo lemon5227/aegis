@@ -214,6 +214,37 @@ func BenchmarkShouldAcceptPublicContent_AuthorIsViewer(b *testing.B) {
 	}
 }
 
+// BenchmarkShouldAcceptPublicContent_WithShadowBan exercises the path that
+// hits GetGovernancePolicy, which is the path the policy cache exists to
+// optimize. With a hot cache, this should cost a single DB query
+// (getModerationSnapshot) plus a cache hit on the policy read.
+func BenchmarkShouldAcceptPublicContent_WithShadowBan(b *testing.B) {
+	app, identity := newBenchApp(b)
+	if err := app.AddTrustedAdmin(identity.PublicKey, "owner"); err != nil {
+		b.Fatalf("seed admin: %v", err)
+	}
+	bannedAuthor := "banned-author-pubkey-deadbeef"
+	if err := app.ApplyShadowBan(bannedAuthor, identity.PublicKey, "spam"); err != nil {
+		b.Fatalf("ban: %v", err)
+	}
+	if _, err := app.SetGovernancePolicy(false); err != nil {
+		b.Fatalf("set policy: %v", err)
+	}
+	// Warm the cache so the steady-state cost reflects cache hits, not the
+	// initial population query.
+	if _, err := app.GetGovernancePolicy(); err != nil {
+		b.Fatalf("warm cache: %v", err)
+	}
+
+	now := time.Now().Unix()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := app.shouldAcceptPublicContent(bannedAuthor, int64(i), now, "content-id", "viewer-pubkey"); err != nil {
+			b.Fatalf("check: %v", err)
+		}
+	}
+}
+
 // -----------------------------------------------------------------------------
 // ProcessIncomingMessage (write path)
 // -----------------------------------------------------------------------------

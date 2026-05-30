@@ -1551,6 +1551,10 @@ func (a *App) ResetLocalTestData() error {
 		return err
 	}
 
+	// ResetLocalTestData wiped governance_config along with everything else;
+	// drop the cached policy so the next read reflects the post-reset default.
+	a.invalidateGovernancePolicyCache()
+
 	if a.ctx != nil {
 		a.emitEvent("feed:updated")
 		a.emitEvent("subs:updated")

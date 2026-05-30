@@ -226,10 +226,21 @@ func (a *App) GetGovernancePolicy() (GovernancePolicy, error) {
 		return GovernancePolicy{}, errors.New("database not initialized")
 	}
 
+	// Fast path: cached value.
+	a.governancePolicyMu.RLock()
+	if cached := a.governancePolicyCache; cached != nil {
+		policy := *cached
+		a.governancePolicyMu.RUnlock()
+		return policy, nil
+	}
+	a.governancePolicyMu.RUnlock()
+
 	var value string
 	err := a.db.QueryRow(`SELECT value FROM governance_config WHERE key = 'hide_history_on_shadowban';`).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GovernancePolicy{HideHistoryOnShadowBan: true}, nil
+		policy := GovernancePolicy{HideHistoryOnShadowBan: true}
+		a.storeGovernancePolicyCache(policy)
+		return policy, nil
 	}
 	if err != nil {
 		return GovernancePolicy{}, err
@@ -238,7 +249,27 @@ func (a *App) GetGovernancePolicy() (GovernancePolicy, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	hide := value == "1" || value == "true" || value == "yes"
 
-	return GovernancePolicy{HideHistoryOnShadowBan: hide}, nil
+	policy := GovernancePolicy{HideHistoryOnShadowBan: hide}
+	a.storeGovernancePolicyCache(policy)
+	return policy, nil
+}
+
+// storeGovernancePolicyCache replaces the cached governance policy under
+// the write lock. Callers must compute the desired value before invoking
+// (no read-modify-write inside the critical section).
+func (a *App) storeGovernancePolicyCache(policy GovernancePolicy) {
+	a.governancePolicyMu.Lock()
+	a.governancePolicyCache = &policy
+	a.governancePolicyMu.Unlock()
+}
+
+// invalidateGovernancePolicyCache forces the next GetGovernancePolicy to
+// hit the database. Used by ResetLocalTestData since it nukes the
+// governance_config row along with everything else.
+func (a *App) invalidateGovernancePolicyCache() {
+	a.governancePolicyMu.Lock()
+	a.governancePolicyCache = nil
+	a.governancePolicyMu.Unlock()
 }
 
 func (a *App) SetGovernancePolicy(hideHistoryOnShadowBan bool) (GovernancePolicy, error) {
@@ -287,7 +318,9 @@ func (a *App) SetGovernancePolicy(hideHistoryOnShadowBan bool) (GovernancePolicy
 		}
 	}
 
-	return GovernancePolicy{HideHistoryOnShadowBan: hideHistoryOnShadowBan}, nil
+	policy := GovernancePolicy{HideHistoryOnShadowBan: hideHistoryOnShadowBan}
+	a.storeGovernancePolicyCache(policy)
+	return policy, nil
 }
 
 func (a *App) GetIdentityState() ([]IdentityState, error) {

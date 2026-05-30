@@ -410,3 +410,98 @@ func TestGetIdentityStateScansRows(t *testing.T) {
 		t.Errorf("quota fields: got pub=%d priv=%d", state[0].PublicQuotaBytes, state[0].PrivateQuotaBytes)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Governance policy cache (added with the perf optimization)
+// -----------------------------------------------------------------------------
+
+func TestGovernancePolicyCacheServesAfterFirstRead(t *testing.T) {
+	app, _ := newTestAppWithIdentity(t)
+
+	// First read: must populate the cache.
+	first, err := app.GetGovernancePolicy()
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+
+	// Inject a divergent value directly into the DB. If the second read
+	// went to the database, it would return false. If the cache works,
+	// it returns the cached value (true).
+	if _, err := app.db.Exec(
+		`INSERT INTO governance_config (key, value, updated_at)
+		 VALUES ('hide_history_on_shadowban', '0', ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		1,
+	); err != nil {
+		t.Fatalf("inject db row: %v", err)
+	}
+
+	second, err := app.GetGovernancePolicy()
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if second != first {
+		t.Errorf("expected cache hit to return previous value %+v, got %+v", first, second)
+	}
+
+	// Sanity: after invalidation, the next read picks up the DB value.
+	app.invalidateGovernancePolicyCache()
+	third, err := app.GetGovernancePolicy()
+	if err != nil {
+		t.Fatalf("third read: %v", err)
+	}
+	if third.HideHistoryOnShadowBan {
+		t.Error("after cache invalidation, read should reflect the injected DB value (false)")
+	}
+}
+
+func TestSetGovernancePolicyUpdatesCache(t *testing.T) {
+	app, _ := newTestAppWithIdentity(t)
+
+	// Force-populate the cache with one value.
+	if _, err := app.SetGovernancePolicy(true); err != nil {
+		t.Fatalf("seed true: %v", err)
+	}
+	if got, _ := app.GetGovernancePolicy(); !got.HideHistoryOnShadowBan {
+		t.Fatal("expected cache to reflect set true")
+	}
+
+	// Toggling via Set must update the cache (not just the row).
+	if _, err := app.SetGovernancePolicy(false); err != nil {
+		t.Fatalf("set false: %v", err)
+	}
+	if got, _ := app.GetGovernancePolicy(); got.HideHistoryOnShadowBan {
+		t.Error("Set false should update the cache, but Get still reports true")
+	}
+}
+
+func TestResetLocalTestDataInvalidatesGovernancePolicyCache(t *testing.T) {
+	app, _ := newTestAppWithIdentity(t)
+
+	// Pin a value via Set so the cache is hot AND the DB row is "0".
+	if _, err := app.SetGovernancePolicy(false); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Force a divergent DB value behind the cache's back. ResetLocalTestData
+	// does not wipe governance_config, so this row will survive the reset.
+	if _, err := app.db.Exec(
+		`UPDATE governance_config SET value = '1' WHERE key = 'hide_history_on_shadowban'`,
+	); err != nil {
+		t.Fatalf("inject divergent value: %v", err)
+	}
+
+	// Without invalidation, the cache would still return false here.
+	// ResetLocalTestData must drop the cache so the next read sees the DB row.
+	if err := app.ResetLocalTestData(); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	got, err := app.GetGovernancePolicy()
+	if err != nil {
+		t.Fatalf("post-reset read: %v", err)
+	}
+	if !got.HideHistoryOnShadowBan {
+		t.Error("expected post-reset GetGovernancePolicy to read the divergent DB value (true), got false — cache was not invalidated")
+	}
+}

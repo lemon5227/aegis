@@ -68,6 +68,14 @@ type App struct {
 	voteBroadcastSeq   map[string]int64
 	outboxFlushMu      sync.Mutex
 
+	// governancePolicyCache caches the last-known governance policy so that
+	// the per-message moderation hot path (shouldAcceptPublicContent) does
+	// not query governance_config on every public message during sync.
+	// Invalidation: SetGovernancePolicy and ResetLocalTestData. nil means
+	// "not loaded yet".
+	governancePolicyMu    sync.RWMutex
+	governancePolicyCache *GovernancePolicy
+
 	defaultRecStrategy string
 }
 
